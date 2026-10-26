@@ -12,6 +12,7 @@ use uuid::Uuid;
 use super::{client::BiliClient, error::BiliError, session::Session, types::image_url};
 
 const NAV_URL: &str = "https://api.bilibili.com/x/web-interface/nav";
+const PUBLIC_CARD_URL: &str = "https://api.bilibili.com/x/web-interface/card";
 const QR_GENERATE_URL: &str = "https://passport.bilibili.com/x/passport-login/web/qrcode/generate";
 const QR_POLL_URL: &str = "https://passport.bilibili.com/x/passport-login/web/qrcode/poll";
 const LOGIN_ATTEMPT_TTL: Duration = Duration::from_secs(180);
@@ -265,14 +266,42 @@ impl BiliClient {
             return Ok(None);
         }
 
+        let level = if data.level_info.current_level == 0 {
+            self.fetch_public_level(data.mid)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_default()
+        } else {
+            data.level_info.current_level
+        };
+
         Ok(Some(AccountProfile {
             mid: data.mid.to_string(),
             name: data.uname,
             avatar_url: image_url(&data.face, "@128w_128h_1c.webp"),
-            level: data.level_info.current_level,
+            level,
             vip_status: data.vip_status == 1,
             vip_label: data.vip_label.text.filter(|label| !label.is_empty()),
         }))
+    }
+
+    async fn fetch_public_level(&self, mid: u64) -> Result<Option<u32>, BiliError> {
+        let response = self
+            .http
+            .get(PUBLIC_CARD_URL)
+            .query(&[("mid", mid.to_string())])
+            .send()
+            .await?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(BiliError::HttpStatus(status.as_u16()));
+        }
+        let envelope: Envelope<PublicCardData> = response.json().await?;
+        if envelope.code != 0 {
+            return Ok(None);
+        }
+        Ok(envelope.data.map(|data| data.card.level_info.current_level))
     }
 }
 
@@ -340,11 +369,23 @@ struct VipLabel {
     text: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct PublicCardData {
+    card: PublicCard,
+}
+
+#[derive(Deserialize)]
+struct PublicCard {
+    #[serde(default)]
+    level_info: LevelInfo,
+}
+
 #[cfg(test)]
 mod tests {
     use reqwest::header::{HeaderMap, HeaderValue, SET_COOKIE};
+    use serde_json::json;
 
-    use super::{collect_session_cookies, truncate_message};
+    use super::{collect_session_cookies, truncate_message, Envelope, PublicCardData};
     use crate::bili::{client::BiliClient, session::Session};
 
     #[test]
@@ -382,6 +423,27 @@ mod tests {
     #[test]
     fn upstream_messages_are_bounded() {
         assert_eq!(truncate_message(&"a".repeat(200)).len(), 160);
+    }
+
+    #[test]
+    fn reads_account_level_from_the_public_card() {
+        let envelope: Envelope<PublicCardData> = serde_json::from_value(json!({
+            "code": 0,
+            "message": "OK",
+            "data": {
+                "card": {
+                    "level_info": {
+                        "current_level": 6
+                    }
+                }
+            }
+        }))
+        .expect("public card fixture");
+
+        assert_eq!(
+            envelope.data.map(|data| data.card.level_info.current_level),
+            Some(6)
+        );
     }
 
     #[ignore = "requires network access to Bilibili"]
