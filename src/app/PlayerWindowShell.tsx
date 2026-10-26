@@ -1,13 +1,38 @@
-import type { PropsWithChildren } from "react";
+import { useEffect, type PropsWithChildren } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import TitlebarOperations from "@/components/framework/TitlebarOperations";
 import { useI18n } from "@/composables";
 import { usePageTitlebar } from "@/contexts/pageTitlebar";
+import { registerPlayerWindowCloseHandler } from "@/features/player/playerWindowLifecycle";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("PlayerWindow");
 
 export default function PlayerWindowShell({ children }: PropsWithChildren) {
   const { t } = useI18n();
   const { pageTitle } = usePageTitlebar();
   const title = pageTitle ?? t("Player.title");
+
+  useEffect(() => {
+    const playerWindow = getCurrentWindow();
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
+    void registerPlayerWindowCloseHandler(playerWindow)
+      .then((stopListening) => {
+        if (disposed) stopListening();
+        else unlisten = stopListening;
+      })
+      .catch((error) => {
+        log.error("failed to register close handler", error);
+      });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   return (
     <main className="bg-background flex h-screen min-h-0 flex-col overflow-hidden">

@@ -41,10 +41,16 @@ export class WindowUtils {
   /** 幂等预取：并发调用共享同一个 in-flight promise */
   private prefetch(): Promise<void> {
     if (!this.$pending) {
-      this.$pending = WindowUtils.getWindowByLabel(this.$label).then((window) => {
-        this.$bound = window;
-        log.debug("bound window", this.$label, window ? "found" : "not found");
-      });
+      this.$pending = WindowUtils.getWindowByLabel(this.$label).then(
+        (window) => {
+          this.$bound = window;
+          log.debug(
+            "bound window",
+            this.$label,
+            window ? "found" : "not found"
+          );
+        }
+      );
     }
     return this.$pending;
   }
@@ -106,6 +112,7 @@ export class WindowUtils {
   static async windowsQuit(): Promise<void> {
     const windows = await safeGetAllWindows();
     log.info("windowsQuit", `${windows.length} window(s)`);
-    await Promise.all(windows.map((window) => window.close()));
+    // Player windows intercept close requests to hide, so quitting must destroy them.
+    await Promise.all(windows.map((window) => window.destroy()));
   }
 }
