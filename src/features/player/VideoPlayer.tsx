@@ -7,6 +7,7 @@ import {
 } from "react";
 import type { MediaPlayerClass } from "dashjs";
 import {
+  Check,
   LoaderCircle,
   Maximize,
   MessageSquareOff,
@@ -27,6 +28,7 @@ import { useI18n, useToast } from "@/composables";
 import DanmakuComposer from "@/features/danmaku/DanmakuComposer";
 import DanmakuCanvas from "@/features/danmaku/DanmakuCanvas";
 import PlayerQualityMenu from "@/features/player/PlayerQualityMenu";
+import PlayerPausedPanel from "@/features/player/PlayerPausedPanel";
 import PlayerSettingsDialog from "@/features/player/PlayerSettingsDialog";
 import PlayerSpeedMenu from "@/features/player/PlayerSpeedMenu";
 import {
@@ -35,11 +37,13 @@ import {
   savePlayerPreferences,
   type PlayerPreferences,
 } from "@/features/player/playerPreferences";
+import { useVideoActionController } from "@/features/social/useVideoActionController";
 import { formatDuration } from "@/lib/format";
 import type {
   DanmakuItem,
   PlaybackQuality,
   PlaybackSession,
+  VideoDetail,
   VideoPart,
 } from "@/shared/bili.types";
 import { cn } from "@/lib/utils";
@@ -49,6 +53,8 @@ interface VideoPlayerProps {
   aid: number;
   bvid: string;
   cid: number;
+  detail: VideoDetail;
+  activePart: VideoPart;
   title: string;
   posterUrl: string;
   durationSeconds: number;
@@ -62,12 +68,16 @@ interface VideoPlayerProps {
   onProgress: (seconds: number) => void;
   onEnded: () => void;
   onDanmakuSent: (item: DanmakuItem) => void;
+  onShare: () => void;
 }
 
 const PROGRESS_KEY_PREFIX = "ailicili:playback-progress:";
 const CONTROL_HIDE_DELAY = 2200;
 const QUALITY_SWITCH_SETTLE_DELAY = 320;
 const QUALITY_SWITCH_TIMEOUT = 6500;
+const AUTO_LIKE_AFTER_MS = 20_000;
+const AUTO_LIKE_SAMPLE_MS = 500;
+const AUTO_LIKE_FEEDBACK_MS = 3000;
 
 interface PendingQualitySwitch {
   previousQuality: string;
@@ -86,7 +96,8 @@ function isEditableElement(element: Element | null) {
   return (
     element instanceof HTMLInputElement ||
     element instanceof HTMLSelectElement ||
-    element instanceof HTMLTextAreaElement
+    element instanceof HTMLTextAreaElement ||
+    (element instanceof HTMLElement && element.isContentEditable)
   );
 }
 
@@ -163,6 +174,8 @@ export default function VideoPlayer({
   aid,
   bvid,
   cid,
+  detail,
+  activePart,
   title,
   posterUrl,
   durationSeconds,
@@ -176,16 +189,22 @@ export default function VideoPlayer({
   onProgress,
   onEnded,
   onDanmakuSent,
+  onShare,
 }: VideoPlayerProps) {
   const { t } = useI18n();
-  const { error: toastError } = useToast();
+  const { error: toastError, info: toastInfo } = useToast();
   const toastErrorRef = useRef(toastError);
+  const toastInfoRef = useRef(toastInfo);
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const playerRef = useRef<MediaPlayerClass | null>(null);
   const hideTimerRef = useRef<number | null>(null);
   const pendingQualitySwitchRef = useRef<PendingQualitySwitch | null>(null);
   const resumeTimerRef = useRef<number | null>(null);
+  const feedbackTimerRef = useRef<number | null>(null);
+  const activePlaybackMsRef = useRef(0);
+  const lastActiveSampleRef = useRef<number | null>(null);
+  const autoLikeAttemptedRef = useRef(false);
   const lastHeartbeatRef = useRef(0);
   const [playing, setPlaying] = useState(false);
   const [buffering, setBuffering] = useState(true);
@@ -201,6 +220,7 @@ export default function VideoPlayer({
   const [qualitySwitching, setQualitySwitching] =
     useState<QualitySwitchingState | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [autoLikeFeedback, setAutoLikeFeedback] = useState(false);
   const [preferences, setPreferences] = useState<PlayerPreferences>(() => {
     const stored = readPlayerPreferences();
     const qualityAvailable =
@@ -210,6 +230,17 @@ export default function VideoPlayer({
   });
   const preferencesRef = useRef(preferences);
   toastErrorRef.current = toastError;
+  toastInfoRef.current = toastInfo;
+  const bufferingRef = useRef(buffering);
+  bufferingRef.current = buffering;
+  const handleAuthenticationRequired = useCallback(() => {
+    toastErrorRef.current("Actions.loginRequired");
+  }, []);
+  const videoActions = useVideoActionController(detail, {
+    onAuthenticationRequired: handleAuthenticationRequired,
+  });
+  const videoActionsRef = useRef(videoActions);
+  videoActionsRef.current = videoActions;
 
   const showControls = useCallback(() => {
     setControlsVisible(true);
@@ -355,6 +386,61 @@ export default function VideoPlayer({
       setControlsVisible(true);
     }
   }, [preferences, session.qualities]);
+
+  useEffect(() => {
+    const sampleActivePlayback = () => {
+      const video = videoRef.current;
+      if (!video) return;
+
+      const active =
+        !video.paused &&
+        !video.ended &&
+        !video.seeking &&
+        video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+        !bufferingRef.current;
+      const now = window.performance.now();
+      if (active && lastActiveSampleRef.current !== null) {
+        activePlaybackMsRef.current += Math.min(
+          AUTO_LIKE_SAMPLE_MS,
+          Math.max(0, now - lastActiveSampleRef.current)
+        );
+      }
+      lastActiveSampleRef.current = active ? now : null;
+
+      if (activePlaybackMsRef.current <= AUTO_LIKE_AFTER_MS) return;
+      const social = videoActionsRef.current;
+      if (
+        autoLikeAttemptedRef.current ||
+        !preferencesRef.current.autoLike ||
+        !social.authenticated ||
+        !social.actions ||
+        social.actions.liked ||
+        social.actionsPending ||
+        social.pending
+      ) {
+        return;
+      }
+
+      autoLikeAttemptedRef.current = true;
+      void social.setLiked(true).then((completed) => {
+        if (!completed) return;
+        setAutoLikeFeedback(true);
+        if (feedbackTimerRef.current) {
+          window.clearTimeout(feedbackTimerRef.current);
+        }
+        feedbackTimerRef.current = window.setTimeout(() => {
+          feedbackTimerRef.current = null;
+          setAutoLikeFeedback(false);
+        }, AUTO_LIKE_FEEDBACK_MS);
+      });
+    };
+
+    const intervalId = window.setInterval(
+      sampleActivePlayback,
+      AUTO_LIKE_SAMPLE_MS
+    );
+    return () => window.clearInterval(intervalId);
+  }, []);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -526,6 +612,10 @@ export default function VideoPlayer({
     () => () => {
       if (hideTimerRef.current) window.clearTimeout(hideTimerRef.current);
       if (resumeTimerRef.current) window.clearTimeout(resumeTimerRef.current);
+      if (feedbackTimerRef.current) {
+        window.clearTimeout(feedbackTimerRef.current);
+        feedbackTimerRef.current = null;
+      }
       if (pendingQualitySwitchRef.current) {
         window.clearTimeout(pendingQualitySwitchRef.current.timeoutId);
         pendingQualitySwitchRef.current = null;
@@ -554,6 +644,28 @@ export default function VideoPlayer({
     [duration, showControls]
   );
 
+  const changeVolume = useCallback(
+    (amount: number) => {
+      const video = videoRef.current;
+      if (!video) return;
+      video.volume = Math.min(1, Math.max(0, video.volume + amount));
+      video.muted = false;
+      showControls();
+    },
+    [showControls]
+  );
+
+  const toggleDanmaku = useCallback(() => {
+    updatePreferences((current) => ({
+      ...current,
+      danmaku: {
+        ...current.danmaku,
+        enabled: !current.danmaku.enabled,
+      },
+    }));
+    showControls();
+  }, [showControls, updatePreferences]);
+
   const toggleFullscreen = useCallback(async () => {
     if (document.fullscreenElement) await document.exitFullscreen();
     else await containerRef.current?.requestFullscreen();
@@ -567,31 +679,85 @@ export default function VideoPlayer({
   }, []);
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (qualitySwitching) return;
-    if (settingsOpen || qualityMenuOpen || speedMenuOpen) return;
     if (
-      event.target instanceof HTMLInputElement ||
-      event.target instanceof HTMLSelectElement ||
-      event.target instanceof HTMLTextAreaElement ||
-      event.target instanceof HTMLButtonElement
+      qualitySwitching ||
+      event.repeat ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.altKey
     ) {
       return;
     }
-    if (event.key === " " || event.key.toLowerCase() === "k") {
+    if (settingsOpen || qualityMenuOpen || speedMenuOpen) return;
+    if (
+      isEditableElement(event.target as Element | null) ||
+      event.target instanceof HTMLButtonElement ||
+      event.target instanceof HTMLAnchorElement
+    ) {
+      return;
+    }
+    const key = event.key.toLowerCase();
+    if (event.key === " " || key === "k") {
       event.preventDefault();
       togglePlayback();
-    } else if (event.key === "ArrowLeft" || event.key.toLowerCase() === "j") {
+    } else if (event.key === "ArrowLeft" || key === "j") {
       event.preventDefault();
       seekBy(-5);
-    } else if (event.key === "ArrowRight" || event.key.toLowerCase() === "l") {
+    } else if (event.key === "ArrowRight" || key === "l") {
       event.preventDefault();
       seekBy(5);
-    } else if (event.key.toLowerCase() === "m") {
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      changeVolume(0.1);
+    } else if (event.key === "ArrowDown") {
+      event.preventDefault();
+      changeVolume(-0.1);
+    } else if (key === "m") {
       const video = videoRef.current;
       if (video) video.muted = !video.muted;
-    } else if (event.key.toLowerCase() === "f") {
+    } else if (key === "q") {
+      if (
+        !videoActions.actions ||
+        videoActions.pending ||
+        videoActions.actionsPending
+      ) {
+        return;
+      }
+      event.preventDefault();
+      void videoActions.setLiked(!videoActions.actions.liked);
+    } else if (key === "w") {
+      if (
+        !videoActions.actions ||
+        videoActions.pending ||
+        videoActions.actionsPending
+      ) {
+        return;
+      }
+      event.preventDefault();
+      if (videoActions.actions.coined >= 2) {
+        toastInfoRef.current("Actions.coinLimit");
+      } else {
+        void videoActions.addCoin(1, false);
+      }
+    } else if (key === "e") {
+      if (videoActions.pending || videoActions.actionsPending) return;
+      event.preventDefault();
+      void videoActions.toggleFavoriteToDefaultFolder();
+    } else if (key === "r") {
+      event.preventDefault();
+      onShare();
+    } else if (key === "a") {
+      if (videoActions.pending || videoActions.actionsPending) return;
+      event.preventDefault();
+      void videoActions.triple();
+    } else if (key === "d") {
+      event.preventDefault();
+      toggleDanmaku();
+    } else if (key === "f") {
+      event.preventDefault();
       void toggleFullscreen();
-    } else if (event.key.toLowerCase() === "t") {
+    } else if (key === "t") {
+      event.preventDefault();
       onToggleTheater();
     }
   };
@@ -639,6 +805,20 @@ export default function VideoPlayer({
         items={danmaku}
         settings={preferences.danmaku}
       />
+
+      {autoLikeFeedback && (
+        <div
+          data-testid="auto-like-feedback"
+          role="status"
+          aria-live="polite"
+          className="absolute top-3 right-3 z-40 flex items-center gap-2 rounded-md border border-white/15 bg-black/75 px-3 py-2 text-xs font-medium text-white shadow-xl backdrop-blur-md"
+        >
+          <span className="bg-primary text-primary-foreground flex size-5 items-center justify-center rounded-full">
+            <Check className="size-3.5" strokeWidth={3} />
+          </span>
+          {t("Player.autoLike.success")}
+        </div>
+      )}
 
       {buffering && !error && (
         <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-black/15">
@@ -694,16 +874,16 @@ export default function VideoPlayer({
       )}
 
       {!playing && !buffering && !error && !qualitySwitching && (
-        <button
-          type="button"
-          onClick={togglePlayback}
-          className="absolute inset-0 z-20 flex items-center justify-center bg-black/10"
-          aria-label={t("Player.play")}
-        >
-          <span className="flex size-16 items-center justify-center rounded-full bg-black/65 text-white shadow-xl backdrop-blur-sm">
-            <Play className="ml-1 size-7 fill-current" />
-          </span>
-        </button>
+        <PlayerPausedPanel
+          detail={detail}
+          activePart={activePart}
+          actions={videoActions}
+          autoLike={preferences.autoLike}
+          onAutoLikeChange={(autoLike) =>
+            updatePreferences((current) => ({ ...current, autoLike }))
+          }
+          onResume={togglePlayback}
+        />
       )}
 
       <div
@@ -745,7 +925,7 @@ export default function VideoPlayer({
             <button
               type="button"
               onClick={togglePlayback}
-              title={playing ? t("Player.pause") : t("Player.play")}
+              title={`${playing ? t("Player.pause") : t("Player.play")} (Space / K)`}
               aria-label={playing ? t("Player.pause") : t("Player.play")}
               className="flex size-8 items-center justify-center rounded-md hover:bg-white/15"
             >
@@ -761,7 +941,7 @@ export default function VideoPlayer({
                 onClick={() => {
                   if (videoRef.current) videoRef.current.muted = !muted;
                 }}
-                title={muted ? t("Player.unmute") : t("Player.mute")}
+                title={`${muted ? t("Player.unmute") : t("Player.mute")} (M)`}
                 aria-label={muted ? t("Player.unmute") : t("Player.mute")}
                 className="flex size-8 items-center justify-center rounded-md hover:bg-white/15"
               >
@@ -870,20 +1050,11 @@ export default function VideoPlayer({
             />
             <button
               type="button"
-              onClick={() => {
-                updatePreferences((current) => ({
-                  ...current,
-                  danmaku: {
-                    ...current.danmaku,
-                    enabled: !current.danmaku.enabled,
-                  },
-                }));
-                showControls();
-              }}
+              onClick={toggleDanmaku}
               title={
                 preferences.danmaku.enabled
-                  ? t("Player.danmaku.hide")
-                  : t("Player.danmaku.show")
+                  ? `${t("Player.danmaku.hide")} (D)`
+                  : `${t("Player.danmaku.show")} (D)`
               }
               aria-label={
                 preferences.danmaku.enabled
@@ -921,7 +1092,7 @@ export default function VideoPlayer({
             <button
               type="button"
               onClick={onToggleTheater}
-              title={t("Player.theater")}
+              title={`${t("Player.theater")} (T)`}
               aria-label={t("Player.theater")}
               className={cn(
                 "hidden size-8 items-center justify-center rounded-md hover:bg-white/15 sm:flex",
@@ -943,7 +1114,9 @@ export default function VideoPlayer({
               type="button"
               onClick={() => void toggleFullscreen()}
               title={
-                fullscreen ? t("Player.exitFullscreen") : t("Player.fullscreen")
+                fullscreen
+                  ? `${t("Player.exitFullscreen")} (F)`
+                  : `${t("Player.fullscreen")} (F)`
               }
               aria-label={
                 fullscreen ? t("Player.exitFullscreen") : t("Player.fullscreen")

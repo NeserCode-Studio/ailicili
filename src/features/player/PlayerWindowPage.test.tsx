@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -7,7 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import PageTitlebarProvider from "@/components/framework/PageTitlebarProvider";
 import { I18nContext } from "@/contexts/i18n";
@@ -21,12 +22,18 @@ import {
 import { PLAYER_WINDOW_REOPENED_EVENT } from "@/features/player/playerWindowLifecycle";
 import { fitPlayerWindowToVideo } from "@/features/player/playerWindowSizing";
 import {
+  coinVideo,
   createPlaybackSession,
   fetchAuthStatus,
   fetchDanmaku,
+  fetchFavoriteFolders,
   fetchResumePoint,
   fetchVideoDetail,
+  fetchVideoActions,
+  likeVideo,
   openPlayerWindow,
+  setVideoFavorite,
+  tripleVideo,
 } from "@/lib/bili";
 import { createVideoSummary } from "@/test/fixtures/bili";
 
@@ -52,13 +59,19 @@ vi.mock("@/lib/bili", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/bili")>();
   return {
     ...actual,
+    coinVideo: vi.fn(),
     createPlaybackSession: vi.fn(),
     fetchAuthStatus: vi.fn(),
     fetchDanmaku: vi.fn(),
+    fetchFavoriteFolders: vi.fn(),
     fetchResumePoint: vi.fn(),
     fetchVideoDetail: vi.fn(),
+    fetchVideoActions: vi.fn(),
+    likeVideo: vi.fn(),
     openPlayerWindow: vi.fn(),
     reportHeartbeat: vi.fn(),
+    setVideoFavorite: vi.fn(),
+    tripleVideo: vi.fn(),
   };
 });
 
@@ -74,10 +87,16 @@ vi.mock("@/features/player/playerWindowSizing", () => ({
 
 const fetchVideoDetailMock = vi.mocked(fetchVideoDetail);
 const createPlaybackSessionMock = vi.mocked(createPlaybackSession);
+const coinVideoMock = vi.mocked(coinVideo);
 const fetchAuthStatusMock = vi.mocked(fetchAuthStatus);
 const fetchDanmakuMock = vi.mocked(fetchDanmaku);
+const fetchFavoriteFoldersMock = vi.mocked(fetchFavoriteFolders);
 const fetchResumePointMock = vi.mocked(fetchResumePoint);
+const fetchVideoActionsMock = vi.mocked(fetchVideoActions);
+const likeVideoMock = vi.mocked(likeVideo);
 const openPlayerWindowMock = vi.mocked(openPlayerWindow);
+const setVideoFavoriteMock = vi.mocked(setVideoFavorite);
+const tripleVideoMock = vi.mocked(tripleVideo);
 const fitPlayerWindowToVideoMock = vi.mocked(fitPlayerWindowToVideo);
 
 function PlayerTestShell() {
@@ -153,6 +172,15 @@ describe("PlayerWindowPage", () => {
         vipLabel: null,
       },
     });
+    fetchVideoActionsMock.mockResolvedValue({
+      liked: false,
+      coined: 0,
+      favorited: false,
+      followed: false,
+    });
+    fetchFavoriteFoldersMock.mockResolvedValue([
+      { id: "7", title: "默认收藏夹", mediaCount: 3 },
+    ]);
     createPlaybackSessionMock.mockResolvedValue({
       sessionId: "test-session",
       mpdUrl: "http://bilistream.localhost/mpd/test-session",
@@ -181,6 +209,15 @@ describe("PlayerWindowPage", () => {
       lastPlayTimeSeconds: 0,
       lastPlayCid: 0,
     });
+    coinVideoMock.mockResolvedValue();
+    likeVideoMock.mockResolvedValue();
+    setVideoFavoriteMock.mockResolvedValue();
+    tripleVideoMock.mockResolvedValue({
+      liked: true,
+      coined: true,
+      favorited: true,
+    });
+    vi.clearAllMocks();
     fitPlayerWindowToVideoMock.mockResolvedValue();
     openPlayerWindowMock.mockResolvedValue();
     dashPlayerMock.handlers.clear();
@@ -189,6 +226,37 @@ describe("PlayerWindowPage", () => {
     });
     dashPlayerMock.setRepresentationForTypeById.mockClear();
   });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  async function showPausedPlayer() {
+    const view = renderPlayer();
+    const video = (await screen.findByTestId(
+      "video-player"
+    )) as HTMLVideoElement;
+    const play = vi.spyOn(video, "play").mockResolvedValue();
+    Object.defineProperty(video, "paused", {
+      configurable: true,
+      get: () => true,
+    });
+    await waitFor(() =>
+      expect(dashPlayerMock.handlers.has("streamInitialized")).toBe(true)
+    );
+    dashPlayerMock.emit("streamInitialized", {});
+    fireEvent.pause(video);
+    const panel = await screen.findByTestId("player-paused-panel");
+    return {
+      ...view,
+      panel,
+      play,
+      root: video.parentElement as HTMLElement,
+      video,
+    };
+  }
 
   it("renders the player in its dedicated window route", async () => {
     renderPlayer();
@@ -231,6 +299,173 @@ describe("PlayerWindowPage", () => {
       80
     );
     expect(fetchDanmakuMock).toHaveBeenCalledWith(2001, 125);
+  });
+
+  it("replaces the paused overlay with video details and social actions", async () => {
+    const { panel } = await showPausedPlayer();
+
+    expect(
+      within(panel).getByRole("heading", { name: "测试视频" })
+    ).toBeVisible();
+    expect(within(panel).getByText(/测试 UP 主/)).toBeVisible();
+    expect(within(panel).getByText("简介")).toBeVisible();
+    expect(
+      within(panel).getByRole("button", { name: "Player.resume" })
+    ).toBeVisible();
+    expect(
+      within(panel).getByRole("button", { name: "Actions.like" })
+    ).toBeVisible();
+    expect(
+      within(panel).getByRole("button", { name: "Actions.triple" })
+    ).toBeVisible();
+
+    const autoLike = within(panel).getByRole("switch", {
+      name: "Player.settings.autoLike",
+    });
+    expect(autoLike).not.toBeChecked();
+    fireEvent.click(autoLike);
+    await waitFor(() => expect(readPlayerPreferences().autoLike).toBe(true));
+  });
+
+  it("maps Q, W, E, R, and F to player actions", async () => {
+    const { root, video } = await showPausedPlayer();
+    const controls = screen.getByTestId("player-controls");
+    const composer = within(controls).getByPlaceholderText(
+      "Danmaku.placeholder"
+    );
+
+    fireEvent.keyDown(composer, { key: "q" });
+    expect(likeVideoMock).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(root, { key: "q" });
+    await waitFor(() =>
+      expect(likeVideoMock).toHaveBeenCalledWith("BV1xx411c7mD", true)
+    );
+
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId("player-paused-panel")).getByRole("button", {
+          name: "Actions.coin",
+        })
+      ).toBeEnabled()
+    );
+    fireEvent.keyDown(root, { key: "w" });
+    await waitFor(() =>
+      expect(coinVideoMock).toHaveBeenCalledWith("BV1xx411c7mD", 1, false)
+    );
+
+    fireEvent.keyDown(root, { key: "e" });
+    await waitFor(() =>
+      expect(setVideoFavoriteMock).toHaveBeenCalledWith({
+        aid: 1,
+        addMediaIds: ["7"],
+        removeMediaIds: [],
+      })
+    );
+
+    const openWindow = vi.spyOn(window, "open").mockReturnValue(null);
+    fireEvent.keyDown(root, { key: "r" });
+    expect(openWindow).toHaveBeenCalledWith(
+      "https://www.bilibili.com/video/BV1xx411c7mD",
+      "_blank",
+      "noopener,noreferrer"
+    );
+
+    const requestFullscreen = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(root, "requestFullscreen", {
+      configurable: true,
+      value: requestFullscreen,
+    });
+    fireEvent.keyDown(root, { key: "f" });
+    expect(requestFullscreen).toHaveBeenCalledOnce();
+    expect(video).toBeVisible();
+  });
+
+  it("auto-likes only after more than 20 seconds of active playback", async () => {
+    const preferences = createDefaultPlayerPreferences();
+    preferences.autoLike = true;
+    savePlayerPreferences(preferences);
+
+    let autoLikeSample: (() => void) | null = null;
+    const originalSetInterval = window.setInterval.bind(window);
+    vi.stubGlobal(
+      "setInterval",
+      (handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+        if (timeout === 500 && typeof handler === "function") {
+          autoLikeSample = () => handler();
+          return 999;
+        }
+        return originalSetInterval(handler, timeout, ...args);
+      }
+    );
+    renderPlayer();
+    const video = (await screen.findByTestId(
+      "video-player"
+    )) as HTMLVideoElement;
+    const play = vi.spyOn(video, "play").mockResolvedValue();
+    let paused = false;
+    let seeking = false;
+    Object.defineProperty(video, "paused", {
+      configurable: true,
+      get: () => paused,
+    });
+    Object.defineProperty(video, "ended", {
+      configurable: true,
+      get: () => false,
+    });
+    Object.defineProperty(video, "seeking", {
+      configurable: true,
+      get: () => seeking,
+    });
+    Object.defineProperty(video, "readyState", {
+      configurable: true,
+      get: () => 2,
+    });
+
+    await waitFor(() =>
+      expect(dashPlayerMock.handlers.has("streamInitialized")).toBe(true)
+    );
+    dashPlayerMock.emit("streamInitialized", {});
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Actions.like" })).toBeEnabled()
+    );
+
+    let playbackNow = 0;
+    const performanceNow = vi
+      .spyOn(window.performance, "now")
+      .mockImplementation(() => playbackNow);
+    const runSample = () => {
+      act(() => autoLikeSample?.());
+    };
+    const advanceActivePlayback = (milliseconds: number) => {
+      for (let elapsed = 500; elapsed <= milliseconds; elapsed += 500) {
+        playbackNow += 500;
+        runSample();
+      }
+    };
+
+    advanceActivePlayback(10_000);
+    expect(likeVideoMock).not.toHaveBeenCalled();
+
+    paused = true;
+    advanceActivePlayback(10_000);
+    paused = false;
+    seeking = true;
+    advanceActivePlayback(10_000);
+    expect(likeVideoMock).not.toHaveBeenCalled();
+
+    seeking = false;
+    advanceActivePlayback(12_000);
+
+    await waitFor(() =>
+      expect(likeVideoMock).toHaveBeenCalledWith("BV1xx411c7mD", true)
+    );
+    expect(await screen.findByTestId("auto-like-feedback")).toBeVisible();
+    expect(play).toHaveBeenCalled();
+    advanceActivePlayback(5_000);
+    expect(likeVideoMock).toHaveBeenCalledOnce();
+
+    performanceNow.mockRestore();
   });
 
   it("refits the window when the hidden player is reopened", async () => {

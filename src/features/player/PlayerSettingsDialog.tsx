@@ -268,6 +268,22 @@ export default function PlayerSettingsDialog({
                   }
                 />
                 <SettingsRow
+                  title={t("Player.settings.autoLike")}
+                  description={t("Player.settings.autoLike.description")}
+                  control={
+                    <Switch
+                      checked={preferences.autoLike}
+                      onCheckedChange={(checked) =>
+                        onPreferencesChange((current) => ({
+                          ...current,
+                          autoLike: checked,
+                        }))
+                      }
+                      aria-label={t("Player.settings.autoLike")}
+                    />
+                  }
+                />
+                <SettingsRow
                   title={t("Player.settings.autoFitWindow")}
                   description={t("Player.settings.autoFitWindow.description")}
                   control={

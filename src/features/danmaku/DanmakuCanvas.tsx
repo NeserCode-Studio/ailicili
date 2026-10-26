@@ -1,12 +1,17 @@
-import { useEffect, useRef, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 
 import {
   danmakuColor,
   danmakuLaneCount,
   danmakuLaneY,
   findDanmakuLane,
+  matchesDanmakuRepeat,
+  pruneDanmakuRepeats,
+  registerDanmakuRepeat,
   shouldDisplayDanmaku,
+  visibleDanmakuRepeats,
   type ActiveDanmaku,
+  type DanmakuRepeatGroup,
 } from "@/features/danmaku/danmakuLayout";
 import type { DanmakuItem } from "@/shared/bili.types";
 
@@ -37,6 +42,7 @@ export default function DanmakuCanvas({
 }: DanmakuCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const settingsRef = useRef(settings);
+  const [repeatGroups, setRepeatGroups] = useState<DanmakuRepeatGroup[]>([]);
 
   useEffect(() => {
     settingsRef.current = settings;
@@ -52,10 +58,23 @@ export default function DanmakuCanvas({
 
     let animationFrame = 0;
     let active: ActiveDanmaku[] = [];
+    let repeated: DanmakuRepeatGroup[] = [];
     let itemIndex = 0;
     let previousVideoTime = video.currentTime;
     let width = 0;
     let height = 0;
+    let publishedRepeatSignature: string | null = null;
+    let wasEnabled = true;
+
+    const publishRepeats = (time: number) => {
+      const visible = visibleDanmakuRepeats(repeated, time);
+      const signature = visible
+        .map((group) => `${group.id}:${group.count}`)
+        .join("|");
+      if (signature === publishedRepeatSignature) return;
+      publishedRepeatSignature = signature;
+      setRepeatGroups(visible);
+    };
 
     const resize = () => {
       const rect = canvas.getBoundingClientRect();
@@ -82,6 +101,8 @@ export default function DanmakuCanvas({
       }
       itemIndex = low;
       active = [];
+      repeated = [];
+      publishRepeats(time);
     };
 
     const frame = () => {
@@ -89,7 +110,17 @@ export default function DanmakuCanvas({
       const current = settingsRef.current;
       const now = video.currentTime;
       context.clearRect(0, 0, width, height);
-      if (!current.enabled || !Number.isFinite(now)) return;
+      if (!Number.isFinite(now)) return;
+      if (!current.enabled) {
+        wasEnabled = false;
+        repeated = [];
+        publishRepeats(now);
+        return;
+      }
+      if (!wasEnabled) {
+        wasEnabled = true;
+        seekIndex(now);
+      }
 
       if (Math.abs(now - previousVideoTime) > 1.5) {
         seekIndex(now);
@@ -110,6 +141,13 @@ export default function DanmakuCanvas({
           ) {
             continue;
           }
+          const repeatedIndex = repeated.findIndex((group) =>
+            matchesDanmakuRepeat(group, item, now)
+          );
+          if (repeatedIndex >= 0) {
+            repeated = registerDanmakuRepeat(repeated, item, now).groups;
+            continue;
+          }
           const fontSize = Math.max(
             12,
             Math.min(44, item.size * current.fontScale)
@@ -125,6 +163,7 @@ export default function DanmakuCanvas({
             width
           );
           if (lane < 0) continue;
+          repeated = registerDanmakuRepeat(repeated, item, now).groups;
           const y = danmakuLaneY(item.mode, lane, laneCount, height, fontSize);
           active.push({
             item,
@@ -138,6 +177,9 @@ export default function DanmakuCanvas({
           });
         }
       }
+
+      repeated = pruneDanmakuRepeats(repeated, now);
+      publishRepeats(now);
 
       if (!video.paused) {
         active = active.filter((item) => now - item.startedAt < item.duration);
@@ -178,11 +220,32 @@ export default function DanmakuCanvas({
   }, [items, videoRef]);
 
   return (
-    <canvas
-      ref={canvasRef}
-      aria-hidden="true"
-      data-testid="danmaku-canvas"
-      className="pointer-events-none absolute inset-0 z-10 size-full"
-    />
+    <>
+      <canvas
+        ref={canvasRef}
+        aria-hidden="true"
+        data-testid="danmaku-canvas"
+        className="pointer-events-none absolute inset-0 z-10 size-full"
+      />
+      {repeatGroups.length > 0 && (
+        <div
+          data-testid="danmaku-repeat-groups"
+          className="pointer-events-none absolute top-1/2 left-3 z-20 flex max-h-[45%] w-[min(38%,15rem)] -translate-y-1/2 flex-col items-start gap-1.5 overflow-hidden"
+        >
+          {repeatGroups.slice(-4).map((group) => (
+            <div
+              key={group.id}
+              data-testid="danmaku-repeat-group"
+              className="flex max-w-full items-center gap-2 rounded-sm border border-white/10 bg-black/65 px-2 py-1 text-[11px] text-white/90 shadow-lg backdrop-blur-sm"
+            >
+              <span className="min-w-0 truncate">{group.text}</span>
+              <span className="shrink-0 font-mono text-[10px] text-white/55 tabular-nums">
+                ×{group.count}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
   );
 }

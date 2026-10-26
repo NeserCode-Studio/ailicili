@@ -10,8 +10,20 @@ export interface ActiveDanmaku {
   fontSize: number;
 }
 
+export interface DanmakuRepeatGroup {
+  id: string;
+  text: string;
+  mode: DanmakuItem["mode"];
+  count: number;
+  firstSeenAt: number;
+  lastSeenAt: number;
+  expiresAt: number;
+}
+
 export const DANMAKU_LANE_HEIGHT = 30;
 export const DANMAKU_MAX_LANES = 16;
+export const DANMAKU_REPEAT_WINDOW_SECONDS = 3;
+export const DANMAKU_REPEAT_HOLD_SECONDS = 3;
 
 export function findDanmakuLane(
   active: ActiveDanmaku[],
@@ -67,4 +79,70 @@ export function shouldDisplayDanmaku(
 
 export function danmakuColor(value: number) {
   return `#${value.toString(16).padStart(6, "0")}`;
+}
+
+export function matchesDanmakuRepeat(
+  group: DanmakuRepeatGroup,
+  item: DanmakuItem,
+  now: number
+) {
+  return (
+    group.text === item.text &&
+    group.mode === item.mode &&
+    now >= group.lastSeenAt &&
+    now - group.lastSeenAt <= DANMAKU_REPEAT_WINDOW_SECONDS
+  );
+}
+
+export function registerDanmakuRepeat(
+  groups: readonly DanmakuRepeatGroup[],
+  item: DanmakuItem,
+  now: number
+) {
+  const existingIndex = groups.findIndex((group) =>
+    matchesDanmakuRepeat(group, item, now)
+  );
+  if (existingIndex < 0) {
+    const group: DanmakuRepeatGroup = {
+      id: `${item.mode}:${now}:${item.text}`,
+      text: item.text,
+      mode: item.mode,
+      count: 1,
+      firstSeenAt: now,
+      lastSeenAt: now,
+      expiresAt: now + DANMAKU_REPEAT_HOLD_SECONDS,
+    };
+    return {
+      groups: [...groups, group],
+      repeated: false,
+    };
+  }
+
+  const existing = groups[existingIndex];
+  const updated: DanmakuRepeatGroup = {
+    ...existing,
+    count: existing.count + 1,
+    lastSeenAt: now,
+    expiresAt: now + DANMAKU_REPEAT_HOLD_SECONDS,
+  };
+  return {
+    groups: groups.map((group, index) =>
+      index === existingIndex ? updated : group
+    ),
+    repeated: true,
+  };
+}
+
+export function pruneDanmakuRepeats(
+  groups: readonly DanmakuRepeatGroup[],
+  now: number
+) {
+  return groups.filter((group) => now <= group.expiresAt);
+}
+
+export function visibleDanmakuRepeats(
+  groups: readonly DanmakuRepeatGroup[],
+  now: number
+) {
+  return pruneDanmakuRepeats(groups, now).filter((group) => group.count > 1);
 }

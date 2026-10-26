@@ -24,6 +24,17 @@ describe("player preferences", () => {
     expect(readPlayerPreferences().autoFitWindow).toBe(false);
   });
 
+  it("only enables automatic liking when explicitly requested", () => {
+    expect(createDefaultPlayerPreferences().autoLike).toBe(false);
+
+    localStorage.setItem(
+      "ailicili:player-preferences",
+      JSON.stringify({ autoLike: true })
+    );
+
+    expect(readPlayerPreferences().autoLike).toBe(true);
+  });
+
   it("returns sanitized defaults when stored preferences are malformed", () => {
     localStorage.setItem(
       "ailicili:player-preferences",

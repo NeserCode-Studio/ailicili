@@ -98,6 +98,10 @@ export const I18nTexts = {
       "This video's media stream is unavailable in Ailicili. You can still open it on Bilibili.",
     "Player.play": "Play",
     "Player.pause": "Pause",
+    "Player.paused": "Paused",
+    "Player.pausePanel": "Video details",
+    "Player.resume": "Resume playback",
+    "Player.autoLike.success": "Liked automatically",
     "Player.mute": "Mute",
     "Player.unmute": "Unmute",
     "Player.progress": "Playback progress",
@@ -114,6 +118,9 @@ export const I18nTexts = {
     "Player.settings.autoPlay": "Autoplay after load",
     "Player.settings.autoPlay.description":
       "Start playback automatically when the media stream is ready.",
+    "Player.settings.autoLike": "Auto-like after 20 seconds",
+    "Player.settings.autoLike.description":
+      "After more than 20 seconds of active playback, like the video once when signed in. Paused, buffered, and seeked time is excluded.",
     "Player.settings.autoFitWindow": "Fit window to video",
     "Player.settings.autoFitWindow.description":
       "Resize the player to the video's dimensions each time it opens, limited to the current monitor's work area.",
@@ -234,6 +241,7 @@ export const I18nTexts = {
     "Actions.coinCount": "How many coins?",
     "Actions.coinAndLike": "Use 2 coins and like",
     "Actions.favorite": "Favorite",
+    "Actions.favorited": "Favorited",
     "Actions.chooseFolder": "Choose a favorite folder",
     "Actions.noFolders": "No favorite folders found.",
     "Actions.saveFolder": "Save to folder",
@@ -246,6 +254,8 @@ export const I18nTexts = {
     "Actions.tripleSuccess": "Like, coin and favorite completed",
     "Actions.watchLaterSuccess": "Added to Watch later",
     "Actions.error": "The action could not be completed.",
+    "Actions.loginRequired": "Sign in to interact with videos.",
+    "Actions.coinLimit": "This video has already received the maximum coins.",
 
     "Common.cancel": "Cancel",
     "Common.previous": "Previous",
@@ -624,6 +634,10 @@ export const I18nTexts = {
       "Ailicili 无法播放当前视频流，你仍可以在 Bilibili 页面中打开。",
     "Player.play": "播放",
     "Player.pause": "暂停",
+    "Player.paused": "已暂停",
+    "Player.pausePanel": "视频详情",
+    "Player.resume": "继续播放",
+    "Player.autoLike.success": "已自动点赞",
     "Player.mute": "静音",
     "Player.unmute": "取消静音",
     "Player.progress": "播放进度",
@@ -638,6 +652,9 @@ export const I18nTexts = {
     "Player.settings.speed.description": "改变播放速度，同时尽量保留原始音调。",
     "Player.settings.autoPlay": "加载后自动播放",
     "Player.settings.autoPlay.description": "媒体流准备完成后自动开始播放。",
+    "Player.settings.autoLike": "观看 20 秒后自动点赞",
+    "Player.settings.autoLike.description":
+      "登录状态下实际播放超过 20 秒后自动点赞一次；暂停、缓冲和拖动进度的时间不计入。",
     "Player.settings.autoFitWindow": "每次自适应尺寸",
     "Player.settings.autoFitWindow.description":
       "每次打开视频时，根据视频原始尺寸调整播放器窗口，并限制在当前屏幕可用区域内。",
@@ -753,6 +770,7 @@ export const I18nTexts = {
     "Actions.coinCount": "选择投币数量",
     "Actions.coinAndLike": "投 2 枚币并点赞",
     "Actions.favorite": "收藏",
+    "Actions.favorited": "已收藏",
     "Actions.chooseFolder": "选择收藏夹",
     "Actions.noFolders": "没有找到收藏夹。",
     "Actions.saveFolder": "保存到收藏夹",
@@ -765,6 +783,8 @@ export const I18nTexts = {
     "Actions.tripleSuccess": "一键三连成功",
     "Actions.watchLaterSuccess": "已加入稍后再看",
     "Actions.error": "操作未能完成。",
+    "Actions.loginRequired": "登录后才能与视频互动。",
+    "Actions.coinLimit": "该视频已达到可投币上限。",
 
     "Common.cancel": "取消",
     "Common.previous": "上一页",

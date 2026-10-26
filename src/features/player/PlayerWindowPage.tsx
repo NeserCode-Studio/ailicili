@@ -56,6 +56,12 @@ export default function PlayerWindowPage() {
   const resolvedCid = activePart?.cid ?? requestedCid;
   const playbackDurationSeconds =
     activePart?.durationSeconds ?? video?.durationSeconds ?? 0;
+  const activePlaybackPart: VideoPart = activePart ?? {
+    cid: resolvedCid,
+    page: 1,
+    title: video?.title ?? "",
+    durationSeconds: playbackDurationSeconds,
+  };
 
   const playbackQuery = useQuery({
     queryKey: biliKeys.playback(bvid, resolvedCid, 80),
@@ -226,6 +232,8 @@ export default function PlayerWindowPage() {
               aid={video.aid}
               bvid={video.bvid}
               cid={resolvedCid}
+              detail={detailQuery.data}
+              activePart={activePlaybackPart}
               title={video.title}
               posterUrl={video.coverUrl}
               durationSeconds={playbackDurationSeconds}
@@ -236,6 +244,7 @@ export default function PlayerWindowPage() {
               onProgress={onProgress}
               onEnded={() => onProgress(playbackDurationSeconds)}
               onDanmakuSent={onDanmakuSent}
+              onShare={() => void openExternal()}
               parts={detailQuery.data.parts}
               activeCid={resolvedCid}
               onSelectPart={openPart}

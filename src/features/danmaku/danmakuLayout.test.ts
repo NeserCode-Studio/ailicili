@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   danmakuLaneCount,
   findDanmakuLane,
+  pruneDanmakuRepeats,
+  registerDanmakuRepeat,
   shouldDisplayDanmaku,
+  visibleDanmakuRepeats,
   type ActiveDanmaku,
 } from "@/features/danmaku/danmakuLayout";
 import type { DanmakuItem } from "@/shared/bili.types";
@@ -91,5 +94,45 @@ describe("danmaku layout", () => {
 
     expect(allocated).toBe(0);
     expect(visible).toBe(17_000);
+  });
+
+  it("groups repeated comments and expires the count label", () => {
+    const item = {
+      progressMs: 10_000,
+      mode: 1,
+      size: 25,
+      color: 0xffffff,
+      text: "前方高能",
+    } satisfies DanmakuItem;
+    const first = registerDanmakuRepeat([], item, 10);
+    const second = registerDanmakuRepeat(first.groups, item, 11.5);
+    const third = registerDanmakuRepeat(second.groups, item, 13);
+
+    expect(first.repeated).toBe(false);
+    expect(second.repeated).toBe(true);
+    expect(third.groups[0]).toMatchObject({
+      count: 3,
+      lastSeenAt: 13,
+      expiresAt: 16,
+    });
+    expect(visibleDanmakuRepeats(third.groups, 15.9)).toHaveLength(1);
+    expect(visibleDanmakuRepeats(third.groups, 16.1)).toHaveLength(0);
+    expect(pruneDanmakuRepeats(third.groups, 16.1)).toHaveLength(0);
+  });
+
+  it("starts a new group when the repeat window has elapsed", () => {
+    const item = {
+      progressMs: 0,
+      mode: 1,
+      size: 25,
+      color: 0xffffff,
+      text: "2333",
+    } satisfies DanmakuItem;
+    const first = registerDanmakuRepeat([], item, 1);
+    const later = registerDanmakuRepeat(first.groups, item, 4.1);
+
+    expect(later.repeated).toBe(false);
+    expect(later.groups).toHaveLength(2);
+    expect(later.groups.map((group) => group.count)).toEqual([1, 1]);
   });
 });
