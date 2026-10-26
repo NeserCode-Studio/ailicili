@@ -6,10 +6,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nContext } from "@/contexts/i18n";
 import VideoActions from "@/features/social/VideoActions";
 import {
+  addWatchLater,
   coinVideo,
   fetchAuthStatus,
   fetchFavoriteFolders,
   fetchVideoActions,
+  followUser,
+  likeVideo,
   setVideoFavorite,
   tripleVideo,
 } from "@/lib/bili";
@@ -21,19 +24,25 @@ vi.mock("@/lib/bili", async () => {
     await vi.importActual<typeof import("@/lib/bili")>("@/lib/bili");
   return {
     ...actual,
+    addWatchLater: vi.fn(),
     coinVideo: vi.fn(),
     fetchAuthStatus: vi.fn(),
     fetchFavoriteFolders: vi.fn(),
     fetchVideoActions: vi.fn(),
+    followUser: vi.fn(),
+    likeVideo: vi.fn(),
     setVideoFavorite: vi.fn(),
     tripleVideo: vi.fn(),
   };
 });
 
+const addWatchLaterMock = vi.mocked(addWatchLater);
 const coinVideoMock = vi.mocked(coinVideo);
 const fetchAuthStatusMock = vi.mocked(fetchAuthStatus);
 const fetchFavoriteFoldersMock = vi.mocked(fetchFavoriteFolders);
 const fetchVideoActionsMock = vi.mocked(fetchVideoActions);
+const followUserMock = vi.mocked(followUser);
+const likeVideoMock = vi.mocked(likeVideo);
 const setVideoFavoriteMock = vi.mocked(setVideoFavorite);
 const tripleVideoMock = vi.mocked(tripleVideo);
 
@@ -99,6 +108,9 @@ beforeEach(() => {
   fetchFavoriteFoldersMock.mockResolvedValue([
     { id: "7", title: "默认收藏夹", mediaCount: 3 },
   ]);
+  addWatchLaterMock.mockResolvedValue();
+  followUserMock.mockResolvedValue();
+  likeVideoMock.mockResolvedValue();
 });
 
 describe("VideoActions", () => {
@@ -111,6 +123,78 @@ describe("VideoActions", () => {
     const likeButton = screen.getByTitle("Actions.like");
     await waitFor(() => expect(likeButton).toBeEnabled());
     expect(fetchVideoActionsMock).not.toHaveBeenCalled();
+  });
+
+  it("updates the like state immediately and ignores duplicate clicks while saving", async () => {
+    const request = deferred<void>();
+    fetchVideoActionsMock.mockRejectedValue(new Error("state unavailable"));
+    likeVideoMock.mockReturnValue(request.promise);
+    renderActions();
+
+    const likeButton = await screen.findByTitle("Actions.like");
+    await waitFor(() => expect(likeButton).toBeEnabled());
+    fireEvent.click(likeButton);
+
+    await waitFor(() =>
+      expect(likeButton).toHaveAttribute("aria-pressed", "true")
+    );
+    expect(likeButton).toBeDisabled();
+    fireEvent.click(likeButton);
+    expect(likeVideoMock).toHaveBeenCalledOnce();
+    expect(likeVideoMock).toHaveBeenCalledWith("BV1xx411c7mD", true);
+
+    request.resolve();
+    await waitFor(() => expect(likeButton).toBeEnabled());
+  });
+
+  it("serializes follow changes and updates state optimistically", async () => {
+    const request = deferred<void>();
+    followUserMock.mockReturnValue(request.promise);
+    renderActions();
+
+    const followButton = await screen.findByRole("button", {
+      name: "Actions.follow",
+    });
+    await waitFor(() => expect(followButton).toBeEnabled());
+    fireEvent.click(followButton);
+    fireEvent.click(followButton);
+
+    await waitFor(() =>
+      expect(followButton).toHaveAttribute("aria-pressed", "true")
+    );
+    expect(followUserMock).toHaveBeenCalledOnce();
+    expect(followUserMock).toHaveBeenCalledWith(2, true);
+
+    request.resolve();
+    await waitFor(() => expect(followButton).toBeEnabled());
+  });
+
+  it("disables the coin action when the video is already at the limit", async () => {
+    fetchVideoActionsMock.mockResolvedValue({
+      liked: false,
+      coined: 2,
+      favorited: false,
+      followed: false,
+    });
+    renderActions();
+
+    const coinButton = await screen.findByTitle("Actions.coinLimit");
+    expect(coinButton).toBeDisabled();
+  });
+
+  it("limits the coin picker to the remaining allowance", async () => {
+    fetchVideoActionsMock.mockResolvedValue({
+      liked: false,
+      coined: 1,
+      favorited: false,
+      followed: false,
+    });
+    renderActions();
+
+    fireEvent.click(await screen.findByRole("button", { name: "×1" }));
+
+    expect(screen.getByRole("button", { name: "2" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "1" })).toBeEnabled();
   });
 
   it("runs the primary play action from the action row", () => {
@@ -137,10 +221,12 @@ describe("VideoActions", () => {
         name: "1",
       })
     );
+    fireEvent.click(screen.getByRole("button", { name: "1" }));
 
     await waitFor(() =>
       expect(coinButton).toHaveAttribute("aria-pressed", "true")
     );
+    expect(coinVideoMock).toHaveBeenCalledOnce();
     request.reject(new Error("offline"));
     expect(
       await screen.findByRole("button", { name: "Actions.coin" })
@@ -161,12 +247,14 @@ describe("VideoActions", () => {
     });
     await waitFor(() => expect(tripleButton).toBeEnabled());
     fireEvent.click(tripleButton);
+    fireEvent.click(tripleButton);
 
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: "Actions.favorite" })
       ).toHaveAttribute("aria-pressed", "true")
     );
+    expect(tripleVideoMock).toHaveBeenCalledOnce();
     request.reject(new Error("offline"));
     expect(
       await screen.findByRole("button", { name: "Actions.coin" })
@@ -193,11 +281,16 @@ describe("VideoActions", () => {
     );
 
     expect(favoriteButton).toHaveAttribute("aria-pressed", "false");
-    fireEvent.click(screen.getByRole("button", { name: "Actions.saveFolder" }));
+    const saveButton = screen.getByRole("button", {
+      name: "Actions.saveFolder",
+    });
+    fireEvent.click(saveButton);
+    fireEvent.click(saveButton);
 
     await waitFor(() =>
       expect(favoriteButton).toHaveAttribute("aria-pressed", "true")
     );
+    expect(setVideoFavoriteMock).toHaveBeenCalledOnce();
     request.reject(new Error("offline"));
     await waitFor(() =>
       expect(favoriteButton).toHaveAttribute("aria-pressed", "false")
@@ -207,5 +300,22 @@ describe("VideoActions", () => {
       addMediaIds: ["7"],
       removeMediaIds: [],
     });
+  });
+
+  it("submits watch later only once for rapid clicks", async () => {
+    const request = deferred<void>();
+    addWatchLaterMock.mockReturnValue(request.promise);
+    renderActions();
+
+    const watchLaterButton = await screen.findByRole("button", {
+      name: "Actions.watchLater",
+    });
+    await waitFor(() => expect(watchLaterButton).toBeEnabled());
+    fireEvent.click(watchLaterButton);
+    fireEvent.click(watchLaterButton);
+
+    await waitFor(() => expect(addWatchLaterMock).toHaveBeenCalledOnce());
+    request.resolve();
+    await waitFor(() => expect(watchLaterButton).toBeEnabled());
   });
 });

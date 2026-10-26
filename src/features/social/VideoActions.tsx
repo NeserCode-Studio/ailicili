@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Clock3,
@@ -39,6 +39,7 @@ export default function VideoActions({ detail, onPlay }: VideoActionsProps) {
   const [coinOpen, setCoinOpen] = useState(false);
   const [favoriteOpen, setFavoriteOpen] = useState(false);
   const [selectedFolders, setSelectedFolders] = useState<string[]>([]);
+  const watchLaterRequestPending = useRef(false);
   const controller = useVideoActionController(detail, {
     onAuthenticationRequired: () => navigate("/login"),
   });
@@ -59,11 +60,13 @@ export default function VideoActions({ detail, onPlay }: VideoActionsProps) {
     triple,
     triplePending,
   } = controller;
+  const remainingCoins = Math.max(0, 2 - (actions?.coined ?? 0));
+  const coinLimitReached = remainingCoins === 0;
 
   const watchLaterMutation = useMutation({
     mutationFn: () => addWatchLater(detail.video.bvid),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: biliKeys.watchLater() });
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: biliKeys.watchLater() });
       success("Actions.watchLaterSuccess");
     },
     onError: (error) => toastError(normalizeBiliError(error).message),
@@ -98,8 +101,9 @@ export default function VideoActions({ detail, onPlay }: VideoActionsProps) {
             type="button"
             variant={actions?.coined ? "default" : "outline"}
             size="sm"
-            disabled={pending || actionsPending}
+            disabled={pending || actionsPending || coinLimitReached}
             aria-pressed={Boolean(actions?.coined)}
+            title={coinLimitReached ? t("Actions.coinLimit") : undefined}
             onClick={(event) => {
               if (!requireAuthentication()) event.preventDefault();
             }}
@@ -117,7 +121,7 @@ export default function VideoActions({ detail, onPlay }: VideoActionsProps) {
                 type="button"
                 size="sm"
                 variant="outline"
-                disabled={coinPending}
+                disabled={coinPending || count > remainingCoins}
                 onClick={() => {
                   void addCoin(count, false).then((completed) => {
                     if (completed) setCoinOpen(false);
@@ -132,9 +136,9 @@ export default function VideoActions({ detail, onPlay }: VideoActionsProps) {
             type="button"
             size="sm"
             className="mt-2 w-full"
-            disabled={coinPending}
+            disabled={coinPending || coinLimitReached}
             onClick={() => {
-              void addCoin(2, true).then((completed) => {
+              void addCoin(remainingCoins, true).then((completed) => {
                 if (completed) setCoinOpen(false);
               });
             }}
@@ -263,8 +267,16 @@ export default function VideoActions({ detail, onPlay }: VideoActionsProps) {
         className="ml-auto"
         disabled={watchLaterMutation.isPending}
         onClick={() => {
-          if (!requireAuthentication()) return;
-          watchLaterMutation.mutate();
+          if (!requireAuthentication() || watchLaterRequestPending.current) {
+            return;
+          }
+          watchLaterRequestPending.current = true;
+          void watchLaterMutation
+            .mutateAsync()
+            .catch(() => undefined)
+            .finally(() => {
+              watchLaterRequestPending.current = false;
+            });
         }}
       >
         <Clock3 />

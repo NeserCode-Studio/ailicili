@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useToast } from "@/composables";
@@ -64,6 +64,7 @@ export function useVideoActionController(
   const { error: toastError, success } = useToast();
   const [favoriteFoldersRequested, setFavoriteFoldersRequested] =
     useState(false);
+  const actionRequestPending = useRef(false);
 
   const authQuery = useQuery({
     queryKey: biliKeys.auth(),
@@ -94,14 +95,14 @@ export function useVideoActionController(
       queryClient.setQueryData<VideoActionState>(
         biliKeys.actions(bvid),
         (current) =>
-          current
-            ? update(current)
-            : {
-                liked: false,
-                coined: 0,
-                favorited: false,
-                followed: false,
-              }
+          update(
+            current ?? {
+              liked: false,
+              coined: 0,
+              favorited: false,
+              followed: false,
+            }
+          )
       );
     },
     [bvid, queryClient]
@@ -130,8 +131,8 @@ export function useVideoActionController(
     [bvid, queryClient]
   );
 
-  const invalidateActions = useCallback(() => {
-    void queryClient.invalidateQueries({
+  const invalidateActions = useCallback(async () => {
+    await queryClient.invalidateQueries({
       queryKey: biliKeys.actions(bvid),
     });
   }, [bvid, queryClient]);
@@ -143,32 +144,37 @@ export function useVideoActionController(
     [toastError]
   );
 
+  const runAction = useCallback(
+    async (
+      optimisticUpdate: (current: VideoActionState) => VideoActionState,
+      request: () => Promise<unknown>
+    ) => {
+      if (actionRequestPending.current) return false;
+      const snapshot = snapshotActions();
+      actionRequestPending.current = true;
+      updateActions(optimisticUpdate);
+      try {
+        await request();
+        return true;
+      } catch (error) {
+        rollbackActions(snapshot);
+        showActionError(error);
+        return false;
+      } finally {
+        actionRequestPending.current = false;
+      }
+    },
+    [rollbackActions, showActionError, snapshotActions, updateActions]
+  );
+
   const likeMutation = useMutation({
     mutationFn: (liked: boolean) => likeVideo(bvid, liked),
-    onMutate: (liked) => {
-      const snapshot = snapshotActions();
-      updateActions((current) => ({ ...current, liked }));
-      return snapshot;
-    },
     onSuccess: invalidateActions,
-    onError: (error, _liked, snapshot) => {
-      rollbackActions(snapshot);
-      showActionError(error);
-    },
   });
 
   const followMutation = useMutation({
     mutationFn: (follow: boolean) => followUser(author.mid, follow),
-    onMutate: (follow) => {
-      const snapshot = snapshotActions();
-      updateActions((current) => ({ ...current, followed: follow }));
-      return snapshot;
-    },
     onSuccess: invalidateActions,
-    onError: (error, _follow, snapshot) => {
-      rollbackActions(snapshot);
-      showActionError(error);
-    },
   });
 
   const coinMutation = useMutation({
@@ -179,38 +185,15 @@ export function useVideoActionController(
       multiply: number;
       withLike: boolean;
     }) => coinVideo(bvid, multiply, withLike),
-    onMutate: ({ multiply, withLike }) => {
-      const snapshot = snapshotActions();
-      updateActions((current) => ({
-        ...current,
-        coined: Math.min(2, current.coined + multiply),
-        liked: current.liked || withLike,
-      }));
-      return snapshot;
-    },
-    onSuccess: () => {
+    onSuccess: async () => {
       success("Actions.coinSuccess");
-      invalidateActions();
-    },
-    onError: (error, _variables, snapshot) => {
-      rollbackActions(snapshot);
-      showActionError(error);
+      await invalidateActions();
     },
   });
 
   const tripleMutation = useMutation({
     mutationFn: () => tripleVideo(bvid),
-    onMutate: () => {
-      const snapshot = snapshotActions();
-      updateActions((current) => ({
-        ...current,
-        liked: true,
-        coined: Math.max(current.coined, 1),
-        favorited: true,
-      }));
-      return snapshot;
-    },
-    onSuccess: (result) => {
+    onSuccess: async (result) => {
       updateActions((current) => ({
         ...current,
         liked: current.liked || result.liked,
@@ -218,11 +201,7 @@ export function useVideoActionController(
         favorited: current.favorited || result.favorited,
       }));
       success("Actions.tripleSuccess");
-      invalidateActions();
-    },
-    onError: (error, _variables, snapshot) => {
-      rollbackActions(snapshot);
-      showActionError(error);
+      await invalidateActions();
     },
   });
 
@@ -233,21 +212,9 @@ export function useVideoActionController(
         addMediaIds: input.addMediaIds,
         removeMediaIds: input.removeMediaIds,
       }),
-    onMutate: (input) => {
-      const snapshot = snapshotActions();
-      updateActions((current) => ({
-        ...current,
-        favorited: input.favorited,
-      }));
-      return snapshot;
-    },
-    onSuccess: () => {
+    onSuccess: async () => {
       success("Actions.favoriteSuccess");
-      invalidateActions();
-    },
-    onError: (error, _input, snapshot) => {
-      rollbackActions(snapshot);
-      showActionError(error);
+      await invalidateActions();
     },
   });
 
@@ -268,51 +235,52 @@ export function useVideoActionController(
   const setLiked = useCallback(
     async (liked: boolean) => {
       if (!requireAuthentication()) return false;
-      try {
-        await likeMutation.mutateAsync(liked);
-        return true;
-      } catch {
-        return false;
-      }
+      return runAction(
+        (current) => ({ ...current, liked }),
+        () => likeMutation.mutateAsync(liked)
+      );
     },
-    [likeMutation, requireAuthentication]
+    [likeMutation, requireAuthentication, runAction]
   );
 
   const addCoin = useCallback(
     async (multiply: number, withLike: boolean) => {
       if (!requireAuthentication()) return false;
-      try {
-        await coinMutation.mutateAsync({ multiply, withLike });
-        return true;
-      } catch {
-        return false;
-      }
+      return runAction(
+        (current) => ({
+          ...current,
+          coined: Math.min(2, current.coined + multiply),
+          liked: current.liked || withLike,
+        }),
+        () => coinMutation.mutateAsync({ multiply, withLike })
+      );
     },
-    [coinMutation, requireAuthentication]
+    [coinMutation, requireAuthentication, runAction]
   );
 
   const setFollowed = useCallback(
     async (follow: boolean) => {
       if (author.mid === 0 || !requireAuthentication()) return false;
-      try {
-        await followMutation.mutateAsync(follow);
-        return true;
-      } catch {
-        return false;
-      }
+      return runAction(
+        (current) => ({ ...current, followed: follow }),
+        () => followMutation.mutateAsync(follow)
+      );
     },
-    [author.mid, followMutation, requireAuthentication]
+    [author.mid, followMutation, requireAuthentication, runAction]
   );
 
   const triple = useCallback(async () => {
     if (!requireAuthentication()) return false;
-    try {
-      await tripleMutation.mutateAsync();
-      return true;
-    } catch {
-      return false;
-    }
-  }, [requireAuthentication, tripleMutation]);
+    return runAction(
+      (current) => ({
+        ...current,
+        liked: true,
+        coined: Math.max(current.coined, 1),
+        favorited: true,
+      }),
+      () => tripleMutation.mutateAsync()
+    );
+  }, [requireAuthentication, runAction, tripleMutation]);
 
   const saveFavorite = useCallback(
     async (folderIds: string[]) => {
@@ -330,16 +298,18 @@ export function useVideoActionController(
           return false;
         }
       }
-      try {
-        await favoriteMutation.mutateAsync({
-          addMediaIds: folderIds,
-          removeMediaIds,
+      return runAction(
+        (actions) => ({
+          ...actions,
           favorited: folderIds.length > 0,
-        });
-        return true;
-      } catch {
-        return false;
-      }
+        }),
+        () =>
+          favoriteMutation.mutateAsync({
+            addMediaIds: folderIds,
+            removeMediaIds,
+            favorited: folderIds.length > 0,
+          })
+      );
     },
     [
       bvid,
@@ -348,6 +318,7 @@ export function useVideoActionController(
       loadFavoriteFolders,
       queryClient,
       requireAuthentication,
+      runAction,
       toastError,
     ]
   );
@@ -358,33 +329,36 @@ export function useVideoActionController(
     const current = queryClient.getQueryData<VideoActionState>(
       biliKeys.actions(bvid)
     );
-    try {
-      if (current?.favorited) {
-        if (folders.length === 0) {
-          toastError("Actions.noFolders");
-          return false;
-        }
-        await favoriteMutation.mutateAsync({
-          addMediaIds: [],
-          removeMediaIds: folders.map((folder) => folder.id),
-          favorited: false,
-        });
-        return true;
-      }
-      const defaultFolder = folders[0];
-      if (!defaultFolder) {
+    if (current?.favorited) {
+      if (folders.length === 0) {
         toastError("Actions.noFolders");
         return false;
       }
-      await favoriteMutation.mutateAsync({
-        addMediaIds: [defaultFolder.id],
-        removeMediaIds: [],
-        favorited: true,
-      });
-      return true;
-    } catch {
+      const removeMediaIds = folders.map((folder) => folder.id);
+      return runAction(
+        (actions) => ({ ...actions, favorited: false }),
+        () =>
+          favoriteMutation.mutateAsync({
+            addMediaIds: [],
+            removeMediaIds,
+            favorited: false,
+          })
+      );
+    }
+    const defaultFolder = folders[0];
+    if (!defaultFolder) {
+      toastError("Actions.noFolders");
       return false;
     }
+    return runAction(
+      (actions) => ({ ...actions, favorited: true }),
+      () =>
+        favoriteMutation.mutateAsync({
+          addMediaIds: [defaultFolder.id],
+          removeMediaIds: [],
+          favorited: true,
+        })
+    );
   }, [
     bvid,
     favoriteFoldersQuery.data,
@@ -392,6 +366,7 @@ export function useVideoActionController(
     loadFavoriteFolders,
     queryClient,
     requireAuthentication,
+    runAction,
     toastError,
   ]);
 
