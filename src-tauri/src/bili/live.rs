@@ -351,10 +351,7 @@ impl LiveMediaSession {
         let asset_token = Uuid::new_v4().to_string();
         let now = Instant::now();
         let mut assets = self.assets.write().map_err(|_| BiliError::Internal)?;
-        let mut asset_tokens = self
-            .asset_tokens
-            .write()
-            .map_err(|_| BiliError::Internal)?;
+        let mut asset_tokens = self.asset_tokens.write().map_err(|_| BiliError::Internal)?;
         assets.retain(|_, asset| asset.is_active_at(now));
         asset_tokens.retain(|_, token| assets.contains_key(token));
         let remote_url = remote.to_string();
