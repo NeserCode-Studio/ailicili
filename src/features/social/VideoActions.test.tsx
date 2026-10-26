@@ -86,6 +86,7 @@ function renderActions(onPlay?: () => void) {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks();
   fetchAuthStatusMock.mockResolvedValue({
     authenticated: true,
   } as AuthStatus);
@@ -101,6 +102,17 @@ beforeEach(() => {
 });
 
 describe("VideoActions", () => {
+  it("does not request account action state for guests", async () => {
+    fetchAuthStatusMock.mockResolvedValue({
+      authenticated: false,
+    } as AuthStatus);
+    renderActions();
+
+    const likeButton = screen.getByTitle("Actions.like");
+    await waitFor(() => expect(likeButton).toBeEnabled());
+    expect(fetchVideoActionsMock).not.toHaveBeenCalled();
+  });
+
   it("runs the primary play action from the action row", () => {
     const onPlay = vi.fn();
     renderActions(onPlay);

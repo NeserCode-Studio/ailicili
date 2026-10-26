@@ -108,11 +108,7 @@ impl BiliClient {
     where
         T: DeserializeOwned,
     {
-        let cookie_header = self
-            .session
-            .cookie_header()
-            .await
-            .ok_or(BiliError::AuthenticationRequired)?;
+        let cookie_header = self.authenticated_cookie_header().await?;
         let response = self
             .http
             .get(format!("{API_BASE}{path}"))
@@ -146,11 +142,7 @@ impl BiliClient {
             .csrf_token()
             .await
             .ok_or(BiliError::AuthenticationRequired)?;
-        let cookie_header = self
-            .session
-            .cookie_header()
-            .await
-            .ok_or(BiliError::AuthenticationRequired)?;
+        let cookie_header = self.authenticated_cookie_header().await?;
         form.insert("csrf".to_owned(), csrf);
 
         let response = self
@@ -180,6 +172,19 @@ impl BiliClient {
             .user_id()
             .await
             .ok_or(BiliError::AuthenticationRequired)
+    }
+
+    async fn authenticated_cookie_header(&self) -> Result<String, BiliError> {
+        if !self.session.has_session().await {
+            return Err(BiliError::AuthenticationRequired);
+        }
+        let cookie_header = self.search_cookie_header().await?;
+        if !cookie_header_contains(&cookie_header, "buvid3") {
+            return Err(BiliError::InvalidResponse(
+                "authenticated request is missing buvid3",
+            ));
+        }
+        Ok(cookie_header)
     }
 
     pub async fn popular_videos(
@@ -233,9 +238,19 @@ pub(crate) fn validate_bvid(bvid: &str) -> Result<(), BiliError> {
     }
 }
 
+fn cookie_header_contains(header: &str, name: &str) -> bool {
+    header.split(';').any(|pair| {
+        pair.trim()
+            .split_once('=')
+            .is_some_and(|(cookie_name, value)| {
+                cookie_name.trim() == name && !value.trim().is_empty()
+            })
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::validate_bvid;
+    use super::{cookie_header_contains, validate_bvid};
 
     #[test]
     fn accepts_expected_bvid_shape() {
@@ -247,5 +262,13 @@ mod tests {
         assert!(validate_bvid("../another-path").is_err());
         assert!(validate_bvid("av123").is_err());
         assert!(validate_bvid("BV/123").is_err());
+    }
+
+    #[test]
+    fn detects_non_empty_cookie_values_without_prefix_matches() {
+        let header = "buvid4=guest; SESSDATA=session; buvid3=browser-id";
+        assert!(cookie_header_contains(header, "buvid3"));
+        assert!(!cookie_header_contains("buvid3_extra=value", "buvid3"));
+        assert!(!cookie_header_contains("buvid3=", "buvid3"));
     }
 }

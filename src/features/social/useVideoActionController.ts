@@ -10,6 +10,7 @@ import {
   fetchVideoActions,
   followUser,
   likeVideo,
+  normalizeBiliError,
   setVideoFavorite,
   tripleVideo,
 } from "@/lib/bili";
@@ -72,6 +73,7 @@ export function useVideoActionController(
   const actionsQuery = useQuery({
     queryKey: biliKeys.actions(bvid),
     queryFn: () => fetchVideoActions(bvid, author.mid),
+    enabled: Boolean(authQuery.data?.authenticated),
     staleTime: 30_000,
   });
   const favoriteFoldersQuery = useQuery({
@@ -134,6 +136,13 @@ export function useVideoActionController(
     });
   }, [bvid, queryClient]);
 
+  const showActionError = useCallback(
+    (error: unknown) => {
+      toastError(normalizeBiliError(error).message);
+    },
+    [toastError]
+  );
+
   const likeMutation = useMutation({
     mutationFn: (liked: boolean) => likeVideo(bvid, liked),
     onMutate: (liked) => {
@@ -142,9 +151,9 @@ export function useVideoActionController(
       return snapshot;
     },
     onSuccess: invalidateActions,
-    onError: (_error, _liked, snapshot) => {
+    onError: (error, _liked, snapshot) => {
       rollbackActions(snapshot);
-      toastError("Actions.error");
+      showActionError(error);
     },
   });
 
@@ -156,9 +165,9 @@ export function useVideoActionController(
       return snapshot;
     },
     onSuccess: invalidateActions,
-    onError: (_error, _follow, snapshot) => {
+    onError: (error, _follow, snapshot) => {
       rollbackActions(snapshot);
-      toastError("Actions.error");
+      showActionError(error);
     },
   });
 
@@ -183,9 +192,9 @@ export function useVideoActionController(
       success("Actions.coinSuccess");
       invalidateActions();
     },
-    onError: (_error, _variables, snapshot) => {
+    onError: (error, _variables, snapshot) => {
       rollbackActions(snapshot);
-      toastError("Actions.error");
+      showActionError(error);
     },
   });
 
@@ -211,9 +220,9 @@ export function useVideoActionController(
       success("Actions.tripleSuccess");
       invalidateActions();
     },
-    onError: (_error, _variables, snapshot) => {
+    onError: (error, _variables, snapshot) => {
       rollbackActions(snapshot);
-      toastError("Actions.error");
+      showActionError(error);
     },
   });
 
@@ -236,9 +245,9 @@ export function useVideoActionController(
       success("Actions.favoriteSuccess");
       invalidateActions();
     },
-    onError: (_error, _input, snapshot) => {
+    onError: (error, _input, snapshot) => {
       rollbackActions(snapshot);
-      toastError("Actions.error");
+      showActionError(error);
     },
   });
 
@@ -250,11 +259,11 @@ export function useVideoActionController(
         queryFn: fetchFavoriteFolders,
         staleTime: 30_000,
       });
-    } catch {
-      toastError("Actions.error");
+    } catch (error) {
+      showActionError(error);
       return [];
     }
-  }, [queryClient, toastError]);
+  }, [queryClient, showActionError]);
 
   const setLiked = useCallback(
     async (liked: boolean) => {
@@ -399,7 +408,9 @@ export function useVideoActionController(
 
   return {
     actions: actionsQuery.data,
-    actionsPending: actionsQuery.isPending,
+    actionsPending:
+      authQuery.isPending ||
+      (Boolean(authQuery.data?.authenticated) && actionsQuery.isPending),
     authenticated: Boolean(authQuery.data?.authenticated),
     coinPending: coinMutation.isPending,
     favoriteFolders: favoriteFoldersQuery.data ?? [],

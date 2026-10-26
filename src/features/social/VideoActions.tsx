@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/popover";
 import { useI18n, useToast } from "@/composables";
 import { useVideoActionController } from "@/features/social/useVideoActionController";
-import { addWatchLater, biliKeys } from "@/lib/bili";
+import { addWatchLater, biliKeys, normalizeBiliError } from "@/lib/bili";
 import { formatCompactCount } from "@/lib/format";
 import type { FavoriteFolder, VideoDetail } from "@/shared/bili.types";
 
@@ -66,7 +66,7 @@ export default function VideoActions({ detail, onPlay }: VideoActionsProps) {
       void queryClient.invalidateQueries({ queryKey: biliKeys.watchLater() });
       success("Actions.watchLaterSuccess");
     },
-    onError: () => toastError("Actions.error"),
+    onError: (error) => toastError(normalizeBiliError(error).message),
   });
 
   const toggleFolder = (folder: FavoriteFolder) => {

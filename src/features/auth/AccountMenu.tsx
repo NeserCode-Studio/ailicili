@@ -19,6 +19,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useI18n, useToast } from "@/composables";
+import { clearAccountScopedQueries } from "@/features/auth/accountQueries";
 import { useAuthStatus } from "@/features/auth/useAuthStatus";
 import { biliKeys, logoutBili } from "@/lib/bili";
 import type { AuthStatus } from "@/shared/bili.types";
@@ -32,6 +33,7 @@ export default function AccountMenu() {
   const logoutMutation = useMutation({
     mutationFn: logoutBili,
     onSuccess: () => {
+      clearAccountScopedQueries(queryClient);
       queryClient.setQueryData<AuthStatus>(biliKeys.auth(), {
         authenticated: false,
         storageAvailable: authQuery.data?.storageAvailable ?? true,

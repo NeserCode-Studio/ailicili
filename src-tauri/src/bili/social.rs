@@ -36,13 +36,13 @@ impl BiliClient {
         author_mid: u64,
     ) -> Result<VideoActionState, BiliError> {
         let archive = self
-            .get::<RawArchiveRelation>(
+            .get_authenticated::<RawArchiveRelation>(
                 "/x/web-interface/archive/relation",
                 &[("bvid", bvid.to_owned())],
             )
             .await?;
         let followed = if author_mid > 0 {
-            self.user_followed(author_mid).await.unwrap_or(false)
+            self.user_followed(author_mid).await?
         } else {
             false
         };
@@ -58,18 +58,15 @@ impl BiliClient {
         if mid == 0 {
             return Ok(false);
         }
-        let relation: RawUserRelation =
-            self.get("/x/relation", &[("fid", mid.to_string())]).await?;
-        Ok(relation.attribute & 2 != 0)
+        let relation: RawUserRelation = self
+            .get_authenticated("/x/relation", &[("fid", mid.to_string())])
+            .await?;
+        Ok(relation_is_followed(relation.attribute))
     }
 
     pub async fn like_video(&self, bvid: &str, liked: bool) -> Result<(), BiliError> {
         super::client::validate_bvid(bvid)?;
-        let mut form = BTreeMap::from([
-            ("bvid".to_owned(), bvid.to_owned()),
-            ("like".to_owned(), if liked { "1" } else { "2" }.to_owned()),
-        ]);
-        archive_risk_fields(&mut form, bvid, &self.session_user_id().await?);
+        let form = like_form(bvid, liked);
         self.post_authenticated_form("/x/web-interface/archive/like", form)
             .await?;
         Ok(())
@@ -85,15 +82,7 @@ impl BiliClient {
         if !(1..=2).contains(&multiply) {
             return Err(BiliError::InvalidInput("coin count must be 1 or 2"));
         }
-        let mut form = BTreeMap::from([
-            ("bvid".to_owned(), bvid.to_owned()),
-            ("multiply".to_owned(), multiply.to_string()),
-            (
-                "select_like".to_owned(),
-                if with_like { "1" } else { "0" }.to_owned(),
-            ),
-        ]);
-        archive_risk_fields(&mut form, bvid, &self.session_user_id().await?);
+        let form = coin_form(bvid, multiply, with_like);
         self.post_authenticated_form("/x/web-interface/coin/add", form)
             .await?;
         Ok(())
@@ -101,8 +90,7 @@ impl BiliClient {
 
     pub async fn triple_video(&self, bvid: &str) -> Result<TripleResult, BiliError> {
         super::client::validate_bvid(bvid)?;
-        let mut form = BTreeMap::from([("bvid".to_owned(), bvid.to_owned())]);
-        archive_risk_fields(&mut form, bvid, &self.session_user_id().await?);
+        let form = triple_form(bvid);
         let data = self
             .post_authenticated_form("/x/web-interface/archive/like/triple", form)
             .await?;
@@ -126,17 +114,7 @@ impl BiliClient {
         if mid == 0 {
             return Err(BiliError::InvalidInput("user id must be positive"));
         }
-        let form = BTreeMap::from([
-            ("fid".to_owned(), mid.to_string()),
-            ("act".to_owned(), if follow { "1" } else { "2" }.to_owned()),
-            ("re_src".to_owned(), "14".to_owned()),
-            ("gaia_source".to_owned(), "web_main".to_owned()),
-            ("spmid".to_owned(), "333.999.0.0".to_owned()),
-            (
-                "extend_content".to_owned(),
-                format!(r#"{{"entity":"user","entity_id":{mid}}}"#),
-            ),
-        ]);
+        let form = follow_form(mid, follow);
         self.post_authenticated_form("/x/relation/modify", form)
             .await?;
         Ok(())
@@ -190,14 +168,38 @@ impl BiliClient {
     }
 }
 
-fn archive_risk_fields(form: &mut BTreeMap<String, String>, bvid: &str, mid: &str) {
-    form.insert("re_src".to_owned(), "14".to_owned());
-    form.insert("gaia_source".to_owned(), "web_main".to_owned());
-    form.insert("spmid".to_owned(), "333.788.0.0".to_owned());
-    form.insert(
-        "extend_content".to_owned(),
-        format!(r#"{{"entity":"video","entity_id":"{bvid}","mid":{mid}}}"#),
-    );
+fn like_form(bvid: &str, liked: bool) -> BTreeMap<String, String> {
+    BTreeMap::from([
+        ("bvid".to_owned(), bvid.to_owned()),
+        ("like".to_owned(), if liked { "1" } else { "2" }.to_owned()),
+    ])
+}
+
+fn coin_form(bvid: &str, multiply: u8, with_like: bool) -> BTreeMap<String, String> {
+    BTreeMap::from([
+        ("bvid".to_owned(), bvid.to_owned()),
+        ("multiply".to_owned(), multiply.to_string()),
+        (
+            "select_like".to_owned(),
+            if with_like { "1" } else { "0" }.to_owned(),
+        ),
+    ])
+}
+
+fn triple_form(bvid: &str) -> BTreeMap<String, String> {
+    BTreeMap::from([("bvid".to_owned(), bvid.to_owned())])
+}
+
+fn follow_form(mid: u64, follow: bool) -> BTreeMap<String, String> {
+    BTreeMap::from([
+        ("fid".to_owned(), mid.to_string()),
+        ("act".to_owned(), if follow { "1" } else { "2" }.to_owned()),
+        ("re_src".to_owned(), "14".to_owned()),
+    ])
+}
+
+fn relation_is_followed(attribute: i64) -> bool {
+    attribute & 2 != 0
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -234,7 +236,13 @@ struct RawFavoriteFolder {
 
 #[cfg(test)]
 mod tests {
-    use super::RawArchiveRelation;
+    use std::collections::BTreeSet;
+
+    use crate::bili::client::BiliClient;
+
+    use super::{
+        coin_form, follow_form, like_form, relation_is_followed, triple_form, RawArchiveRelation,
+    };
 
     #[test]
     fn maps_partial_archive_relation_payloads() {
@@ -244,5 +252,76 @@ mod tests {
         assert!(relation.like);
         assert_eq!(relation.coin, 1);
         assert!(!relation.favorite);
+    }
+
+    #[test]
+    fn sends_only_documented_video_action_fields() {
+        let like = like_form("BV19wnQ6sExk", true);
+        assert_eq!(like.get("like").map(String::as_str), Some("1"));
+        assert_eq!(
+            like.keys().cloned().collect::<BTreeSet<_>>(),
+            BTreeSet::from(["bvid".to_owned(), "like".to_owned()])
+        );
+
+        let coin = coin_form("BV19wnQ6sExk", 2, true);
+        assert_eq!(coin.get("multiply").map(String::as_str), Some("2"));
+        assert_eq!(coin.get("select_like").map(String::as_str), Some("1"));
+        assert_eq!(
+            coin.keys().cloned().collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                "bvid".to_owned(),
+                "multiply".to_owned(),
+                "select_like".to_owned(),
+            ])
+        );
+
+        assert_eq!(
+            triple_form("BV19wnQ6sExk")
+                .keys()
+                .cloned()
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["bvid".to_owned()])
+        );
+    }
+
+    #[test]
+    fn follow_status_and_form_match_the_documented_relation_api() {
+        assert!(!relation_is_followed(0));
+        assert!(relation_is_followed(2));
+        assert!(relation_is_followed(6));
+        assert!(!relation_is_followed(128));
+
+        let follow = follow_form(42, true);
+        assert_eq!(follow.get("fid").map(String::as_str), Some("42"));
+        assert_eq!(follow.get("act").map(String::as_str), Some("1"));
+        assert_eq!(follow.get("re_src").map(String::as_str), Some("14"));
+        assert_eq!(
+            follow.keys().cloned().collect::<BTreeSet<_>>(),
+            BTreeSet::from(["act".to_owned(), "fid".to_owned(), "re_src".to_owned()])
+        );
+    }
+
+    #[ignore = "requires network access and an authenticated Bilibili session"]
+    #[tokio::test]
+    async fn live_authenticated_video_action_state_smoke() {
+        let client = BiliClient::new().expect("client");
+        assert!(
+            client
+                .auth_status()
+                .await
+                .expect("auth status")
+                .authenticated,
+            "an authenticated session is required"
+        );
+
+        let detail = client
+            .video_detail("BV1xx411c7mD")
+            .await
+            .expect("video detail");
+        let state = client
+            .video_action_state(&detail.video.bvid, detail.video.author.mid)
+            .await
+            .expect("authenticated action state");
+        assert!(state.coined <= 2);
     }
 }
