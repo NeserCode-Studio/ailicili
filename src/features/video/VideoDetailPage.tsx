@@ -3,7 +3,6 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router";
 import {
   ArrowLeft,
-  ExternalLink,
   Heart,
   ListVideo,
   MessageSquareText,
@@ -11,7 +10,7 @@ import {
 } from "lucide-react";
 
 import AsyncErrorState from "@/components/feedback/AsyncErrorState";
-import { Button } from "@/components/ui/button";
+import TitlebarExternalLink from "@/components/framework/TitlebarExternalLink";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useI18n, useToast } from "@/composables";
 import CommentSection from "@/features/comments/CommentSection";
@@ -162,178 +161,195 @@ export default function VideoDetailPage() {
     detail.parts.find((part) => part.cid === activeCid) ?? detail.parts[0];
 
   return (
-    <article className="mx-auto w-full max-w-6xl px-5 py-5 sm:px-7 lg:px-8">
-      <div className="mb-4 flex items-center justify-between">
-        <Link
-          to="/"
-          className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-xs font-medium transition-colors"
-        >
-          <ArrowLeft className="size-3.5" />
-          {t("Video.back")}
-        </Link>
-        {activePart && detail.parts.length > 1 && (
-          <span className="text-muted-foreground max-w-[60%] truncate text-xs">
-            P{activePart.page} · {activePart.title}
-          </span>
-        )}
+    <div className="relative isolate min-h-full overflow-hidden">
+      <div
+        data-testid="video-detail-background"
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 -z-20 overflow-hidden"
+      >
+        <CoverImage
+          src={video.coverUrl}
+          alt=""
+          className="size-full scale-110 opacity-55 blur-3xl saturate-125"
+          eager
+        />
       </div>
+      <div
+        aria-hidden="true"
+        className="bg-background/82 via-background/20 to-background pointer-events-none absolute inset-0 -z-10 bg-gradient-to-b from-transparent"
+      />
 
-      <section aria-label={t("Player.title")}>
-        <button
-          type="button"
-          onClick={() => void openPlayer(activePart)}
-          className="group focus-visible:ring-ring relative aspect-video w-full overflow-hidden rounded-lg bg-black text-left outline-none focus-visible:ring-2"
-          aria-label={t("Video.play")}
-        >
-          <CoverImage
-            src={video.coverUrl}
-            alt={video.title}
-            className="size-full"
-            eager
-          />
-          <span className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/30">
-            <span className="flex size-16 items-center justify-center rounded-full bg-black/70 text-white shadow-xl transition-transform group-hover:scale-105">
-              <Play className="ml-1 size-7 fill-current" />
+      <article className="mx-auto w-full max-w-6xl px-5 py-5 sm:px-7 lg:px-8">
+        <TitlebarExternalLink
+          label={t("Video.openOnBilibili")}
+          onOpen={() => void openExternalVideo(activePart)}
+        />
+
+        <div className="mb-4 flex items-center justify-between">
+          <Link
+            to="/"
+            className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-xs font-medium transition-colors"
+          >
+            <ArrowLeft className="size-3.5" />
+            {t("Video.back")}
+          </Link>
+          {activePart && detail.parts.length > 1 && (
+            <span className="text-muted-foreground max-w-[60%] truncate text-xs">
+              P{activePart.page} · {activePart.title}
             </span>
-          </span>
-          <span className="absolute right-3 bottom-3 rounded-sm bg-black/80 px-2 py-1 font-mono text-xs text-white tabular-nums">
-            {formatDuration(video.durationSeconds)}
-          </span>
-        </button>
-      </section>
-
-      <div className="mt-5 grid gap-6 lg:grid-cols-[minmax(0,1fr)_280px] lg:items-start">
-        <div className="min-w-0">
-          <div className="mb-2 flex flex-wrap items-center gap-2">
-            {video.category && (
-              <span className="bg-primary/10 text-primary rounded-sm px-2 py-0.5 text-[11px] font-medium">
-                {video.category}
-              </span>
-            )}
-            <span className="text-muted-foreground text-[11px]">
-              {formatPublishedAt(video.publishedAt, lang)}
-            </span>
-          </div>
-          <h1 className="text-xl leading-tight font-semibold sm:text-2xl">
-            {video.title}
-          </h1>
-
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <Link
-              to={`/space/${video.author.mid}`}
-              className="group flex min-w-0 items-center gap-3"
-            >
-              <span className="bg-muted text-muted-foreground flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full text-sm font-semibold">
-                {video.author.avatarUrl ? (
-                  <img
-                    src={video.author.avatarUrl}
-                    alt=""
-                    className="size-full object-cover"
-                    referrerPolicy="no-referrer"
-                  />
-                ) : (
-                  video.author.name.slice(0, 1)
-                )}
-              </span>
-              <span className="min-w-0">
-                <span className="block truncate text-sm font-medium group-hover:underline">
-                  {video.author.name}
-                </span>
-                <span className="text-muted-foreground block text-[11px]">
-                  UP
-                </span>
-              </span>
-            </Link>
-            <div className="border-border/80 bg-muted/30 ml-auto grid grid-cols-3 gap-3 rounded-md border px-4 py-2">
-              <StatItem
-                icon={Play}
-                label={t("Video.views")}
-                value={formatCompactCount(video.stats.views, lang)}
-              />
-              <StatItem
-                icon={MessageSquareText}
-                label={t("Video.danmaku")}
-                value={formatCompactCount(video.stats.danmaku, lang)}
-              />
-              <StatItem
-                icon={Heart}
-                label={t("Video.likes")}
-                value={formatCompactCount(video.stats.likes, lang)}
-              />
-            </div>
-          </div>
-
-          <div className="mt-4">
-            <VideoActions detail={detail} />
-          </div>
-
-          <section aria-labelledby="video-description-heading" className="mt-5">
-            <h2
-              id="video-description-heading"
-              className="mb-2 text-sm font-semibold"
-            >
-              {t("Video.description")}
-            </h2>
-            <p className="text-muted-foreground text-sm leading-7 whitespace-pre-wrap">
-              {detail.description || t("Video.noDescription")}
-            </p>
-          </section>
+          )}
         </div>
 
-        <aside className="min-w-0">
-          {detail.parts.length > 1 && (
-            <section aria-labelledby="video-parts-heading">
-              <div className="mb-2 flex items-baseline justify-between">
-                <h2
-                  id="video-parts-heading"
-                  className="inline-flex items-center gap-1.5 text-sm font-semibold"
-                >
-                  <ListVideo className="size-4" />
-                  {t("Video.parts")}
-                </h2>
-                <span className="text-muted-foreground text-xs">
-                  {detail.parts.length}
-                </span>
-              </div>
-              <div className="border-border/80 max-h-96 overflow-y-auto rounded-md border">
-                {detail.parts.map((part) => (
-                  <button
-                    key={part.cid}
-                    type="button"
-                    onClick={() => void openPlayer(part)}
-                    className={cn(
-                      "group border-border/70 hover:bg-muted/60 flex w-full items-center gap-3 border-b px-3 py-2.5 text-left transition-colors last:border-b-0",
-                      activeCid === part.cid && "bg-muted/70"
-                    )}
-                  >
-                    <span className="text-muted-foreground w-5 shrink-0 text-center font-mono text-[11px]">
-                      {part.page}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate text-sm">
-                      {part.title}
-                    </span>
-                    <span className="text-muted-foreground shrink-0 font-mono text-[11px]">
-                      {formatDuration(part.durationSeconds)}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </section>
-          )}
-          <Button
+        <section aria-label={t("Player.title")}>
+          <button
             type="button"
-            variant="outline"
-            size="sm"
-            className="mt-3 w-full"
-            onClick={() => void openExternalVideo(activePart)}
+            onClick={() => void openPlayer(activePart)}
+            className="group focus-visible:ring-ring relative aspect-video w-full overflow-hidden rounded-lg bg-black text-left outline-none focus-visible:ring-2"
+            aria-label={t("Video.play")}
           >
-            <ExternalLink />
-            {t("Video.openOnBilibili")}
-          </Button>
-        </aside>
-      </div>
+            <CoverImage
+              src={video.coverUrl}
+              alt={video.title}
+              className="size-full"
+              eager
+            />
+            <span className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/30">
+              <span className="flex size-16 items-center justify-center rounded-full bg-black/70 text-white shadow-xl transition-transform group-hover:scale-105">
+                <Play className="ml-1 size-7 fill-current" />
+              </span>
+            </span>
+            <span className="absolute right-3 bottom-3 rounded-sm bg-black/80 px-2 py-1 font-mono text-xs text-white tabular-nums">
+              {formatDuration(video.durationSeconds)}
+            </span>
+          </button>
+        </section>
 
-      <CommentSection aid={video.aid} totalHint={video.stats.comments} />
-    </article>
+        <div className="mt-5 grid gap-6 lg:grid-cols-[minmax(0,1fr)_280px] lg:items-start">
+          <div className="min-w-0">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              {video.category && (
+                <span className="bg-primary/10 text-primary rounded-sm px-2 py-0.5 text-[11px] font-medium">
+                  {video.category}
+                </span>
+              )}
+              <span className="text-muted-foreground text-[11px]">
+                {formatPublishedAt(video.publishedAt, lang)}
+              </span>
+            </div>
+            <h1 className="text-xl leading-tight font-semibold sm:text-2xl">
+              {video.title}
+            </h1>
+
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <Link
+                to={`/space/${video.author.mid}`}
+                className="group flex min-w-0 items-center gap-3"
+              >
+                <span className="bg-muted text-muted-foreground flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full text-sm font-semibold">
+                  {video.author.avatarUrl ? (
+                    <img
+                      src={video.author.avatarUrl}
+                      alt=""
+                      className="size-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    video.author.name.slice(0, 1)
+                  )}
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium group-hover:underline">
+                    {video.author.name}
+                  </span>
+                  <span className="text-muted-foreground block text-[11px]">
+                    UP
+                  </span>
+                </span>
+              </Link>
+              <div className="border-border/80 bg-muted/30 ml-auto grid grid-cols-3 gap-3 rounded-md border px-4 py-2">
+                <StatItem
+                  icon={Play}
+                  label={t("Video.views")}
+                  value={formatCompactCount(video.stats.views, lang)}
+                />
+                <StatItem
+                  icon={MessageSquareText}
+                  label={t("Video.danmaku")}
+                  value={formatCompactCount(video.stats.danmaku, lang)}
+                />
+                <StatItem
+                  icon={Heart}
+                  label={t("Video.likes")}
+                  value={formatCompactCount(video.stats.likes, lang)}
+                />
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <VideoActions detail={detail} />
+            </div>
+
+            <section
+              aria-labelledby="video-description-heading"
+              className="mt-5"
+            >
+              <h2
+                id="video-description-heading"
+                className="mb-2 text-sm font-semibold"
+              >
+                {t("Video.description")}
+              </h2>
+              <p className="text-muted-foreground text-sm leading-7 whitespace-pre-wrap">
+                {detail.description || t("Video.noDescription")}
+              </p>
+            </section>
+          </div>
+
+          <aside className="min-w-0">
+            {detail.parts.length > 1 && (
+              <section aria-labelledby="video-parts-heading">
+                <div className="mb-2 flex items-baseline justify-between">
+                  <h2
+                    id="video-parts-heading"
+                    className="inline-flex items-center gap-1.5 text-sm font-semibold"
+                  >
+                    <ListVideo className="size-4" />
+                    {t("Video.parts")}
+                  </h2>
+                  <span className="text-muted-foreground text-xs">
+                    {detail.parts.length}
+                  </span>
+                </div>
+                <div className="border-border/80 max-h-96 overflow-y-auto rounded-md border">
+                  {detail.parts.map((part) => (
+                    <button
+                      key={part.cid}
+                      type="button"
+                      onClick={() => void openPlayer(part)}
+                      className={cn(
+                        "group border-border/70 hover:bg-muted/60 flex w-full items-center gap-3 border-b px-3 py-2.5 text-left transition-colors last:border-b-0",
+                        activeCid === part.cid && "bg-muted/70"
+                      )}
+                    >
+                      <span className="text-muted-foreground w-5 shrink-0 text-center font-mono text-[11px]">
+                        {part.page}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-sm">
+                        {part.title}
+                      </span>
+                      <span className="text-muted-foreground shrink-0 font-mono text-[11px]">
+                        {formatDuration(part.durationSeconds)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
+          </aside>
+        </div>
+
+        <CommentSection aid={video.aid} totalHint={video.stats.comments} />
+      </article>
+    </div>
   );
 }

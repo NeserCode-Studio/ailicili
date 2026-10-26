@@ -8,6 +8,7 @@ import { useLocalStorageState } from "ahooks";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { useI18n } from "@/composables";
+import { usePageTitlebar } from "@/contexts/pageTitlebar";
 import { WindowUtils } from "@/lib/window.utils";
 import { createLogger } from "@/lib/logger";
 
@@ -65,6 +66,7 @@ async function toggleMaximize(): Promise<boolean> {
 export default function TitlebarOperations() {
   const { t } = useI18n();
   const { theme, setThemeMode } = useContext(ThemeContext);
+  const { setActionsTarget } = usePageTitlebar();
   const [alwaysOnTop, setAlwaysOnTop] = useLocalStorageState(
     "app-always-on-top",
     {
@@ -100,6 +102,11 @@ export default function TitlebarOperations() {
   return (
     <>
       <div className="inline-flex h-full w-fit flex-row items-center justify-center">
+        <div
+          ref={setActionsTarget}
+          data-testid="titlebar-page-actions"
+          className="flex h-full items-center"
+        />
         <Separator
           orientation="vertical"
           className="bg-border mx-0.5 h-1/2 rounded transition-colors duration-100 ease-in-out"

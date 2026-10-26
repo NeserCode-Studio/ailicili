@@ -33,7 +33,11 @@ import {
   type PlayerPreferences,
 } from "@/features/player/playerPreferences";
 import { formatDuration } from "@/lib/format";
-import type { DanmakuItem, PlaybackSession } from "@/shared/bili.types";
+import type {
+  DanmakuItem,
+  PlaybackSession,
+  VideoPart,
+} from "@/shared/bili.types";
 import { cn } from "@/lib/utils";
 
 interface DashPlayerApi extends MediaPlayerClass {
@@ -55,6 +59,9 @@ interface VideoPlayerProps {
   startAt: number;
   danmaku: DanmakuItem[];
   theater: boolean;
+  parts: VideoPart[];
+  activeCid: number;
+  onSelectPart: (part: VideoPart) => void;
   onToggleTheater: () => void;
   onProgress: (seconds: number) => void;
   onEnded: () => void;
@@ -138,6 +145,9 @@ export default function VideoPlayer({
   startAt,
   danmaku,
   theater,
+  parts,
+  activeCid,
+  onSelectPart,
   onToggleTheater,
   onProgress,
   onEnded,
@@ -514,7 +524,10 @@ export default function VideoPlayer({
           }}
         />
 
-        <div className="mt-2 flex items-center gap-1.5">
+        <div
+          data-testid="player-controls"
+          className="mt-2 flex items-center gap-1.5"
+        >
           <button
             type="button"
             onClick={togglePlayback}
@@ -566,7 +579,33 @@ export default function VideoPlayer({
             {formatDuration(currentTime)} / {formatDuration(duration)}
           </span>
 
-          <div className="ml-auto flex items-center gap-1">
+          <div className="ml-auto flex min-w-0 items-center gap-1">
+            {parts.length > 1 && (
+              <div
+                data-testid="player-parts"
+                role="group"
+                aria-label={t("Video.parts")}
+                className="flex max-w-[min(40vw,20rem)] min-w-0 items-center gap-0.5 overflow-x-auto rounded-md bg-black/35 p-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              >
+                {parts.map((part) => (
+                  <button
+                    key={part.cid}
+                    type="button"
+                    title={`P${part.page} · ${part.title}`}
+                    aria-current={part.cid === activeCid ? "page" : undefined}
+                    onClick={() => {
+                      if (part.cid !== activeCid) onSelectPart(part);
+                    }}
+                    className={cn(
+                      "flex h-6 shrink-0 items-center rounded-sm px-2 font-mono text-[11px] text-white/65 transition-colors hover:bg-white/15 hover:text-white",
+                      part.cid === activeCid && "bg-white/15 text-white"
+                    )}
+                  >
+                    P{part.page}
+                  </button>
+                ))}
+              </div>
+            )}
             <button
               type="button"
               onClick={() => {

@@ -1,11 +1,13 @@
 import { useCallback, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "react-router";
-import { ExternalLink, LoaderCircle, Play } from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 
 import AsyncErrorState from "@/components/feedback/AsyncErrorState";
+import TitlebarExternalLink from "@/components/framework/TitlebarExternalLink";
 import { Button } from "@/components/ui/button";
 import { useI18n, useToast } from "@/composables";
+import { usePageTitlebarTitle } from "@/contexts/pageTitlebar";
 import VideoPlayer from "@/features/player/VideoPlayer";
 import {
   biliKeys,
@@ -18,7 +20,6 @@ import {
   reportHeartbeat,
 } from "@/lib/bili";
 import { openExternalUrl } from "@/lib/external";
-import { formatCompactCount, formatDuration } from "@/lib/format";
 import type { DanmakuItem, VideoPart } from "@/shared/bili.types";
 import { cn } from "@/lib/utils";
 
@@ -29,7 +30,7 @@ export default function PlayerWindowPage() {
     bvid: string;
     cid: string;
   }>();
-  const { lang, t } = useI18n();
+  const { t } = useI18n();
   const { error: toastError } = useToast();
   const queryClient = useQueryClient();
   const requestedCid = Number(cid);
@@ -45,6 +46,7 @@ export default function PlayerWindowPage() {
     enabled: validRoute,
   });
   const video = detailQuery.data?.video;
+  usePageTitlebarTitle(video?.title);
   const activePart =
     detailQuery.data?.parts.find((part) => part.cid === requestedCid) ??
     detailQuery.data?.parts[0];
@@ -167,6 +169,10 @@ export default function PlayerWindowPage() {
       data-testid="player-window-page"
       className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#09090b] text-white"
     >
+      <TitlebarExternalLink
+        label={t("Video.openOnBilibili")}
+        onOpen={() => void openExternal()}
+      />
       <div
         className={cn(
           "flex min-h-0 w-full flex-1 items-stretch justify-center p-3 sm:p-4",
@@ -193,16 +199,6 @@ export default function PlayerWindowPage() {
                 >
                   {t("Video.retry")}
                 </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="border-white/25 bg-transparent text-white hover:bg-white/10 hover:text-white"
-                  onClick={() => void openExternal()}
-                >
-                  <ExternalLink />
-                  Bilibili
-                </Button>
               </div>
             </div>
           ) : playbackQuery.data ? (
@@ -222,6 +218,9 @@ export default function PlayerWindowPage() {
               onProgress={onProgress}
               onEnded={() => onProgress(video.durationSeconds)}
               onDanmakuSent={onDanmakuSent}
+              parts={detailQuery.data.parts}
+              activeCid={resolvedCid}
+              onSelectPart={openPart}
             />
           ) : null}
           {danmakuQuery.isError && (
@@ -231,46 +230,6 @@ export default function PlayerWindowPage() {
           )}
         </div>
       </div>
-
-      <footer className="shrink-0 border-t border-white/10 bg-[#111114] px-4 py-3">
-        <div className="mx-auto flex w-full max-w-[1440px] flex-wrap items-center gap-x-4 gap-y-2">
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate text-sm font-semibold">{video.title}</h1>
-            <p className="mt-1 truncate text-[11px] text-white/55">
-              {video.author.name} ·{" "}
-              {formatCompactCount(video.stats.views, lang)} {t("Video.views")}
-              {activePart && detailQuery.data.parts.length > 1
-                ? ` · P${activePart.page} ${activePart.title} · ${formatDuration(activePart.durationSeconds)}`
-                : ""}
-            </p>
-          </div>
-          <div className="flex max-w-full items-center gap-1 overflow-x-auto">
-            {detailQuery.data.parts.map((part) => (
-              <button
-                key={part.cid}
-                type="button"
-                onClick={() => void openPart(part)}
-                className={cn(
-                  "shrink-0 rounded-sm px-2.5 py-1 text-[11px] text-white/60 transition-colors hover:bg-white/10 hover:text-white",
-                  part.cid === resolvedCid && "bg-white/12 text-white"
-                )}
-              >
-                P{part.page}
-              </button>
-            ))}
-          </div>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="border-white/20 bg-transparent text-white hover:bg-white/10 hover:text-white"
-            onClick={() => void openExternal()}
-          >
-            <Play />
-            Bilibili
-          </Button>
-        </div>
-      </footer>
     </div>
   );
 }

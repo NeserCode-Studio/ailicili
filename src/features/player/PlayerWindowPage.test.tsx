@@ -1,15 +1,24 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import PageTitlebarProvider from "@/components/framework/PageTitlebarProvider";
 import { I18nContext } from "@/contexts/i18n";
+import { usePageTitlebar } from "@/contexts/pageTitlebar";
 import PlayerWindowPage from "@/features/player/PlayerWindowPage";
 import {
   createPlaybackSession,
   fetchDanmaku,
   fetchResumePoint,
   fetchVideoDetail,
+  openPlayerWindow,
 } from "@/lib/bili";
 import { createVideoSummary } from "@/test/fixtures/bili";
 
@@ -21,6 +30,7 @@ vi.mock("@/lib/bili", async (importOriginal) => {
     fetchDanmaku: vi.fn(),
     fetchResumePoint: vi.fn(),
     fetchVideoDetail: vi.fn(),
+    openPlayerWindow: vi.fn(),
     reportHeartbeat: vi.fn(),
   };
 });
@@ -42,6 +52,23 @@ const fetchVideoDetailMock = vi.mocked(fetchVideoDetail);
 const createPlaybackSessionMock = vi.mocked(createPlaybackSession);
 const fetchDanmakuMock = vi.mocked(fetchDanmaku);
 const fetchResumePointMock = vi.mocked(fetchResumePoint);
+const openPlayerWindowMock = vi.mocked(openPlayerWindow);
+
+function PlayerTestShell() {
+  const { pageTitle, setActionsTarget } = usePageTitlebar();
+
+  return (
+    <>
+      <span data-testid="titlebar-title">{pageTitle}</span>
+      <div data-testid="titlebar-actions" ref={setActionsTarget} />
+      <MemoryRouter initialEntries={["/player/BV1xx411c7mD/2001"]}>
+        <Routes>
+          <Route path="/player/:bvid/:cid" element={<PlayerWindowPage />} />
+        </Routes>
+      </MemoryRouter>
+    </>
+  );
+}
 
 function renderPlayer() {
   const queryClient = new QueryClient({
@@ -57,11 +84,9 @@ function renderPlayer() {
           t: (key) => key,
         }}
       >
-        <MemoryRouter initialEntries={["/player/BV1xx411c7mD/2001"]}>
-          <Routes>
-            <Route path="/player/:bvid/:cid" element={<PlayerWindowPage />} />
-          </Routes>
-        </MemoryRouter>
+        <PageTitlebarProvider>
+          <PlayerTestShell />
+        </PageTitlebarProvider>
       </I18nContext.Provider>
     </QueryClientProvider>
   );
@@ -80,6 +105,12 @@ describe("PlayerWindowPage", () => {
           page: 1,
           title: "第一部分",
           durationSeconds: 125,
+        },
+        {
+          cid: 2002,
+          page: 2,
+          title: "第二部分",
+          durationSeconds: 95,
         },
       ],
       dimension: { width: 1920, height: 1080, rotate: 0 },
@@ -105,6 +136,7 @@ describe("PlayerWindowPage", () => {
       lastPlayTimeSeconds: 0,
       lastPlayCid: 0,
     });
+    openPlayerWindowMock.mockResolvedValue();
   });
 
   it("renders the player in its dedicated window route", async () => {
@@ -114,7 +146,25 @@ describe("PlayerWindowPage", () => {
     expect(screen.getByTestId("player-window-page")).toHaveClass(
       "overflow-hidden"
     );
-    expect(screen.getByText("测试视频")).toBeVisible();
+    await waitFor(() =>
+      expect(screen.getByTestId("titlebar-title")).toHaveTextContent("测试视频")
+    );
+    expect(
+      within(screen.getByTestId("titlebar-actions")).getByRole("button", {
+        name: "Video.openOnBilibili",
+      })
+    ).toBeVisible();
+
+    const controls = screen.getByTestId("player-controls");
+    const parts = within(controls).getByTestId("player-parts");
+    expect(within(parts).getByRole("button", { name: "P1" })).toHaveAttribute(
+      "aria-current",
+      "page"
+    );
+    fireEvent.click(within(parts).getByRole("button", { name: "P2" }));
+    await waitFor(() =>
+      expect(openPlayerWindowMock).toHaveBeenCalledWith("BV1xx411c7mD", 2002)
+    );
     expect(createPlaybackSessionMock).toHaveBeenCalledWith(
       "BV1xx411c7mD",
       2001,
