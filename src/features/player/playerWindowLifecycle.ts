@@ -1,6 +1,8 @@
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import type { Window } from "@tauri-apps/api/window";
 
+export const PLAYER_WINDOW_REOPENED_EVENT = "ailicili:player-window-reopened";
+
 type PlayerWindowLifecycleTarget = Pick<
   Window,
   "hide" | "onCloseRequested" | "onFocusChanged"
@@ -8,14 +10,17 @@ type PlayerWindowLifecycleTarget = Pick<
 
 export async function registerPlayerWindowLifecycle(
   playerWindow: PlayerWindowLifecycleTarget,
-  videoHost: ParentNode = document
+  videoHost: ParentNode = document,
+  eventTarget: EventTarget = window
 ): Promise<UnlistenFn> {
   let resumeOnFocus = false;
+  let reopenOnFocus = false;
 
   const stopListeningForClose = await playerWindow.onCloseRequested(
     async (event) => {
       event.preventDefault();
       resumeOnFocus = pausePlayerVideos(videoHost);
+      reopenOnFocus = true;
       await playerWindow.hide();
     }
   );
@@ -24,7 +29,10 @@ export async function registerPlayerWindowLifecycle(
   try {
     stopListeningForFocus = await playerWindow.onFocusChanged(
       ({ payload: focused }) => {
-        if (!focused || !resumeOnFocus) return;
+        if (!focused || !reopenOnFocus) return;
+        reopenOnFocus = false;
+        eventTarget.dispatchEvent(new Event(PLAYER_WINDOW_REOPENED_EVENT));
+        if (!resumeOnFocus) return;
         resumeOnFocus = false;
         void resumePlayerVideos(videoHost);
       }

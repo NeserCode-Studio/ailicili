@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "react-router";
 import { LoaderCircle } from "lucide-react";
@@ -8,6 +8,9 @@ import TitlebarExternalLink from "@/components/framework/TitlebarExternalLink";
 import { Button } from "@/components/ui/button";
 import { useI18n, useToast } from "@/composables";
 import { usePageTitlebarTitle } from "@/contexts/pageTitlebar";
+import { PLAYER_WINDOW_REOPENED_EVENT } from "@/features/player/playerWindowLifecycle";
+import { readPlayerPreferences } from "@/features/player/playerPreferences";
+import { fitPlayerWindowToVideo } from "@/features/player/playerWindowSizing";
 import VideoPlayer from "@/features/player/VideoPlayer";
 import {
   biliKeys,
@@ -45,6 +48,7 @@ export default function PlayerWindowPage() {
     enabled: validRoute,
   });
   const video = detailQuery.data?.video;
+  const videoDimension = detailQuery.data?.dimension;
   usePageTitlebarTitle(video?.title);
   const activePart =
     detailQuery.data?.parts.find((part) => part.cid === requestedCid) ??
@@ -73,6 +77,21 @@ export default function PlayerWindowPage() {
     retry: false,
     staleTime: 60_000,
   });
+
+  useEffect(() => {
+    const fitToCurrentVideo = () => {
+      if (!videoDimension || !readPlayerPreferences().autoFitWindow) return;
+      void fitPlayerWindowToVideo(videoDimension);
+    };
+
+    fitToCurrentVideo();
+    window.addEventListener(PLAYER_WINDOW_REOPENED_EVENT, fitToCurrentVideo);
+    return () =>
+      window.removeEventListener(
+        PLAYER_WINDOW_REOPENED_EVENT,
+        fitToCurrentVideo
+      );
+  }, [videoDimension]);
 
   const onProgress = useCallback(
     (seconds: number) => {

@@ -10,6 +10,20 @@ describe("player preferences", () => {
     localStorage.clear();
   });
 
+  it("enables automatic window sizing by default", () => {
+    expect(createDefaultPlayerPreferences().autoFitWindow).toBe(true);
+    expect(readPlayerPreferences().autoFitWindow).toBe(true);
+  });
+
+  it("preserves a disabled automatic window sizing preference", () => {
+    localStorage.setItem(
+      "ailicili:player-preferences",
+      JSON.stringify({ autoFitWindow: false })
+    );
+
+    expect(readPlayerPreferences().autoFitWindow).toBe(false);
+  });
+
   it("returns sanitized defaults when stored preferences are malformed", () => {
     localStorage.setItem(
       "ailicili:player-preferences",

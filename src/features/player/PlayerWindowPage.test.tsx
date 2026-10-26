@@ -14,6 +14,13 @@ import { I18nContext } from "@/contexts/i18n";
 import { usePageTitlebar } from "@/contexts/pageTitlebar";
 import PlayerWindowPage from "@/features/player/PlayerWindowPage";
 import {
+  createDefaultPlayerPreferences,
+  readPlayerPreferences,
+  savePlayerPreferences,
+} from "@/features/player/playerPreferences";
+import { PLAYER_WINDOW_REOPENED_EVENT } from "@/features/player/playerWindowLifecycle";
+import { fitPlayerWindowToVideo } from "@/features/player/playerWindowSizing";
+import {
   createPlaybackSession,
   fetchAuthStatus,
   fetchDanmaku,
@@ -61,12 +68,17 @@ vi.mock("dashjs", () => ({
   }),
 }));
 
+vi.mock("@/features/player/playerWindowSizing", () => ({
+  fitPlayerWindowToVideo: vi.fn(),
+}));
+
 const fetchVideoDetailMock = vi.mocked(fetchVideoDetail);
 const createPlaybackSessionMock = vi.mocked(createPlaybackSession);
 const fetchAuthStatusMock = vi.mocked(fetchAuthStatus);
 const fetchDanmakuMock = vi.mocked(fetchDanmaku);
 const fetchResumePointMock = vi.mocked(fetchResumePoint);
 const openPlayerWindowMock = vi.mocked(openPlayerWindow);
+const fitPlayerWindowToVideoMock = vi.mocked(fitPlayerWindowToVideo);
 
 function PlayerTestShell() {
   const { pageTitle, setActionsTarget } = usePageTitlebar();
@@ -169,6 +181,7 @@ describe("PlayerWindowPage", () => {
       lastPlayTimeSeconds: 0,
       lastPlayCid: 0,
     });
+    fitPlayerWindowToVideoMock.mockResolvedValue();
     openPlayerWindowMock.mockResolvedValue();
     dashPlayerMock.handlers.clear();
     dashPlayerMock.getCurrentRepresentationForType.mockReturnValue({
@@ -186,6 +199,13 @@ describe("PlayerWindowPage", () => {
     );
     expect(screen.getByTestId("player-stage")).toHaveClass("h-full", "w-full");
     expect(screen.getByTestId("video-player")).toHaveClass("h-auto", "w-full");
+    await waitFor(() =>
+      expect(fitPlayerWindowToVideoMock).toHaveBeenCalledWith({
+        width: 1920,
+        height: 1080,
+        rotate: 0,
+      })
+    );
     await waitFor(() =>
       expect(screen.getByTestId("titlebar-title")).toHaveTextContent("测试视频")
     );
@@ -213,6 +233,38 @@ describe("PlayerWindowPage", () => {
     expect(fetchDanmakuMock).toHaveBeenCalledWith(2001, 125);
   });
 
+  it("refits the window when the hidden player is reopened", async () => {
+    renderPlayer();
+
+    await screen.findByTestId("video-player");
+    await waitFor(() =>
+      expect(fitPlayerWindowToVideoMock).toHaveBeenCalledOnce()
+    );
+    fitPlayerWindowToVideoMock.mockClear();
+
+    window.dispatchEvent(new Event(PLAYER_WINDOW_REOPENED_EVENT));
+
+    expect(fitPlayerWindowToVideoMock).toHaveBeenCalledOnce();
+    expect(fitPlayerWindowToVideoMock).toHaveBeenCalledWith({
+      width: 1920,
+      height: 1080,
+      rotate: 0,
+    });
+  });
+
+  it("does not resize when automatic window sizing is disabled", async () => {
+    const preferences = createDefaultPlayerPreferences();
+    preferences.autoFitWindow = false;
+    savePlayerPreferences(preferences);
+
+    renderPlayer();
+
+    await screen.findByTestId("video-player");
+    window.dispatchEvent(new Event(PLAYER_WINDOW_REOPENED_EVENT));
+
+    expect(fitPlayerWindowToVideoMock).not.toHaveBeenCalled();
+  });
+
   it("opens grouped playback settings without replacing the player", async () => {
     renderPlayer();
 
@@ -233,6 +285,15 @@ describe("PlayerWindowPage", () => {
     expect(
       screen.getByText("Player.settings.quality.description")
     ).toBeVisible();
+
+    const autoFit = screen.getByRole("switch", {
+      name: "Player.settings.autoFitWindow",
+    });
+    expect(autoFit).toBeChecked();
+    fireEvent.click(autoFit);
+    await waitFor(() =>
+      expect(readPlayerPreferences().autoFitWindow).toBe(false)
+    );
 
     const autoHide = screen.getByRole("switch", {
       name: "Player.settings.autoHideControls",

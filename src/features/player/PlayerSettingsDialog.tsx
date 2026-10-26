@@ -268,6 +268,22 @@ export default function PlayerSettingsDialog({
                   }
                 />
                 <SettingsRow
+                  title={t("Player.settings.autoFitWindow")}
+                  description={t("Player.settings.autoFitWindow.description")}
+                  control={
+                    <Switch
+                      checked={preferences.autoFitWindow}
+                      onCheckedChange={(checked) =>
+                        onPreferencesChange((current) => ({
+                          ...current,
+                          autoFitWindow: checked,
+                        }))
+                      }
+                      aria-label={t("Player.settings.autoFitWindow")}
+                    />
+                  }
+                />
+                <SettingsRow
                   title={t("Player.settings.autoHideControls")}
                   description={t(
                     "Player.settings.autoHideControls.description"

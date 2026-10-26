@@ -14,6 +14,7 @@ export interface PlayerPreferences {
   speed: number;
   quality: string;
   autoPlay: boolean;
+  autoFitWindow: boolean;
   autoHideControls: boolean;
   syncProgress: boolean;
   resumeProgress: boolean;
@@ -26,6 +27,7 @@ export function createDefaultPlayerPreferences(): PlayerPreferences {
     speed: 1,
     quality: "auto",
     autoPlay: true,
+    autoFitWindow: true,
     autoHideControls: true,
     syncProgress: true,
     resumeProgress: true,
@@ -88,6 +90,7 @@ export function readPlayerPreferences(): PlayerPreferences {
           ? parsed.quality
           : defaults.quality,
       autoPlay: booleanOr(parsed.autoPlay, defaults.autoPlay),
+      autoFitWindow: booleanOr(parsed.autoFitWindow, defaults.autoFitWindow),
       autoHideControls: booleanOr(
         parsed.autoHideControls,
         defaults.autoHideControls

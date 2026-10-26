@@ -1,7 +1,10 @@
 import type { CloseRequestedEvent, Window } from "@tauri-apps/api/window";
 import { describe, expect, it, vi } from "vitest";
 
-import { registerPlayerWindowLifecycle } from "@/features/player/playerWindowLifecycle";
+import {
+  PLAYER_WINDOW_REOPENED_EVENT,
+  registerPlayerWindowLifecycle,
+} from "@/features/player/playerWindowLifecycle";
 
 type CloseHandler = (event: CloseRequestedEvent) => void | Promise<void>;
 type FocusHandler = Parameters<Window["onFocusChanged"]>[0];
@@ -41,19 +44,25 @@ describe("player window lifecycle", () => {
       Window,
       "hide" | "onCloseRequested" | "onFocusChanged"
     >;
+    const eventTarget = new EventTarget();
+    const reopened = vi.fn();
+    eventTarget.addEventListener(PLAYER_WINDOW_REOPENED_EVENT, reopened);
 
     const unlisten = await registerPlayerWindowLifecycle(
       playerWindow,
-      videoHost
+      videoHost,
+      eventTarget
     );
 
     const preventDefault = vi.fn();
     await closeHandler?.({ preventDefault } as unknown as CloseRequestedEvent);
+    expect(reopened).not.toHaveBeenCalled();
     focusHandler?.({ payload: true } as FocusEvent);
 
     expect(preventDefault).toHaveBeenCalledOnce();
     expect(pause).toHaveBeenCalledOnce();
     expect(hide).toHaveBeenCalledOnce();
+    expect(reopened).toHaveBeenCalledOnce();
     expect(play).toHaveBeenCalledOnce();
 
     unlisten();
@@ -86,13 +95,17 @@ describe("player window lifecycle", () => {
       Window,
       "hide" | "onCloseRequested" | "onFocusChanged"
     >;
+    const eventTarget = new EventTarget();
+    const reopened = vi.fn();
+    eventTarget.addEventListener(PLAYER_WINDOW_REOPENED_EVENT, reopened);
 
-    await registerPlayerWindowLifecycle(playerWindow, videoHost);
+    await registerPlayerWindowLifecycle(playerWindow, videoHost, eventTarget);
     await closeHandler?.({
       preventDefault: vi.fn(),
     } as unknown as CloseRequestedEvent);
     focusHandler?.({ payload: true } as FocusEvent);
 
+    expect(reopened).toHaveBeenCalledOnce();
     expect(play).not.toHaveBeenCalled();
   });
 });

@@ -114,6 +114,9 @@ export const I18nTexts = {
     "Player.settings.autoPlay": "Autoplay after load",
     "Player.settings.autoPlay.description":
       "Start playback automatically when the media stream is ready.",
+    "Player.settings.autoFitWindow": "Fit window to video",
+    "Player.settings.autoFitWindow.description":
+      "Resize the player to the video's dimensions each time it opens, limited to the current monitor's work area.",
     "Player.settings.autoHideControls": "Auto-hide controls",
     "Player.settings.autoHideControls.description":
       "Hide the control bar after a short period while the video is playing.",
@@ -635,6 +638,9 @@ export const I18nTexts = {
     "Player.settings.speed.description": "改变播放速度，同时尽量保留原始音调。",
     "Player.settings.autoPlay": "加载后自动播放",
     "Player.settings.autoPlay.description": "媒体流准备完成后自动开始播放。",
+    "Player.settings.autoFitWindow": "每次自适应尺寸",
+    "Player.settings.autoFitWindow.description":
+      "每次打开视频时，根据视频原始尺寸调整播放器窗口，并限制在当前屏幕可用区域内。",
     "Player.settings.autoHideControls": "自动隐藏控制栏",
     "Player.settings.autoHideControls.description":
       "视频播放期间，在一段时间没有操作后隐藏底部控制栏。",
