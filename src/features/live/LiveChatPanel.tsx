@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   LoaderCircle,
   MessageSquareText,
@@ -9,17 +9,14 @@ import {
 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useI18n } from "@/composables";
-import {
-  pollLiveChat,
-  startLiveChat,
-  stopLiveChat,
-} from "@/lib/bili";
+import { pollLiveChat, startLiveChat, stopLiveChat } from "@/lib/bili";
 import { formatClock } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { LiveChatMessage } from "@/shared/bili.types";
 
 const MAX_VISIBLE_MESSAGES = 160;
 const POLL_INTERVAL_MS = 1_200;
+const FOLLOW_BOTTOM_THRESHOLD_PX = 32;
 
 type ChatStatus = "idle" | "connecting" | "connected" | "retrying" | "error";
 
@@ -50,8 +47,13 @@ function messageColor(color: number) {
 
 function messageTime(timestamp: number, lang: string) {
   if (!Number.isFinite(timestamp) || timestamp <= 0) return "";
-  const milliseconds = timestamp < 10_000_000_000 ? timestamp * 1000 : timestamp;
+  const milliseconds =
+    timestamp < 10_000_000_000 ? timestamp * 1000 : timestamp;
   return formatClock(milliseconds, lang);
+}
+
+function distanceFromBottom(viewport: HTMLElement) {
+  return viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
 }
 
 export default function LiveChatPanel({
@@ -60,21 +62,53 @@ export default function LiveChatPanel({
   onClose,
 }: LiveChatPanelProps) {
   const { lang, t } = useI18n();
+  const panelRef = useRef<HTMLElement>(null);
+  const followBottomRef = useRef(true);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<LiveChatMessage[]>([]);
   const [status, setStatus] = useState<ChatStatus>("idle");
   const cursorRef = useRef(0);
 
   useEffect(() => {
+    const viewport = panelRef.current?.querySelector<HTMLElement>(
+      '[data-slot="scroll-area-viewport"]'
+    );
+    if (!viewport) return;
+
+    const handleScroll = () => {
+      followBottomRef.current =
+        distanceFromBottom(viewport) <= FOLLOW_BOTTOM_THRESHOLD_PX;
+    };
+
+    handleScroll();
+    viewport.addEventListener("scroll", handleScroll, { passive: true });
+    return () => viewport.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!followBottomRef.current) return;
+    const viewport = panelRef.current?.querySelector<HTMLElement>(
+      '[data-slot="scroll-area-viewport"]'
+    );
+    if (!viewport) return;
+    viewport.scrollTop = Math.max(
+      0,
+      viewport.scrollHeight - viewport.clientHeight
+    );
+  }, [messages]);
+
+  useEffect(() => {
     if (!active || roomId <= 0) {
       setSessionId(null);
       setStatus("idle");
+      followBottomRef.current = true;
       return;
     }
 
     let cancelled = false;
     let acquiredSessionId: string | null = null;
     cursorRef.current = 0;
+    followBottomRef.current = true;
     setSessionId(null);
     setStatus("connecting");
 
@@ -114,9 +148,7 @@ export default function LiveChatPanel({
         const result = await pollLiveChat(sessionId, cursorRef.current);
         if (cancelled) return;
         cursorRef.current = result.cursor;
-        setMessages((current) =>
-          mergeMessages(current, result.messages)
-        );
+        setMessages((current) => mergeMessages(current, result.messages));
         if (result.connected) {
           setStatus("connected");
         } else {
@@ -141,6 +173,7 @@ export default function LiveChatPanel({
 
   return (
     <section
+      ref={panelRef}
       data-testid="live-chat-panel"
       aria-label={t("Live.chat.title")}
       className="bg-background text-foreground flex h-full min-h-0 w-full flex-col"
