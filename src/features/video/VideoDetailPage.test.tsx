@@ -111,6 +111,7 @@ describe("VideoDetailPage", () => {
     });
     expect(titlebarAction).toBeVisible();
     expect(titlebarAction).toHaveTextContent("");
+    expect(titlebarAction).toHaveClass("titlebar-op");
     fireEvent.click(titlebarAction);
     await waitFor(() =>
       expect(openExternalUrlMock).toHaveBeenCalledWith(
