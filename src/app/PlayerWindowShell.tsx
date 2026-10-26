@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import TitlebarOperations from "@/components/framework/TitlebarOperations";
 import { useI18n } from "@/composables";
 import { usePageTitlebar } from "@/contexts/pageTitlebar";
-import { registerPlayerWindowCloseHandler } from "@/features/player/playerWindowLifecycle";
+import { registerPlayerWindowLifecycle } from "@/features/player/playerWindowLifecycle";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("PlayerWindow");
@@ -19,7 +19,7 @@ export default function PlayerWindowShell({ children }: PropsWithChildren) {
     let disposed = false;
     let unlisten: (() => void) | undefined;
 
-    void registerPlayerWindowCloseHandler(playerWindow)
+    void registerPlayerWindowLifecycle(playerWindow)
       .then((stopListening) => {
         if (disposed) stopListening();
         else unlisten = stopListening;
