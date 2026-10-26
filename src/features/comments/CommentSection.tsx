@@ -23,6 +23,8 @@ interface CommentSectionProps {
   totalHint: number;
 }
 
+const COMMENT_EMOTE_SIZE = 24;
+
 function RichMessage({
   message,
   emotes,
@@ -49,9 +51,11 @@ function RichMessage({
             key={`${part}-${index}`}
             src={emote.url}
             alt={part}
-            width={emote.width}
-            height={emote.height}
+            width={COMMENT_EMOTE_SIZE}
+            height={COMMENT_EMOTE_SIZE}
             loading="lazy"
+            decoding="async"
+            referrerPolicy="no-referrer"
             className="mx-0.5 inline-block object-contain align-text-bottom"
           />
         ) : (

@@ -39,8 +39,15 @@ function createCommentsPage(): CommentPage {
       {
         id: "100",
         author: { mid: "1", name: "根评论", avatarUrl: "" },
-        message: "顶层评论",
-        emotes: [],
+        message: "顶层评论 [汤圆]",
+        emotes: [
+          {
+            key: "[汤圆]",
+            url: "https://i0.hdslb.com/bfs/emote/93609633a9d194cf336687eb19c01dca95bde719.png@64w_64h_1c.webp",
+            width: 1,
+            height: 1,
+          },
+        ],
         likes: 3,
         createdAt: 1_700_000_000,
         replyCount: 1,
@@ -116,6 +123,24 @@ function renderSection() {
 }
 
 describe("CommentSection", () => {
+  it("loads emotes without sending the app origin as a referrer", async () => {
+    fetchAuthStatusMock.mockResolvedValue({
+      authenticated: true,
+    } as AuthStatus);
+    fetchCommentsMock.mockResolvedValue(createCommentsPage());
+
+    renderSection();
+
+    const emote = await screen.findByRole("img", { name: "[汤圆]" });
+    expect(emote).toHaveAttribute(
+      "src",
+      "https://i0.hdslb.com/bfs/emote/93609633a9d194cf336687eb19c01dca95bde719.png@64w_64h_1c.webp"
+    );
+    expect(emote).toHaveAttribute("referrerpolicy", "no-referrer");
+    expect(emote).toHaveAttribute("width", "24");
+    expect(emote).toHaveAttribute("height", "24");
+  });
+
   it("posts a nested reply with the top-level root and target parent", async () => {
     fetchAuthStatusMock.mockResolvedValue({
       authenticated: true,
