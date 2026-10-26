@@ -23,7 +23,7 @@ const LIVE_REFERER: &str = "https://live.bilibili.com/";
 const LIVE_MEDIA_ORIGIN: &str = "http://bilistream.localhost";
 const AREA_LIST_URL: &str =
     "https://api.live.bilibili.com/xlive/web-interface/v1/index/getWebAreaList";
-const RECOMMEND_URL: &str = "https://api.live.bilibili.com/room/v1/room/get_user_recommend";
+const HOME_FEED_URL: &str = "https://api.live.bilibili.com/xlive/web-interface/v1/index/getList";
 const FILTERED_ROOMS_URL: &str =
     "https://api.live.bilibili.com/xlive/web-interface/v1/second/getListByArea";
 const ROOM_INFO_URL: &str = "https://api.live.bilibili.com/room/v1/Room/get_info";
@@ -134,10 +134,12 @@ pub(crate) struct LiveDanmakuHost {
     pub wss_port: u16,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct LiveMediaAsset {
     remote_url: String,
+    is_playlist: bool,
     created_at: Instant,
+    last_access: RwLock<Instant>,
 }
 
 struct LiveMediaSession {
@@ -147,12 +149,20 @@ struct LiveMediaSession {
     playlist_url: String,
     cookie_header: String,
     assets: RwLock<HashMap<String, LiveMediaAsset>>,
+    last_access: RwLock<Instant>,
 }
 
 pub(crate) struct LiveAssetRequest {
     pub remote_url: String,
     pub cookie_header: String,
     pub referer: String,
+    is_playlist: bool,
+}
+
+impl LiveAssetRequest {
+    pub(crate) fn is_playlist(&self) -> bool {
+        self.is_playlist
+    }
 }
 
 #[derive(Default)]
@@ -167,12 +177,13 @@ impl LiveMediaSessions {
 
     fn insert(&self, session: LiveMediaSession) -> Result<(), BiliError> {
         let token = session.token.clone();
+        let now = Instant::now();
         let mut values = self.values.write().map_err(|_| BiliError::Internal)?;
-        values.retain(|_, value| value.created_at.elapsed() < LIVE_SESSION_TTL);
+        values.retain(|_, value| value.is_active_at(now));
         if values.len() >= MAX_LIVE_SESSIONS {
             if let Some(oldest) = values
                 .iter()
-                .min_by_key(|(_, value)| value.created_at)
+                .min_by_key(|(_, value)| value.last_access_at())
                 .map(|(token, _)| token.clone())
             {
                 values.remove(&oldest);
@@ -186,44 +197,56 @@ impl LiveMediaSessions {
         if !valid_opaque_token(token) {
             return None;
         }
-        self.values
+        let session = self
+            .values
             .read()
             .ok()?
             .get(token)
-            .filter(|session| session.created_at.elapsed() < LIVE_SESSION_TTL)
-            .cloned()
+            .filter(|session| session.is_active())
+            .cloned()?;
+        session.touch();
+        Some(session)
     }
 
     pub(crate) async fn playlist(&self, http: &Client, token: &str) -> Result<String, BiliError> {
         let session = self.get(token).ok_or_else(|| {
             BiliError::InvalidInput("live playback session is missing or expired")
         })?;
-        let response = http
-            .get(&session.playlist_url)
-            .header(COOKIE, &session.cookie_header)
-            .header(
-                REFERER,
-                format!("https://live.bilibili.com/{}", session.room_id),
-            )
-            .send()
-            .await?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(BiliError::HttpStatus(status.as_u16()));
+        let source = fetch_playlist(
+            http,
+            &session.playlist_url,
+            &session.cookie_header,
+            &live_referer(session.room_id),
+        )
+        .await?;
+        session.rewrite_playlist(&source, &session.playlist_url)
+    }
+
+    pub(crate) async fn asset_playlist(
+        &self,
+        http: &Client,
+        token: &str,
+        asset_token: &str,
+    ) -> Result<Option<String>, BiliError> {
+        let asset = self
+            .asset(token, asset_token)
+            .ok_or_else(|| BiliError::InvalidInput("live playback asset is missing or expired"))?;
+        if !asset.is_playlist {
+            return Ok(None);
         }
-        if response
-            .content_length()
-            .is_some_and(|length| length > MAX_PLAYLIST_BYTES as u64)
-        {
-            return Err(BiliError::InvalidResponse("live playlist is too large"));
-        }
-        let bytes = response.bytes().await?;
-        if bytes.len() > MAX_PLAYLIST_BYTES {
-            return Err(BiliError::InvalidResponse("live playlist is too large"));
-        }
-        let source = std::str::from_utf8(&bytes)
-            .map_err(|_| BiliError::InvalidResponse("live playlist is not UTF-8"))?;
-        session.rewrite_playlist(source)
+        let session = self.get(token).ok_or_else(|| {
+            BiliError::InvalidInput("live playback session is missing or expired")
+        })?;
+        let source = fetch_playlist(
+            http,
+            &asset.remote_url,
+            &asset.cookie_header,
+            &asset.referer,
+        )
+        .await?;
+        session
+            .rewrite_playlist(&source, &asset.remote_url)
+            .map(Some)
     }
 
     pub(crate) fn asset(&self, token: &str, asset_token: &str) -> Option<LiveAssetRequest> {
@@ -232,20 +255,43 @@ impl LiveMediaSessions {
         }
         let session = self.get(token)?;
         let assets = session.assets.read().ok()?;
-        let asset = assets
-            .get(asset_token)
-            .filter(|asset| asset.created_at.elapsed() < LIVE_ASSET_TTL)?;
+        let asset = assets.get(asset_token).filter(|asset| asset.is_active())?;
+        asset.touch();
         Some(LiveAssetRequest {
             remote_url: asset.remote_url.clone(),
             cookie_header: session.cookie_header.clone(),
-            referer: format!("https://live.bilibili.com/{}", session.room_id),
+            referer: live_referer(session.room_id),
+            is_playlist: asset.is_playlist,
         })
     }
 }
 
 impl LiveMediaSession {
-    fn rewrite_playlist(&self, source: &str) -> Result<String, BiliError> {
-        let base = Url::parse(&self.playlist_url)
+    fn is_active(&self) -> bool {
+        self.is_active_at(Instant::now())
+    }
+
+    fn is_active_at(&self, now: Instant) -> bool {
+        self.last_access_at()
+            .checked_add(LIVE_SESSION_TTL)
+            .is_some_and(|expires_at| now < expires_at)
+    }
+
+    fn last_access_at(&self) -> Instant {
+        self.last_access
+            .read()
+            .map(|value| *value)
+            .unwrap_or(self.created_at)
+    }
+
+    fn touch(&self) {
+        if let Ok(mut last_access) = self.last_access.write() {
+            *last_access = Instant::now();
+        }
+    }
+
+    fn rewrite_playlist(&self, source: &str, playlist_url: &str) -> Result<String, BiliError> {
+        let base = Url::parse(playlist_url)
             .map_err(|_| BiliError::InvalidResponse("invalid live playlist URL"))?;
         let mut output = String::with_capacity(source.len() + 1024);
 
@@ -304,11 +350,11 @@ impl LiveMediaSession {
         let asset_token = Uuid::new_v4().to_string();
         let now = Instant::now();
         let mut assets = self.assets.write().map_err(|_| BiliError::Internal)?;
-        assets.retain(|_, asset| now.duration_since(asset.created_at) < LIVE_ASSET_TTL);
+        assets.retain(|_, asset| asset.is_active_at(now));
         if assets.len() >= MAX_LIVE_ASSETS {
             if let Some(oldest) = assets
                 .iter()
-                .min_by_key(|(_, asset)| asset.created_at)
+                .min_by_key(|(_, asset)| asset.last_access_at())
                 .map(|(token, _)| token.clone())
             {
                 assets.remove(&oldest);
@@ -318,13 +364,40 @@ impl LiveMediaSession {
             asset_token.clone(),
             LiveMediaAsset {
                 remote_url: remote.to_string(),
+                is_playlist: remote.path().to_ascii_lowercase().ends_with(".m3u8"),
                 created_at: now,
+                last_access: RwLock::new(now),
             },
         );
         Ok(format!(
             "{LIVE_MEDIA_ORIGIN}/live/{}/asset/{asset_token}",
             self.token
         ))
+    }
+}
+
+impl LiveMediaAsset {
+    fn is_active(&self) -> bool {
+        self.is_active_at(Instant::now())
+    }
+
+    fn is_active_at(&self, now: Instant) -> bool {
+        self.last_access_at()
+            .checked_add(LIVE_ASSET_TTL)
+            .is_some_and(|expires_at| now < expires_at)
+    }
+
+    fn last_access_at(&self) -> Instant {
+        self.last_access
+            .read()
+            .map(|value| *value)
+            .unwrap_or(self.created_at)
+    }
+
+    fn touch(&self) {
+        if let Ok(mut last_access) = self.last_access.write() {
+            *last_access = Instant::now();
+        }
     }
 }
 
@@ -420,23 +493,30 @@ impl BiliClient {
             }
         }
 
-        let rooms = self
-            .live_get::<Vec<RawRecommendedRoom>>(
-                RECOMMEND_URL,
-                &[
-                    ("page", page.to_string()),
-                    ("page_size", page_size.to_string()),
-                ],
+        let data: RawLiveHomePage = self
+            .live_get(
+                HOME_FEED_URL,
+                &[("platform", "web".to_owned())],
                 LIVE_REFERER,
             )
-            .await?
+            .await?;
+        let rooms = deduplicate_rooms(
+            data.room_list
+                .into_iter()
+                .flat_map(|module| module.list)
+                .filter_map(map_home_room),
+        );
+        let start = ((page - 1) * page_size) as usize;
+        let end = start.saturating_add(page_size as usize);
+        let has_more = end < rooms.len();
+        let rooms = rooms
             .into_iter()
-            .filter_map(map_recommended_room)
+            .skip(start)
+            .take(page_size as usize)
             .collect::<Vec<_>>();
-        let rooms = deduplicate_rooms(rooms);
 
         Ok(LiveRoomPage {
-            has_more: rooms.len() >= page_size as usize,
+            has_more,
             rooms,
             page,
             page_size,
@@ -575,6 +655,7 @@ impl BiliClient {
             playlist_url,
             cookie_header,
             assets: RwLock::new(HashMap::new()),
+            last_access: RwLock::new(Instant::now()),
         };
         let stream_format = selected.format_name.to_owned();
         self.live_media.insert(session)?;
@@ -767,15 +848,11 @@ fn map_feed_room(raw: RawFeedRoom) -> Option<LiveRoomSummary> {
         area_name: first_non_empty([&raw.area_name, &raw.area_v2_name]),
         parent_area_name: first_non_empty([&raw.parent_area_name, &raw.area_v2_parent_name]),
         online: raw.online,
-        live_status: if raw.live_status == 0 {
-            1
-        } else {
-            raw.live_status
-        },
+        live_status: raw.live_status,
     })
 }
 
-fn map_recommended_room(raw: RawRecommendedRoom) -> Option<LiveRoomSummary> {
+fn map_home_room(raw: RawHomeRoom) -> Option<LiveRoomSummary> {
     if raw.room_id == 0 {
         return None;
     }
@@ -785,22 +862,21 @@ fn map_recommended_room(raw: RawRecommendedRoom) -> Option<LiveRoomSummary> {
         uid: raw.uid,
         title: clean_text(&raw.title),
         cover_url: image_url(
-            if raw.user_cover.trim().is_empty() {
-                &raw.system_cover
-            } else {
-                &raw.user_cover
-            },
+            raw.cover
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or(&raw.keyframe),
             "@672w_378h_1c.webp",
         ),
-        keyframe_url: image_url(&raw.system_cover, "@1280w_720h_1c.webp"),
+        keyframe_url: image_url(&raw.keyframe, "@1280w_720h_1c.webp"),
         anchor_name: clean_text(&raw.uname),
         anchor_avatar_url: image_url(&raw.face, "@96w_96h_1c.webp"),
-        area_id: raw.area.0,
-        parent_area_id: String::new(),
-        area_name: clean_text(&raw.area_name),
-        parent_area_name: String::new(),
+        area_id: raw.area_v2_id.0,
+        parent_area_id: raw.area_v2_parent_id.0,
+        area_name: clean_text(&raw.area_v2_name),
+        parent_area_name: clean_text(&raw.area_v2_parent_name),
         online: raw.online,
-        live_status: 1,
+        live_status: u8::from(raw.status),
     })
 }
 
@@ -862,6 +938,41 @@ fn first_non_empty<const N: usize>(values: [&String; N]) -> String {
         .to_owned()
 }
 
+async fn fetch_playlist(
+    http: &Client,
+    url: &str,
+    cookie_header: &str,
+    referer: &str,
+) -> Result<String, BiliError> {
+    let response = http
+        .get(url)
+        .header(COOKIE, cookie_header)
+        .header(REFERER, referer)
+        .send()
+        .await?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(BiliError::HttpStatus(status.as_u16()));
+    }
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_PLAYLIST_BYTES as u64)
+    {
+        return Err(BiliError::InvalidResponse("live playlist is too large"));
+    }
+    let bytes = response.bytes().await?;
+    if bytes.len() > MAX_PLAYLIST_BYTES {
+        return Err(BiliError::InvalidResponse("live playlist is too large"));
+    }
+    std::str::from_utf8(&bytes)
+        .map(str::to_owned)
+        .map_err(|_| BiliError::InvalidResponse("live playlist is not UTF-8"))
+}
+
+fn live_referer(room_id: u64) -> String {
+    format!("https://live.bilibili.com/{room_id}")
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 struct FlexibleId(#[serde(default, deserialize_with = "deserialize_flexible_id")] String);
 
@@ -912,6 +1023,18 @@ struct RawLiveFeedPage {
 }
 
 #[derive(Debug, Deserialize)]
+struct RawLiveHomePage {
+    #[serde(default)]
+    room_list: Vec<RawLiveHomeModule>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawLiveHomeModule {
+    #[serde(default)]
+    list: Vec<RawHomeRoom>,
+}
+
+#[derive(Debug, Deserialize)]
 struct RawFeedRoom {
     #[serde(default, rename = "roomid", alias = "room_id")]
     room_id: u64,
@@ -952,7 +1075,7 @@ struct RawFeedRoom {
 }
 
 #[derive(Debug, Deserialize)]
-struct RawRecommendedRoom {
+struct RawHomeRoom {
     #[serde(default, rename = "roomid", alias = "room_id")]
     room_id: u64,
     #[serde(default)]
@@ -966,15 +1089,21 @@ struct RawRecommendedRoom {
     #[serde(default)]
     face: String,
     #[serde(default)]
-    user_cover: String,
+    cover: Option<String>,
     #[serde(default)]
-    system_cover: String,
+    keyframe: String,
     #[serde(default)]
     online: u64,
     #[serde(default)]
-    area: FlexibleId,
-    #[serde(default, rename = "areaName")]
-    area_name: String,
+    status: bool,
+    #[serde(default)]
+    area_v2_id: FlexibleId,
+    #[serde(default)]
+    area_v2_parent_id: FlexibleId,
+    #[serde(default)]
+    area_v2_name: String,
+    #[serde(default)]
+    area_v2_parent_name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1183,8 +1312,8 @@ mod tests {
     use crate::bili::client::BiliClient;
 
     use super::{
-        map_feed_room, map_recommended_room, select_live_codec, LiveMediaSession, RawFeedRoom,
-        RawLiveCodec, RawLiveFormat, RawLivePlayurl, RawLiveUrlInfo, RawRecommendedRoom,
+        map_feed_room, map_home_room, select_live_codec, LiveMediaSession, RawFeedRoom,
+        RawHomeRoom, RawLiveCodec, RawLiveFormat, RawLivePlayurl, RawLiveUrlInfo,
     };
 
     #[test]
@@ -1216,8 +1345,8 @@ mod tests {
     }
 
     #[test]
-    fn maps_recommended_rooms_without_exposing_short_lived_fields() {
-        let raw: RawRecommendedRoom = serde_json::from_str(
+    fn maps_home_rooms_with_the_real_live_status() {
+        let raw: RawHomeRoom = serde_json::from_str(
             r#"{
                 "roomid": 456,
                 "short_id": 7,
@@ -1225,17 +1354,21 @@ mod tests {
                 "title": "推荐直播",
                 "uname": "推荐主播",
                 "face": "",
-                "user_cover": "",
-                "system_cover": "https://i0.hdslb.com/key.jpg",
+                "cover": "",
+                "keyframe": "https://i0.hdslb.com/key.jpg",
                 "online": 12,
-                "area": 0,
-                "areaName": "综合"
+                "status": false,
+                "area_v2_id": 86,
+                "area_v2_parent_id": 2,
+                "area_v2_name": "英雄联盟",
+                "area_v2_parent_name": "网游"
             }"#,
         )
-        .expect("recommended room");
-        let room = map_recommended_room(raw).expect("mapped room");
+        .expect("home room");
+        let room = map_home_room(raw).expect("mapped room");
         assert_eq!(room.room_id, 456);
-        assert_eq!(room.area_name, "综合");
+        assert_eq!(room.area_name, "英雄联盟");
+        assert_eq!(room.live_status, 0);
         assert!(room.cover_url.starts_with("https://"));
     }
 
@@ -1283,15 +1416,58 @@ mod tests {
             playlist_url: "https://media.example/live/index.m3u8?sign=secret".to_owned(),
             cookie_header: "buvid3=secret".to_owned(),
             assets: RwLock::new(Default::default()),
+            last_access: RwLock::new(Instant::now()),
         };
         let playlist = session
-            .rewrite_playlist("#EXTM3U\n#EXT-X-MAP:URI=\"init.m4s\"\n#EXTINF:1,\nsegment.m4s\n")
+            .rewrite_playlist(
+                "#EXTM3U\n#EXT-X-MAP:URI=\"init.m4s\"\n#EXTINF:1,\nsegment.m4s\n",
+                "https://media.example/live/index.m3u8?sign=secret",
+            )
             .expect("rewritten playlist");
 
         assert!(playlist.contains("http://bilistream.localhost/live/"));
         assert!(!playlist.contains("media.example"));
         assert!(!playlist.contains("secret"));
         assert_eq!(session.assets.read().expect("assets").len(), 2);
+    }
+
+    #[test]
+    fn rewrites_a_nested_media_playlist_against_its_remote_url() {
+        let session = LiveMediaSession {
+            token: "00000000-0000-4000-8000-000000000001".to_owned(),
+            room_id: 1,
+            created_at: Instant::now(),
+            playlist_url: "https://media.example/live/index.m3u8?sign=main".to_owned(),
+            cookie_header: "buvid3=secret".to_owned(),
+            assets: RwLock::new(Default::default()),
+            last_access: RwLock::new(Instant::now()),
+        };
+        let main = session
+            .rewrite_playlist(
+                "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=10240000\nchild/index.m3u8?sign=child\n",
+                "https://media.example/live/index.m3u8?sign=main",
+            )
+            .expect("main playlist");
+        let assets = session.assets.read().expect("assets");
+        let child = assets.values().next().expect("child playlist asset");
+        assert!(child.is_playlist);
+        assert_eq!(
+            child.remote_url,
+            "https://media.example/live/child/index.m3u8?sign=child"
+        );
+        drop(assets);
+
+        let child = session
+            .rewrite_playlist(
+                "#EXTM3U\n#EXT-X-MAP:URI=\"init.m4s\"\n#EXTINF:1,\nsegment.m4s\n",
+                "https://media.example/live/child/index.m3u8?sign=child",
+            )
+            .expect("child rewritten");
+
+        assert_eq!(session.assets.read().expect("assets").len(), 3);
+        assert!(!main.contains("media.example"));
+        assert!(!child.contains("media.example"));
+        assert!(!child.contains("sign="));
     }
 
     #[test]
@@ -1351,5 +1527,46 @@ mod tests {
             .playback_url
             .as_deref()
             .is_some_and(|url| url.starts_with("http://bilistream.localhost/live/")));
+
+        let master = client
+            .live_media
+            .playlist(&client.http, &playback.session_id)
+            .await
+            .expect("proxied master playlist");
+        if master.contains("#EXT-X-STREAM-INF") {
+            let child_url = master
+                .lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty() && !line.starts_with('#'))
+                .expect("child playlist URL");
+            let child_token = child_url.rsplit('/').next().expect("child playlist token");
+            let child_asset = client
+                .live_media
+                .asset(&playback.session_id, child_token)
+                .expect("child playlist asset");
+            assert!(child_asset.is_playlist());
+
+            let child = client
+                .live_media
+                .asset_playlist(&client.http, &playback.session_id, child_token)
+                .await
+                .expect("child playlist request")
+                .expect("nested HLS playlist");
+            assert!(child.starts_with("#EXTM3U"));
+            assert!(child.contains("/asset/"));
+            assert!(!child.contains(".m3u8?"));
+        } else {
+            let segment_url = master
+                .lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty() && !line.starts_with('#'))
+                .expect("media segment URL");
+            let segment_token = segment_url.rsplit('/').next().expect("media segment token");
+            let segment = client
+                .live_media
+                .asset(&playback.session_id, segment_token)
+                .expect("media segment asset");
+            assert!(!segment.is_playlist());
+        }
     }
 }

@@ -78,6 +78,30 @@ async fn serve(
         let asset = live_media
             .asset(token, asset_token)
             .ok_or(StatusCode::NOT_FOUND)?;
+        if asset.is_playlist() {
+            let playlist = live_media
+                .asset_playlist(&state.http, token, asset_token)
+                .await
+                .map_err(|error| live_status(&error))?
+                .ok_or(StatusCode::NOT_FOUND)?;
+            let bytes = playlist.into_bytes();
+            let length = bytes.len();
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header(CONTENT_TYPE, "application/vnd.apple.mpegurl; charset=utf-8")
+                .header(CACHE_CONTROL, "no-store")
+                .header(CONTENT_LENGTH, length.to_string())
+                .header("access-control-allow-origin", "*")
+                .header("access-control-allow-headers", ALLOW_HEADERS)
+                .header("access-control-expose-headers", EXPOSE_HEADERS)
+                .header("cross-origin-resource-policy", "cross-origin")
+                .body(if request.method() == Method::HEAD {
+                    Vec::new()
+                } else {
+                    bytes
+                })
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
+        }
         let upstream = state
             .http
             .request(request.method().clone(), asset.remote_url)
