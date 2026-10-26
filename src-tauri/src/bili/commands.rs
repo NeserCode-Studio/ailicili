@@ -11,6 +11,8 @@ use super::{
         FavoriteResourcePage, HistoryPage, ResumePoint, SpaceProfile, SpaceVideoPage,
         WatchLaterPage,
     },
+    live::{LiveArea, LivePlaybackSession, LiveRoomDetail, LiveRoomPage},
+    live_chat::{LiveChatPoll, LiveChatStart},
     pgc::{PgcIndexPage, PgcSeasonDetail, PgcTimeline},
     playurl::PlaybackSession,
     search::{SearchKind, SearchPage, SearchSuggestion},
@@ -76,6 +78,79 @@ pub async fn bili_pgc_season(
     season_id: u64,
 ) -> Result<PgcSeasonDetail, BiliCommandError> {
     client.pgc_season(season_id).await.map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn bili_live_areas(
+    client: State<'_, BiliClient>,
+) -> Result<Vec<LiveArea>, BiliCommandError> {
+    client.live_areas().await.map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn bili_live_rooms(
+    client: State<'_, BiliClient>,
+    parent_area_id: Option<String>,
+    area_id: Option<String>,
+    page: Option<u32>,
+    page_size: Option<u32>,
+) -> Result<LiveRoomPage, BiliCommandError> {
+    client
+        .live_rooms(
+            parent_area_id,
+            area_id,
+            page.unwrap_or(1),
+            page_size.unwrap_or(20),
+        )
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn bili_live_room(
+    client: State<'_, BiliClient>,
+    room_id: u64,
+) -> Result<LiveRoomDetail, BiliCommandError> {
+    client.live_room_detail(room_id).await.map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn bili_live_playback_session(
+    client: State<'_, BiliClient>,
+    room_id: u64,
+    qn: Option<u32>,
+) -> Result<LivePlaybackSession, BiliCommandError> {
+    client
+        .create_live_playback_session(room_id, qn.unwrap_or(10_000))
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn bili_live_chat_start(
+    client: State<'_, BiliClient>,
+    room_id: u64,
+) -> Result<LiveChatStart, BiliCommandError> {
+    client.start_live_chat(room_id).await.map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn bili_live_chat_poll(
+    client: State<'_, BiliClient>,
+    session_id: String,
+    after: u64,
+) -> Result<LiveChatPoll, BiliCommandError> {
+    client
+        .poll_live_chat(&session_id, after)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn bili_live_chat_stop(
+    client: State<'_, BiliClient>,
+    session_id: String,
+) -> Result<(), BiliCommandError> {
+    client.stop_live_chat(&session_id).map_err(Into::into)
 }
 
 #[tauri::command]

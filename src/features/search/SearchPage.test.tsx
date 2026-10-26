@@ -10,6 +10,7 @@ import { I18nContext } from "@/contexts/i18n";
 import SearchPage from "@/features/search/SearchPage";
 import {
   fetchSearchSuggestions,
+  openLiveRoomWindow,
   searchBili,
 } from "@/lib/bili";
 import { createSearchPage } from "@/test/fixtures/bili";
@@ -20,12 +21,14 @@ vi.mock("@/lib/bili", async () => {
   return {
     ...actual,
     fetchSearchSuggestions: vi.fn(),
+    openLiveRoomWindow: vi.fn(),
     searchBili: vi.fn(),
   };
 });
 
 const searchBiliMock = vi.mocked(searchBili);
 const fetchSearchSuggestionsMock = vi.mocked(fetchSearchSuggestions);
+const openLiveRoomWindowMock = vi.mocked(openLiveRoomWindow);
 
 function LocationProbe() {
   const location = useLocation();
@@ -62,6 +65,7 @@ describe("SearchPage", () => {
     localStorage.clear();
     searchBiliMock.mockReset();
     fetchSearchSuggestionsMock.mockReset();
+    openLiveRoomWindowMock.mockReset();
   });
 
   it("restores query, type, and page from the URL", async () => {
@@ -112,5 +116,29 @@ describe("SearchPage", () => {
       "?q=rust&type=user"
     );
     expect(searchBiliMock).toHaveBeenCalledWith("rust", "user", 1);
+  });
+
+  it("opens live search results in the dedicated live player", async () => {
+    openLiveRoomWindowMock.mockResolvedValue();
+    searchBiliMock.mockResolvedValue(
+      createSearchPage([
+        {
+          kind: "live",
+          roomId: "123",
+          title: "测试直播间",
+          coverUrl: "https://i0.hdslb.com/live.jpg",
+          anchorName: "测试主播",
+          anchorAvatarUrl: "",
+          areaName: "娱乐",
+          online: 500,
+          targetUrl: "https://live.bilibili.com/123",
+        },
+      ])
+    );
+
+    renderPage("/search?q=live&type=live");
+    fireEvent.click(await screen.findByText("测试直播间"));
+
+    expect(openLiveRoomWindowMock).toHaveBeenCalledWith(123);
   });
 });

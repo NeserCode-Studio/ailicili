@@ -8,6 +8,8 @@ const DiscoveryPage = lazy(() => import("@/features/discovery/DiscoveryPage"));
 const VideoDetailPage = lazy(() => import("@/features/video/VideoDetailPage"));
 const PgcCatalogPage = lazy(() => import("@/features/pgc/PgcCatalogPage"));
 const PgcSeasonPage = lazy(() => import("@/features/pgc/PgcSeasonPage"));
+const LiveCatalogPage = lazy(() => import("@/features/live/LiveCatalogPage"));
+const LivePlayerPage = lazy(() => import("@/features/live/LivePlayerPage"));
 const PlayerWindowPage = lazy(
   () => import("@/features/player/PlayerWindowPage")
 );
@@ -58,6 +60,8 @@ export default function AppRoutes() {
         <Route path="/video/:bvid" element={<VideoDetailPage />} />
         <Route path="/pgc" element={<PgcCatalogPage />} />
         <Route path="/pgc/:seasonId" element={<PgcSeasonPage />} />
+        <Route path="/live" element={<LiveCatalogPage />} />
+        <Route path="/player/live/:roomId" element={<LivePlayerPage />} />
         <Route path="/player/:bvid/:cid" element={<PlayerWindowPage />} />
         <Route path="/search" element={<SearchPage />} />
         <Route path="/library" element={<LibraryPage />} />

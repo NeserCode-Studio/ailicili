@@ -11,6 +11,12 @@ import type {
   FavoriteResourcePage,
   HistoryPage,
   LibraryVideo,
+  LiveArea,
+  LiveChatPoll,
+  LiveChatStart,
+  LivePlaybackSession,
+  LiveRoomDetail,
+  LiveRoomPage,
   PopularPage,
   PlaybackSession,
   PgcIndexPage,
@@ -34,16 +40,30 @@ import type {
 const DEFAULT_PAGE_SIZE = 20;
 const LAST_PLAYER_TARGET_KEY = "ailicili:last-player-target";
 
-interface PlayerTarget {
+interface VideoPlayerTarget {
+  kind: "video";
   bvid: string;
   cid: number;
 }
 
-function rememberPlayerTarget(bvid: string, cid: number) {
+interface LivePlayerTarget {
+  kind: "live";
+  roomId: number;
+}
+
+type PlayerTarget = VideoPlayerTarget | LivePlayerTarget;
+type StoredPlayerTarget = {
+  kind?: "video" | "live";
+  bvid?: string;
+  cid?: number;
+  roomId?: number;
+};
+
+function rememberPlayerTarget(target: PlayerTarget) {
   try {
     window.localStorage.setItem(
       LAST_PLAYER_TARGET_KEY,
-      JSON.stringify({ bvid, cid })
+      JSON.stringify(target)
     );
   } catch {
     // The launcher still works when storage is unavailable.
@@ -54,7 +74,15 @@ function readLastPlayerTarget(): PlayerTarget | null {
   try {
     const value = JSON.parse(
       window.localStorage.getItem(LAST_PLAYER_TARGET_KEY) ?? "null"
-    ) as Partial<PlayerTarget> | null;
+    ) as StoredPlayerTarget | null;
+    if (
+      value?.kind === "live" &&
+      typeof value.roomId === "number" &&
+      Number.isSafeInteger(value.roomId) &&
+      value.roomId > 0
+    ) {
+      return { kind: "live", roomId: value.roomId };
+    }
     if (
       typeof value?.bvid !== "string" ||
       typeof value.cid !== "number" ||
@@ -63,9 +91,66 @@ function readLastPlayerTarget(): PlayerTarget | null {
     ) {
       return null;
     }
-    return { bvid: value.bvid, cid: value.cid };
+    return { kind: "video", bvid: value.bvid, cid: value.cid };
   } catch {
     return null;
+  }
+}
+
+function playerTargetRoute(target: PlayerTarget) {
+  if (target.kind === "live") {
+    return `/player/live/${target.roomId}`;
+  }
+  return `/player/${encodeURIComponent(target.bvid)}/${target.cid}`;
+}
+
+async function openPlayerTarget(target: PlayerTarget): Promise<void> {
+  rememberPlayerTarget(target);
+  const route = playerTargetRoute(target);
+
+  if ("__TAURI_INTERNALS__" in window) {
+    const existing = (await WebviewWindow.getAll()).find(
+      (window) => window.label === "player"
+    );
+    if (existing) {
+      await existing.emitTo("player", "player-navigate", route);
+      await existing.show();
+      await existing.setFocus();
+      return;
+    }
+
+    const player = new WebviewWindow("player", {
+      url: route,
+      title: "Ailicili Player",
+      width: 1280,
+      height: 820,
+      minWidth: 800,
+      minHeight: 500,
+      decorations: false,
+      shadow: true,
+    });
+    await new Promise<void>((resolve, reject) => {
+      void player.once("tauri://created", () => resolve());
+      void player.once<unknown>("tauri://error", (event) => {
+        reject(
+          new Error(
+            typeof event.payload === "string"
+              ? event.payload
+              : "Player window creation failed"
+          )
+        );
+      });
+    });
+    return;
+  }
+
+  const playerWindow = window.open(
+    route,
+    "ailicili-player",
+    "popup,width=1280,height=820"
+  );
+  if (!playerWindow) {
+    throw new Error("Player window was blocked");
   }
 }
 
@@ -94,6 +179,20 @@ export const biliKeys = {
     [...biliKeys.all, "pgc", "timeline", seasonType] as const,
   pgcSeason: (seasonId: string) =>
     [...biliKeys.all, "pgc", "season", seasonId] as const,
+  liveAreas: () => [...biliKeys.all, "live", "areas"] as const,
+  liveRooms: (parentAreaId: string, areaId: string, page: number) =>
+    [
+      ...biliKeys.all,
+      "live",
+      "rooms",
+      parentAreaId,
+      areaId,
+      page,
+    ] as const,
+  liveRoom: (roomId: number) =>
+    [...biliKeys.all, "live", "room", roomId] as const,
+  livePlayback: (roomId: number, qn: number) =>
+    [...biliKeys.all, "live", "playback", roomId, qn] as const,
   video: (bvid: string) => [...biliKeys.all, "video", bvid] as const,
   auth: () => [...biliKeys.all, "auth", "status"] as const,
   qrLogin: (generation: number) =>
@@ -157,6 +256,56 @@ export function fetchPgcSeason(seasonId: string): Promise<PgcSeasonDetail> {
   return invoke<PgcSeasonDetail>("bili_pgc_season", { seasonId });
 }
 
+export function fetchLiveAreas(): Promise<LiveArea[]> {
+  return invoke<LiveArea[]>("bili_live_areas");
+}
+
+export function fetchLiveRooms(
+  parentAreaId: string | null,
+  areaId: string | null,
+  page = 1,
+  pageSize = 20
+): Promise<LiveRoomPage> {
+  return invoke<LiveRoomPage>("bili_live_rooms", {
+    parentAreaId,
+    areaId,
+    page,
+    pageSize,
+  });
+}
+
+export function fetchLiveRoom(roomId: number): Promise<LiveRoomDetail> {
+  return invoke<LiveRoomDetail>("bili_live_room", { roomId });
+}
+
+export function createLivePlaybackSession(
+  roomId: number,
+  qn = 10_000
+): Promise<LivePlaybackSession> {
+  return invoke<LivePlaybackSession>("bili_live_playback_session", {
+    roomId,
+    qn,
+  });
+}
+
+export function startLiveChat(roomId: number): Promise<LiveChatStart> {
+  return invoke<LiveChatStart>("bili_live_chat_start", { roomId });
+}
+
+export function pollLiveChat(
+  sessionId: string,
+  after: number
+): Promise<LiveChatPoll> {
+  return invoke<LiveChatPoll>("bili_live_chat_poll", {
+    sessionId,
+    after,
+  });
+}
+
+export function stopLiveChat(sessionId: string): Promise<void> {
+  return invoke<void>("bili_live_chat_stop", { sessionId });
+}
+
 export function fetchVideoDetail(bvid: string): Promise<VideoDetail> {
   return invoke<VideoDetail>("bili_video_detail", { bvid });
 }
@@ -203,53 +352,14 @@ export async function openPlayerWindow(
   bvid: string,
   cid: number
 ): Promise<void> {
-  rememberPlayerTarget(bvid, cid);
+  await openPlayerTarget({ kind: "video", bvid, cid });
+}
 
-  if ("__TAURI_INTERNALS__" in window) {
-    const route = `/player/${encodeURIComponent(bvid)}/${cid}`;
-    const existing = (await WebviewWindow.getAll()).find(
-      (window) => window.label === "player"
-    );
-    if (existing) {
-      await existing.emitTo("player", "player-navigate", route);
-      await existing.show();
-      await existing.setFocus();
-      return;
-    }
-
-    const player = new WebviewWindow("player", {
-      url: route,
-      title: "Ailicili Player",
-      width: 1280,
-      height: 820,
-      minWidth: 800,
-      minHeight: 500,
-      decorations: false,
-      shadow: true,
-    });
-    await new Promise<void>((resolve, reject) => {
-      void player.once("tauri://created", () => resolve());
-      void player.once<unknown>("tauri://error", (event) => {
-        reject(
-          new Error(
-            typeof event.payload === "string"
-              ? event.payload
-              : "Player window creation failed"
-          )
-        );
-      });
-    });
-    return;
+export async function openLiveRoomWindow(roomId: number): Promise<void> {
+  if (!Number.isSafeInteger(roomId) || roomId <= 0) {
+    throw new Error("Invalid live room id");
   }
-
-  const playerWindow = window.open(
-    `/player/${encodeURIComponent(bvid)}/${cid}`,
-    "ailicili-player",
-    "popup,width=1280,height=820"
-  );
-  if (!playerWindow) {
-    throw new Error("Player window was blocked");
-  }
+  await openPlayerTarget({ kind: "live", roomId });
 }
 
 export async function openLastPlayerWindow(): Promise<boolean> {
@@ -266,7 +376,7 @@ export async function openLastPlayerWindow(): Promise<boolean> {
 
   const target = readLastPlayerTarget();
   if (!target) return false;
-  await openPlayerWindow(target.bvid, target.cid);
+  await openPlayerTarget(target);
   return true;
 }
 

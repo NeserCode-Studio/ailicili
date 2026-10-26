@@ -2,6 +2,7 @@ import type { CloseRequestedEvent, Window } from "@tauri-apps/api/window";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  PLAYER_WINDOW_HIDDEN_EVENT,
   PLAYER_WINDOW_REOPENED_EVENT,
   registerPlayerWindowLifecycle,
 } from "@/features/player/playerWindowLifecycle";
@@ -46,7 +47,9 @@ describe("player window lifecycle", () => {
     >;
     const eventTarget = new EventTarget();
     const reopened = vi.fn();
+    const hidden = vi.fn();
     eventTarget.addEventListener(PLAYER_WINDOW_REOPENED_EVENT, reopened);
+    eventTarget.addEventListener(PLAYER_WINDOW_HIDDEN_EVENT, hidden);
 
     const unlisten = await registerPlayerWindowLifecycle(
       playerWindow,
@@ -56,6 +59,7 @@ describe("player window lifecycle", () => {
 
     const preventDefault = vi.fn();
     await closeHandler?.({ preventDefault } as unknown as CloseRequestedEvent);
+    expect(hidden).toHaveBeenCalledOnce();
     expect(reopened).not.toHaveBeenCalled();
     focusHandler?.({ payload: true } as FocusEvent);
 

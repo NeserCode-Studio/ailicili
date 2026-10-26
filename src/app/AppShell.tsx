@@ -1,12 +1,13 @@
 import type { PropsWithChildren } from "react";
 import { NavLink } from "react-router";
 import {
+  Activity,
   Clapperboard,
   Compass,
   Frame,
   Library,
   MonitorPlay,
-  Radio,
+  RadioTower,
   Search,
   Settings2,
 } from "lucide-react";
@@ -90,9 +91,10 @@ export default function AppShell({ children }: PropsWithChildren) {
             <SidebarItem to="/" icon={Compass} label={t("Nav.discover")} />
             <SidebarItem to="/search" icon={Search} label={t("Nav.search")} />
             <SidebarItem to="/pgc" icon={Clapperboard} label={t("Nav.pgc")} />
+            <SidebarItem to="/live" icon={RadioTower} label={t("Nav.live")} />
             <SidebarItem
               to="/dynamics"
-              icon={Radio}
+              icon={Activity}
               label={t("Nav.dynamics")}
             />
             <SidebarItem

@@ -1,10 +1,18 @@
-import { Clock3, ExternalLink, Play, Radio, Users } from "lucide-react";
+import {
+  Clock3,
+  ExternalLink,
+  MonitorPlay,
+  Play,
+  Radio,
+  Users,
+} from "lucide-react";
 import { Link } from "react-router";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useI18n, useToast } from "@/composables";
 import CoverImage from "@/features/video/CoverImage";
 import { openExternalUrl } from "@/lib/external";
+import { openLiveRoomWindow } from "@/lib/bili";
 import {
   formatCompactCount,
   formatDuration,
@@ -33,6 +41,15 @@ function OpenAction({ label }: { label: string }) {
   );
 }
 
+function WindowAction({ label }: { label: string }) {
+  return (
+    <span className="text-muted-foreground group-hover:text-foreground inline-flex items-center gap-1 text-xs transition-colors">
+      {label}
+      <MonitorPlay className="size-3" />
+    </span>
+  );
+}
+
 export default function SearchResultItem({ item }: SearchResultItemProps) {
   const { lang, t } = useI18n();
   const { error } = useToast();
@@ -40,6 +57,19 @@ export default function SearchResultItem({ item }: SearchResultItemProps) {
   async function openTarget(url: string) {
     try {
       await openExternalUrl(url);
+    } catch {
+      error("Search.openError");
+    }
+  }
+
+  async function openLive(roomId: string) {
+    const parsedRoomId = Number(roomId);
+    if (!Number.isSafeInteger(parsedRoomId) || parsedRoomId <= 0) {
+      error("Search.openError");
+      return;
+    }
+    try {
+      await openLiveRoomWindow(parsedRoomId);
     } catch {
       error("Search.openError");
     }
@@ -177,7 +207,7 @@ export default function SearchResultItem({ item }: SearchResultItemProps) {
   return (
     <button
       type="button"
-      onClick={() => void openTarget(item.targetUrl)}
+      onClick={() => void openLive(item.roomId)}
       className="group hover:bg-muted/55 grid w-full gap-4 rounded-md p-3 text-left transition-colors sm:grid-cols-[11rem_1fr_auto]"
     >
       <div className="relative aspect-video overflow-hidden rounded-md">
@@ -197,7 +227,7 @@ export default function SearchResultItem({ item }: SearchResultItemProps) {
         </p>
       </div>
       <span className="self-center">
-        <OpenAction label={t("Search.openLive")} />
+        <WindowAction label={t("Search.openLive")} />
       </span>
     </button>
   );

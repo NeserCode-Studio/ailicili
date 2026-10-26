@@ -2,13 +2,28 @@ import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  createLivePlaybackSession,
+  fetchLiveAreas,
+  fetchLiveRoom,
+  fetchLiveRooms,
   fetchPopularVideos,
   fetchVideoDetail,
   normalizeBiliError,
+  openLiveRoomWindow,
   openLastPlayerWindow,
   openPlayerWindow,
+  pollLiveChat,
+  startLiveChat,
+  stopLiveChat,
 } from "@/lib/bili";
-import { createPopularPage, createVideoSummary } from "@/test/fixtures/bili";
+import {
+  createLiveArea,
+  createLivePlaybackSession as createLivePlaybackSessionFixture,
+  createLiveRoomDetail,
+  createLiveRoomPage,
+  createPopularPage,
+  createVideoSummary,
+} from "@/test/fixtures/bili";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -88,6 +103,78 @@ describe("Bilibili command contracts", () => {
     });
   });
 
+  it("passes live filters and playback parameters to Rust commands", async () => {
+    const area = createLiveArea();
+    const rooms = createLiveRoomPage();
+    const room = createLiveRoomDetail();
+    const session = createLivePlaybackSessionFixture();
+    invokeMock
+      .mockResolvedValueOnce([area])
+      .mockResolvedValueOnce(rooms)
+      .mockResolvedValueOnce(room)
+      .mockResolvedValueOnce(session);
+
+    await expect(fetchLiveAreas()).resolves.toEqual([area]);
+    await expect(fetchLiveRooms("1", "21", 3, 12)).resolves.toEqual(rooms);
+    await expect(fetchLiveRoom(123)).resolves.toEqual(room);
+    await expect(createLivePlaybackSession(123, 400)).resolves.toEqual(
+      session
+    );
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "bili_live_areas");
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "bili_live_rooms", {
+      parentAreaId: "1",
+      areaId: "21",
+      page: 3,
+      pageSize: 12,
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(3, "bili_live_room", {
+      roomId: 123,
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      4,
+      "bili_live_playback_session",
+      {
+        roomId: 123,
+        qn: 400,
+      }
+    );
+  });
+
+  it("starts, polls, and stops a live chat session", async () => {
+    invokeMock
+      .mockResolvedValueOnce({ sessionId: "chat-session" })
+      .mockResolvedValueOnce({
+        messages: [],
+        cursor: 7,
+        connected: true,
+        error: null,
+      })
+      .mockResolvedValueOnce(undefined);
+
+    await expect(startLiveChat(123)).resolves.toEqual({
+      sessionId: "chat-session",
+    });
+    await expect(pollLiveChat("chat-session", 4)).resolves.toEqual({
+      messages: [],
+      cursor: 7,
+      connected: true,
+      error: null,
+    });
+    await expect(stopLiveChat("chat-session")).resolves.toBeUndefined();
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "bili_live_chat_start", {
+      roomId: 123,
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "bili_live_chat_poll", {
+      sessionId: "chat-session",
+      after: 4,
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(3, "bili_live_chat_stop", {
+      sessionId: "chat-session",
+    });
+  });
+
   it("creates a dedicated Tauri player window", async () => {
     Object.defineProperty(window, "__TAURI_INTERNALS__", {
       configurable: true,
@@ -110,6 +197,36 @@ describe("Bilibili command contracts", () => {
         title: "Ailicili Player",
       })
     );
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  });
+
+  it("opens a live room in the fixed dedicated player window", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    webviewWindowMock.getAll.mockResolvedValueOnce([]);
+    webviewWindowMock.once.mockImplementation(
+      (event: string, handler: () => void) => {
+        if (event === "tauri://created") queueMicrotask(handler);
+        return Promise.resolve(() => undefined);
+      }
+    );
+
+    await openLiveRoomWindow(123);
+
+    expect(webviewWindowMock.create).toHaveBeenCalledWith(
+      "player",
+      expect.objectContaining({
+        url: "/player/live/123",
+        title: "Ailicili Player",
+      })
+    );
+    expect(
+      JSON.parse(
+        window.localStorage.getItem("ailicili:last-player-target") ?? "null"
+      )
+    ).toEqual({ kind: "live", roomId: 123 });
     Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
   });
 
@@ -181,6 +298,34 @@ describe("Bilibili command contracts", () => {
       "player",
       expect.objectContaining({
         url: "/player/BV1xx411c7mD/2002",
+      })
+    );
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  });
+
+  it("restores a recent live room from the launcher", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    window.localStorage.setItem(
+      "ailicili:last-player-target",
+      JSON.stringify({ kind: "live", roomId: 456 })
+    );
+    webviewWindowMock.getAll.mockResolvedValue([]);
+    webviewWindowMock.once.mockImplementation(
+      (event: string, handler: () => void) => {
+        if (event === "tauri://created") queueMicrotask(handler);
+        return Promise.resolve(() => undefined);
+      }
+    );
+
+    await expect(openLastPlayerWindow()).resolves.toBe(true);
+
+    expect(webviewWindowMock.create).toHaveBeenCalledWith(
+      "player",
+      expect.objectContaining({
+        url: "/player/live/456",
       })
     );
     Reflect.deleteProperty(window, "__TAURI_INTERNALS__");

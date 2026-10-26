@@ -48,6 +48,43 @@ async fn serve(
         .collect::<Vec<_>>();
     let state = app.state::<BiliClient>();
     let media = state.media.clone();
+    let live_media = state.live_media.clone();
+
+    if let ["live", token, "index.m3u8"] = segments.as_slice() {
+        let playlist = live_media
+            .playlist(&state.http, token)
+            .await
+            .map_err(|error| live_status(&error))?;
+        let bytes = playlist.into_bytes();
+        let length = bytes.len();
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, "application/vnd.apple.mpegurl; charset=utf-8")
+            .header(CACHE_CONTROL, "no-store")
+            .header(CONTENT_LENGTH, length.to_string())
+            .header("access-control-allow-origin", "*")
+            .header("access-control-allow-headers", ALLOW_HEADERS)
+            .header("access-control-expose-headers", EXPOSE_HEADERS)
+            .header("cross-origin-resource-policy", "cross-origin")
+            .body(if request.method() == Method::HEAD {
+                Vec::new()
+            } else {
+                bytes
+            })
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    if let ["live", token, "asset", asset_token] = segments.as_slice() {
+        let asset = live_media
+            .asset(token, asset_token)
+            .ok_or(StatusCode::NOT_FOUND)?;
+        let upstream = state
+            .http
+            .request(request.method().clone(), asset.remote_url)
+            .header(reqwest::header::COOKIE, asset.cookie_header)
+            .header(reqwest::header::REFERER, asset.referer);
+        return proxy_upstream(upstream, request).await;
+    }
 
     if let ["mpd", token] = segments.as_slice() {
         let mpd = media.mpd(token).ok_or(StatusCode::NOT_FOUND)?;
@@ -92,6 +129,13 @@ async fn serve(
         upstream = upstream.header(reqwest::header::COOKIE, cookie_header);
     }
 
+    proxy_upstream(upstream, request).await
+}
+
+async fn proxy_upstream(
+    upstream: reqwest::RequestBuilder,
+    request: &http::Request<Vec<u8>>,
+) -> Result<Response<Vec<u8>>, StatusCode> {
     let upstream = upstream.send().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
     let status =
         StatusCode::from_u16(upstream.status().as_u16()).map_err(|_| StatusCode::BAD_GATEWAY)?;
@@ -131,6 +175,15 @@ async fn serve(
     builder
         .body(body)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+fn live_status(error: &super::error::BiliError) -> StatusCode {
+    match error {
+        super::error::BiliError::InvalidInput(_) | super::error::BiliError::InvalidResponse(_) => {
+            StatusCode::NOT_FOUND
+        }
+        _ => StatusCode::BAD_GATEWAY,
+    }
 }
 
 fn preflight_response() -> Response<Vec<u8>> {

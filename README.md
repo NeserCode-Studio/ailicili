@@ -4,8 +4,8 @@ Ailicili is an unofficial, non-commercial Bilibili desktop client for Windows, b
 on the existing Tauri 2 and React 19 application shell. It is not affiliated with or
 endorsed by Bilibili.
 
-The project is being delivered in phases. Phases 1 through 3 and the PGC part of phase 4
-currently provide:
+The project is being delivered in phases. Phases 1 through 3 and the PGC and live parts of
+phase 4 currently provide:
 
 - A branded desktop shell with discovery navigation, settings, tray, theme, and command palette.
 - Live public Bilibili discovery data backed by a typed Rust command.
@@ -23,11 +23,13 @@ currently provide:
 - Personal history, favorites, watch-later, user-space, and dynamic-feed pages.
 - PGC timelines and catalogs for anime, films, documentaries, and variety, plus season details,
   episode selection, related-season navigation, and dedicated-window playback with web fallback.
+- Live area and global-recommendation catalogs, room details, dedicated-window HLS playback,
+  quality switching, reconnect behavior, and text chat with an explicit risk-control fallback.
 - Explicit loading, error, retry, empty, and pagination states.
 - Unit, component, route, Rust mapping, and opt-in live network tests, with Playwright available
   for viewport and visual smoke checks.
 
-Live detail pages, downloads, and offline caching remain planned.
+Downloads and offline caching remain planned.
 
 ## Stack
 
@@ -68,7 +70,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
   response validation, stable DTO mapping, playback sessions, media proxying, and
   command registration.
 - `src/app/` owns providers, query caching, the window shell, and route composition.
-- `src/features/` owns discovery, PGC, playback, danmaku, comments, social actions,
+- `src/features/` owns discovery, PGC, live, playback, danmaku, comments, social actions,
   personal libraries, authentication, and search UI.
 - `src/shared/` owns frontend contracts shared by features.
 - `src/components/ui/` is generated shadcn code and is not edited manually.
@@ -94,8 +96,8 @@ credential storage inside the Rust boundary.
 2. Complete: QR authentication, secure sessions, WBI search, and account identity.
 3. Complete: UGC playback, danmaku, comments, social actions, history, favorites,
    watch-later, user space, and dynamic feeds.
-4. In progress: PGC catalogs and season pages are complete; live, downloads, and offline
-   cache workflows are next.
+4. In progress: PGC catalogs and live streaming are complete; downloads and offline cache
+   workflows are next.
 5. Security, accessibility, performance, packaging, updates, and release hardening.
 
 ## Compliance

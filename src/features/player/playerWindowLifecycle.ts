@@ -2,6 +2,7 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 import type { Window } from "@tauri-apps/api/window";
 
 export const PLAYER_WINDOW_REOPENED_EVENT = "ailicili:player-window-reopened";
+export const PLAYER_WINDOW_HIDDEN_EVENT = "ailicili:player-window-hidden";
 
 type PlayerWindowLifecycleTarget = Pick<
   Window,
@@ -21,6 +22,7 @@ export async function registerPlayerWindowLifecycle(
       event.preventDefault();
       resumeOnFocus = pausePlayerVideos(videoHost);
       reopenOnFocus = true;
+      eventTarget.dispatchEvent(new Event(PLAYER_WINDOW_HIDDEN_EVENT));
       await playerWindow.hide();
     }
   );

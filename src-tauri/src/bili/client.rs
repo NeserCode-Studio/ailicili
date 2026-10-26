@@ -10,6 +10,8 @@ use tokio::sync::RwLock;
 use super::{
     auth::PendingLogins,
     error::BiliError,
+    live::LiveMediaSessions,
+    live_chat::LiveChatSessions,
     playurl::MediaSessions,
     session::{KeyringSessionStore, SessionManager},
     types::{PopularPage, RawPopularData, RawVideoDetailData, VideoDetail},
@@ -35,6 +37,8 @@ pub struct BiliClient {
     pub(crate) pending_logins: PendingLogins,
     pub(crate) guest_cookies: RwLock<Option<BTreeMap<String, String>>>,
     pub(crate) media: Arc<MediaSessions>,
+    pub(crate) live_media: Arc<LiveMediaSessions>,
+    pub(crate) live_chat: Arc<LiveChatSessions>,
 }
 
 impl BiliClient {
@@ -65,6 +69,8 @@ impl BiliClient {
             pending_logins: PendingLogins::new(),
             guest_cookies: RwLock::new(None),
             media: Arc::new(MediaSessions::new()),
+            live_media: Arc::new(LiveMediaSessions::new()),
+            live_chat: Arc::new(LiveChatSessions::new()),
         })
     }
 

@@ -282,6 +282,103 @@ export interface PlaybackSession {
   qualities: PlaybackQuality[];
 }
 
+export interface LiveSubArea {
+  id: string;
+  parentId: string;
+  name: string;
+  iconUrl: string;
+}
+
+export interface LiveArea {
+  id: string;
+  name: string;
+  children: LiveSubArea[];
+}
+
+export interface LiveRoomSummary {
+  roomId: number;
+  shortId: number;
+  uid: number;
+  title: string;
+  coverUrl: string;
+  keyframeUrl: string;
+  anchorName: string;
+  anchorAvatarUrl: string;
+  areaId: string;
+  parentAreaId: string;
+  areaName: string;
+  parentAreaName: string;
+  online: number;
+  liveStatus: number;
+}
+
+export type LiveFeedMode = "area" | "recommended";
+
+export interface LiveRoomPage {
+  rooms: LiveRoomSummary[];
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+  mode: LiveFeedMode;
+  fallbackReason: string | null;
+}
+
+export interface LiveRoomDetail {
+  room: LiveRoomSummary;
+  description: string;
+  tags: string[];
+  followerCount: number;
+  anchorLevel: number;
+  liveTime: string;
+  webUrl: string;
+}
+
+export interface LivePlaybackQuality {
+  id: number;
+  label: string;
+}
+
+export interface LivePlaybackSession {
+  sessionId: string;
+  roomId: number;
+  liveStatus: number;
+  playbackUrl: string | null;
+  expiresInSeconds: number;
+  selectedQuality: number;
+  qualities: LivePlaybackQuality[];
+  streamFormat: string | null;
+}
+
+export interface LiveChatMedal {
+  name: string;
+  level: number;
+  anchorName: string;
+}
+
+export interface LiveChatMessage {
+  sequence: number;
+  id: string;
+  uid: string;
+  username: string;
+  text: string;
+  color: number;
+  timestamp: number;
+  guardLevel: number;
+  isAdmin: boolean;
+  medal: LiveChatMedal | null;
+}
+
+export interface LiveChatStart {
+  sessionId: string;
+}
+
+export interface LiveChatPoll {
+  messages: LiveChatMessage[];
+  cursor: number;
+  connected: boolean;
+  error: string | null;
+}
+
 export type DanmakuMode = 1 | 4 | 5;
 
 export interface DanmakuItem {

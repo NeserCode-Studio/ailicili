@@ -2,6 +2,12 @@ import type {
   DynamicPage,
   HistoryPage,
   LibraryVideo,
+  LiveArea,
+  LiveChatMessage,
+  LivePlaybackSession,
+  LiveRoomDetail,
+  LiveRoomPage,
+  LiveRoomSummary,
   PgcIndexPage,
   PgcMediaSummary,
   PgcSeasonDetail,
@@ -208,6 +214,118 @@ export function createPgcSeasonDetail(
       },
     ],
     webUrl: "https://www.bilibili.com/bangumi/play/ss47836",
+    ...overrides,
+  };
+}
+
+export function createLiveArea(
+  overrides: Partial<LiveArea> = {}
+): LiveArea {
+  return {
+    id: "1",
+    name: "娱乐",
+    children: [
+      {
+        id: "21",
+        parentId: "1",
+        name: "虚拟主播",
+        iconUrl: "https://i0.hdslb.com/live-area.png",
+      },
+      {
+        id: "22",
+        parentId: "1",
+        name: "唱见",
+        iconUrl: "",
+      },
+    ],
+    ...overrides,
+  };
+}
+
+export function createLiveRoomSummary(
+  overrides: Partial<LiveRoomSummary> = {}
+): LiveRoomSummary {
+  return {
+    roomId: 123,
+    shortId: 456,
+    uid: 42,
+    title: "测试直播间",
+    coverUrl: "https://i0.hdslb.com/live-cover.jpg",
+    keyframeUrl: "https://i0.hdslb.com/live-keyframe.jpg",
+    anchorName: "测试主播",
+    anchorAvatarUrl: "https://i0.hdslb.com/live-avatar.jpg",
+    areaId: "21",
+    parentAreaId: "1",
+    areaName: "虚拟主播",
+    parentAreaName: "娱乐",
+    online: 12_345,
+    liveStatus: 1,
+    ...overrides,
+  };
+}
+
+export function createLiveRoomPage(
+  rooms: LiveRoomSummary[] = [createLiveRoomSummary()]
+): LiveRoomPage {
+  return {
+    rooms,
+    page: 1,
+    pageSize: 24,
+    hasMore: false,
+    mode: "area",
+    fallbackReason: null,
+  };
+}
+
+export function createLiveRoomDetail(
+  overrides: Partial<LiveRoomDetail> = {}
+): LiveRoomDetail {
+  return {
+    room: createLiveRoomSummary(),
+    description: "测试直播间简介",
+    tags: ["聊天", "测试"],
+    followerCount: 20_000,
+    anchorLevel: 30,
+    liveTime: "2026-10-26 20:00:00",
+    webUrl: "https://live.bilibili.com/123",
+    ...overrides,
+  };
+}
+
+export function createLivePlaybackSession(
+  overrides: Partial<LivePlaybackSession> = {}
+): LivePlaybackSession {
+  return {
+    sessionId: "live-session",
+    roomId: 123,
+    liveStatus: 1,
+    playbackUrl: "https://bilistream.localhost/live/live-session/index.m3u8",
+    expiresInSeconds: 1200,
+    selectedQuality: 10_000,
+    qualities: [
+      { id: 10_000, label: "原画" },
+      { id: 400, label: "蓝光" },
+      { id: 250, label: "超清" },
+    ],
+    streamFormat: "fmp4",
+    ...overrides,
+  };
+}
+
+export function createLiveChatMessage(
+  overrides: Partial<LiveChatMessage> = {}
+): LiveChatMessage {
+  return {
+    sequence: 1,
+    id: "chat-1",
+    uid: "42",
+    username: "测试观众",
+    text: "直播聊天消息",
+    color: 0xffffff,
+    timestamp: 1_792_944_000,
+    guardLevel: 0,
+    isAdmin: false,
+    medal: null,
     ...overrides,
   };
 }
