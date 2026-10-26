@@ -55,6 +55,7 @@ interface PlayerSettingsDialogProps {
   portalContainer: HTMLElement | null;
   preferences: PlayerPreferences;
   qualities: PlaybackQuality[];
+  onQualityChange: (quality: string) => void;
   onPreferencesChange: (
     update: (current: PlayerPreferences) => PlayerPreferences
   ) => void;
@@ -169,6 +170,7 @@ export default function PlayerSettingsDialog({
   portalContainer,
   preferences,
   qualities,
+  onQualityChange,
   onPreferencesChange,
   onReset,
 }: PlayerSettingsDialogProps) {
@@ -298,10 +300,7 @@ export default function PlayerSettingsDialog({
                       value={preferences.quality}
                       onChange={(event) => {
                         const quality = event.currentTarget.value;
-                        onPreferencesChange((current) => ({
-                          ...current,
-                          quality,
-                        }));
+                        onQualityChange(quality);
                       }}
                       aria-label={t("Player.quality")}
                       className="border-input bg-background h-8 w-full rounded-md border px-2 text-sm outline-none focus:border-[var(--ring)]"

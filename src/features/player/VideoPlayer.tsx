@@ -9,7 +9,6 @@ import type { MediaPlayerClass } from "dashjs";
 import {
   LoaderCircle,
   Maximize,
-  MessageSquarePlus,
   Minimize,
   Pause,
   PictureInPicture2,
@@ -22,7 +21,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { useI18n } from "@/composables";
+import { useI18n, useToast } from "@/composables";
 import DanmakuComposer from "@/features/danmaku/DanmakuComposer";
 import DanmakuCanvas from "@/features/danmaku/DanmakuCanvas";
 import PlayerQualityMenu from "@/features/player/PlayerQualityMenu";
@@ -64,6 +63,36 @@ interface VideoPlayerProps {
 
 const PROGRESS_KEY_PREFIX = "ailicili:playback-progress:";
 const CONTROL_HIDE_DELAY = 2200;
+const QUALITY_SWITCH_SETTLE_DELAY = 320;
+const QUALITY_SWITCH_TIMEOUT = 6500;
+
+interface PendingQualitySwitch {
+  previousQuality: string;
+  expectedRepresentationId: string | null;
+  waitForRepresentation: boolean;
+  wasPlaying: boolean;
+  timeoutId: number;
+}
+
+interface QualitySwitchingState {
+  targetLabel: string;
+  autoResume: boolean;
+}
+
+function isEditableElement(element: Element | null) {
+  return (
+    element instanceof HTMLInputElement ||
+    element instanceof HTMLSelectElement ||
+    element instanceof HTMLTextAreaElement
+  );
+}
+
+function isPlayerEditorElement(element: Element | null) {
+  return (
+    element instanceof HTMLElement &&
+    Boolean(element.closest("[data-player-editor], [data-player-popover]"))
+  );
+}
 
 function readLocalProgress(bvid: string, cid: number) {
   try {
@@ -108,7 +137,10 @@ function applyDashPreferences(
             audio: true,
           },
         },
-        buffer: { fastSwitchEnabled: preferences.fastSwitchEnabled },
+        buffer: {
+          fastSwitchEnabled: preferences.fastSwitchEnabled,
+          flushBufferAtTrackSwitch: true,
+        },
       },
     });
 
@@ -143,10 +175,14 @@ export default function VideoPlayer({
   onDanmakuSent,
 }: VideoPlayerProps) {
   const { t } = useI18n();
+  const { error: toastError } = useToast();
+  const toastErrorRef = useRef(toastError);
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const playerRef = useRef<MediaPlayerClass | null>(null);
   const hideTimerRef = useRef<number | null>(null);
+  const pendingQualitySwitchRef = useRef<PendingQualitySwitch | null>(null);
+  const resumeTimerRef = useRef<number | null>(null);
   const lastHeartbeatRef = useRef(0);
   const [playing, setPlaying] = useState(false);
   const [buffering, setBuffering] = useState(true);
@@ -158,7 +194,8 @@ export default function VideoPlayer({
   const [controlsVisible, setControlsVisible] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
-  const [composerOpen, setComposerOpen] = useState(false);
+  const [qualitySwitching, setQualitySwitching] =
+    useState<QualitySwitchingState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [preferences, setPreferences] = useState<PlayerPreferences>(() => {
     const stored = readPlayerPreferences();
@@ -168,13 +205,21 @@ export default function VideoPlayer({
     return qualityAvailable ? stored : { ...stored, quality: "auto" };
   });
   const preferencesRef = useRef(preferences);
+  toastErrorRef.current = toastError;
 
   const showControls = useCallback(() => {
     setControlsVisible(true);
     if (hideTimerRef.current) window.clearTimeout(hideTimerRef.current);
     if (!preferencesRef.current.autoHideControls) return;
     hideTimerRef.current = window.setTimeout(() => {
-      if (!videoRef.current?.paused) setControlsVisible(false);
+      const activeElement = document.activeElement;
+      if (
+        !videoRef.current?.paused &&
+        !isEditableElement(activeElement) &&
+        !isPlayerEditorElement(activeElement)
+      ) {
+        setControlsVisible(false);
+      }
     }, CONTROL_HIDE_DELAY);
   }, []);
 
@@ -187,6 +232,108 @@ export default function VideoPlayer({
       });
     },
     []
+  );
+
+  const finishQualitySwitch = useCallback(
+    (outcome: "success" | "failure" | "cancel") => {
+      const pending = pendingQualitySwitchRef.current;
+      if (!pending) return;
+
+      pendingQualitySwitchRef.current = null;
+      window.clearTimeout(pending.timeoutId);
+      setQualitySwitching(null);
+
+      if (outcome === "failure") {
+        updatePreferences((current) => ({
+          ...current,
+          quality: pending.previousQuality,
+        }));
+        toastErrorRef.current("Player.quality.switchFailed");
+      }
+
+      if (outcome !== "cancel" && pending.wasPlaying) {
+        if (resumeTimerRef.current) {
+          window.clearTimeout(resumeTimerRef.current);
+        }
+        resumeTimerRef.current = window.setTimeout(
+          () => {
+            resumeTimerRef.current = null;
+            const video = videoRef.current;
+            if (!video) return;
+            void video.play().catch(() => setPlaying(false));
+          },
+          outcome === "success" ? 60 : 0
+        );
+      }
+    },
+    [updatePreferences]
+  );
+
+  const switchQuality = useCallback(
+    (quality: string) => {
+      if (
+        quality === preferencesRef.current.quality ||
+        pendingQualitySwitchRef.current
+      ) {
+        return;
+      }
+
+      const video = videoRef.current;
+      const player = playerRef.current;
+      if (!video) return;
+      if (!player) {
+        updatePreferences((current) => ({ ...current, quality }));
+        return;
+      }
+
+      const selectedQuality = session.qualities.find(
+        (item) => String(item.id) === quality
+      );
+      const targetLabel =
+        quality === "auto"
+          ? t("Player.auto")
+          : (selectedQuality?.label ?? quality);
+      const expectedRepresentationId =
+        quality === "auto" ? null : `video-${quality}`;
+      const wasPlaying = !video.paused && !video.ended;
+
+      let waitForRepresentation = expectedRepresentationId !== null;
+      if (expectedRepresentationId) {
+        try {
+          waitForRepresentation =
+            player.getCurrentRepresentationForType("video")?.id !==
+            expectedRepresentationId;
+        } catch {
+          waitForRepresentation = true;
+        }
+      }
+
+      if (wasPlaying) video.pause();
+      if (hideTimerRef.current) window.clearTimeout(hideTimerRef.current);
+      setControlsVisible(true);
+      setQualityMenuOpen(false);
+      setSettingsOpen(false);
+      setQualitySwitching({ targetLabel, autoResume: wasPlaying });
+
+      const pending: PendingQualitySwitch = {
+        previousQuality: preferencesRef.current.quality,
+        expectedRepresentationId,
+        waitForRepresentation,
+        wasPlaying,
+        timeoutId: 0,
+      };
+      pendingQualitySwitchRef.current = pending;
+      pending.timeoutId = window.setTimeout(
+        () =>
+          finishQualitySwitch(waitForRepresentation ? "failure" : "success"),
+        waitForRepresentation
+          ? QUALITY_SWITCH_TIMEOUT
+          : QUALITY_SWITCH_SETTLE_DELAY
+      );
+
+      updatePreferences((current) => ({ ...current, quality }));
+    },
+    [finishQualitySwitch, session.qualities, t, updatePreferences]
   );
 
   useEffect(() => {
@@ -234,11 +381,24 @@ export default function VideoPlayer({
           }
           void videoElement.play().catch(() => setPlaying(false));
         });
+        player.on("qualityChangeRendered", (event) => {
+          const pending = pendingQualitySwitchRef.current;
+          if (
+            event.mediaType !== "video" ||
+            !pending?.waitForRepresentation ||
+            (pending.expectedRepresentationId &&
+              event.newRepresentation.id !== pending.expectedRepresentationId)
+          ) {
+            return;
+          }
+          finishQualitySwitch("success");
+        });
         player.on("bufferStateChanged", (event) => {
           const state = (event as { state?: string }).state;
           setBuffering(Boolean(state && state !== "bufferLoaded"));
         });
         player.on("error", () => {
+          finishQualitySwitch("cancel");
           setBuffering(false);
           setError("Player.streamError");
         });
@@ -267,7 +427,15 @@ export default function VideoPlayer({
       playerRef.current = null;
       player?.destroy();
     };
-  }, [bvid, cid, durationSeconds, session.mpdUrl, session.qualities, startAt]);
+  }, [
+    bvid,
+    cid,
+    durationSeconds,
+    finishQualitySwitch,
+    session.mpdUrl,
+    session.qualities,
+    startAt,
+  ]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -352,6 +520,11 @@ export default function VideoPlayer({
   useEffect(
     () => () => {
       if (hideTimerRef.current) window.clearTimeout(hideTimerRef.current);
+      if (resumeTimerRef.current) window.clearTimeout(resumeTimerRef.current);
+      if (pendingQualitySwitchRef.current) {
+        window.clearTimeout(pendingQualitySwitchRef.current.timeoutId);
+        pendingQualitySwitchRef.current = null;
+      }
     },
     []
   );
@@ -389,11 +562,13 @@ export default function VideoPlayer({
   }, []);
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (qualitySwitching) return;
     if (settingsOpen || qualityMenuOpen) return;
     if (
       event.target instanceof HTMLInputElement ||
       event.target instanceof HTMLSelectElement ||
-      event.target instanceof HTMLTextAreaElement
+      event.target instanceof HTMLTextAreaElement ||
+      event.target instanceof HTMLButtonElement
     ) {
       return;
     }
@@ -425,7 +600,11 @@ export default function VideoPlayer({
       onKeyDown={onKeyDown}
       onMouseMove={showControls}
       onMouseLeave={() =>
-        playing && preferences.autoHideControls && setControlsVisible(false)
+        playing &&
+        preferences.autoHideControls &&
+        !isEditableElement(document.activeElement) &&
+        !isPlayerEditorElement(document.activeElement) &&
+        setControlsVisible(false)
       }
       className={cn(
         "group relative isolate size-full min-h-0 overflow-hidden bg-black text-white outline-none",
@@ -433,6 +612,7 @@ export default function VideoPlayer({
         theater && "shadow-lg"
       )}
       aria-label={title}
+      aria-busy={Boolean(qualitySwitching)}
     >
       <video
         ref={videoRef}
@@ -461,6 +641,35 @@ export default function VideoPlayer({
         </div>
       )}
 
+      {qualitySwitching && (
+        <div
+          data-testid="player-quality-switching"
+          role="status"
+          aria-live="polite"
+          className="absolute inset-0 z-50 flex items-center justify-center bg-black/65 px-6 backdrop-blur-sm"
+        >
+          <div className="flex max-w-sm min-w-64 items-center gap-3 rounded-md border border-white/10 bg-[#151515]/95 px-4 py-3 shadow-2xl">
+            <span className="bg-primary/15 text-primary flex size-9 shrink-0 items-center justify-center rounded-md">
+              <LoaderCircle className="size-4.5 animate-spin" />
+            </span>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-white">
+                {t("Player.quality.switching", {
+                  quality: qualitySwitching.targetLabel,
+                })}
+              </p>
+              <p className="mt-1 text-[11px] leading-relaxed text-white/50">
+                {t(
+                  qualitySwitching.autoResume
+                    ? "Player.quality.switchResume"
+                    : "Player.quality.switchPaused"
+                )}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {error && (
         <div
           role="alert"
@@ -479,7 +688,7 @@ export default function VideoPlayer({
         </div>
       )}
 
-      {!playing && !buffering && !error && (
+      {!playing && !buffering && !error && !qualitySwitching && (
         <button
           type="button"
           onClick={togglePlayback}
@@ -495,7 +704,11 @@ export default function VideoPlayer({
       <div
         className={cn(
           "absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-black/85 via-black/50 to-transparent px-3 pt-12 pb-2 transition-opacity duration-200",
-          controlsVisible || !playing || settingsOpen || qualityMenuOpen
+          controlsVisible ||
+            !playing ||
+            settingsOpen ||
+            qualityMenuOpen ||
+            qualitySwitching
             ? "opacity-100"
             : "pointer-events-none opacity-0"
         )}
@@ -520,66 +733,83 @@ export default function VideoPlayer({
 
         <div
           data-testid="player-controls"
-          className="mt-2 flex items-center gap-1.5"
+          className="mt-2 grid grid-cols-[auto_minmax(7rem,1fr)_auto] items-center gap-2"
         >
-          <button
-            type="button"
-            onClick={togglePlayback}
-            title={playing ? t("Player.pause") : t("Player.play")}
-            aria-label={playing ? t("Player.pause") : t("Player.play")}
-            className="flex size-8 items-center justify-center rounded-md hover:bg-white/15"
-          >
-            {playing ? (
-              <Pause className="size-4 fill-current" />
-            ) : (
-              <Play className="ml-0.5 size-4 fill-current" />
-            )}
-          </button>
-          <div className="group/volume flex items-center">
+          <div className="flex min-w-0 items-center gap-1.5">
             <button
               type="button"
-              onClick={() => {
-                if (videoRef.current) videoRef.current.muted = !muted;
-              }}
-              title={muted ? t("Player.unmute") : t("Player.mute")}
-              aria-label={muted ? t("Player.unmute") : t("Player.mute")}
+              onClick={togglePlayback}
+              title={playing ? t("Player.pause") : t("Player.play")}
+              aria-label={playing ? t("Player.pause") : t("Player.play")}
               className="flex size-8 items-center justify-center rounded-md hover:bg-white/15"
             >
-              {muted || volume === 0 ? (
-                <VolumeX className="size-4" />
-              ) : volume < 0.5 ? (
-                <Volume1 className="size-4" />
+              {playing ? (
+                <Pause className="size-4 fill-current" />
               ) : (
-                <Volume2 className="size-4" />
+                <Play className="ml-0.5 size-4 fill-current" />
               )}
             </button>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.05}
-              value={muted ? 0 : volume}
-              onChange={(event) => {
-                const video = videoRef.current;
-                if (!video) return;
-                video.muted = false;
-                video.volume = Number(event.currentTarget.value);
-              }}
-              aria-label={t("Player.volume")}
-              className="w-0 cursor-pointer accent-white opacity-0 transition-all group-focus-within/volume:w-20 group-focus-within/volume:opacity-100 group-hover/volume:w-20 group-hover/volume:opacity-100"
+            <div className="group/volume flex items-center">
+              <button
+                type="button"
+                onClick={() => {
+                  if (videoRef.current) videoRef.current.muted = !muted;
+                }}
+                title={muted ? t("Player.unmute") : t("Player.mute")}
+                aria-label={muted ? t("Player.unmute") : t("Player.mute")}
+                className="flex size-8 items-center justify-center rounded-md hover:bg-white/15"
+              >
+                {muted || volume === 0 ? (
+                  <VolumeX className="size-4" />
+                ) : volume < 0.5 ? (
+                  <Volume1 className="size-4" />
+                ) : (
+                  <Volume2 className="size-4" />
+                )}
+              </button>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={muted ? 0 : volume}
+                onChange={(event) => {
+                  const video = videoRef.current;
+                  if (!video) return;
+                  video.muted = false;
+                  video.volume = Number(event.currentTarget.value);
+                }}
+                aria-label={t("Player.volume")}
+                className="w-0 cursor-pointer accent-white opacity-0 transition-all group-focus-within/volume:w-20 group-focus-within/volume:opacity-100 group-hover/volume:w-20 group-hover/volume:opacity-100"
+              />
+            </div>
+            <span className="ml-1 hidden font-mono text-[11px] whitespace-nowrap text-white/90 tabular-nums md:inline">
+              {formatDuration(currentTime)} / {formatDuration(duration)}
+            </span>
+          </div>
+
+          <div
+            className="flex min-w-0 justify-center px-1"
+            onFocusCapture={showControls}
+            onPointerDown={showControls}
+          >
+            <DanmakuComposer
+              aid={aid}
+              cid={cid}
+              bvid={bvid}
+              currentTime={currentTime}
+              portalContainer={containerRef.current}
+              onSent={onDanmakuSent}
             />
           </div>
-          <span className="ml-1 font-mono text-[11px] text-white/90 tabular-nums">
-            {formatDuration(currentTime)} / {formatDuration(duration)}
-          </span>
 
-          <div className="ml-auto flex min-w-0 items-center gap-1">
+          <div className="flex min-w-0 items-center justify-end gap-1">
             {parts.length > 1 && (
               <div
                 data-testid="player-parts"
                 role="group"
                 aria-label={t("Video.parts")}
-                className="flex max-w-[min(40vw,20rem)] min-w-0 items-center gap-0.5 overflow-x-auto rounded-md bg-black/35 p-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                className="flex max-w-[min(24vw,14rem)] min-w-0 items-center gap-0.5 overflow-x-auto rounded-md bg-black/35 p-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
               >
                 {parts.map((part) => (
                   <button
@@ -607,18 +837,13 @@ export default function VideoPlayer({
               open={qualityMenuOpen}
               onOpenChange={(open) => {
                 setQualityMenuOpen(open);
-                if (open) setComposerOpen(false);
                 showControls();
               }}
-              onQualityChange={(quality) => {
-                updatePreferences((current) => ({ ...current, quality }));
-                showControls();
-              }}
+              onQualityChange={switchQuality}
             />
             <button
               type="button"
               onClick={() => {
-                setComposerOpen(false);
                 setQualityMenuOpen(false);
                 setSettingsOpen((value) => !value);
               }}
@@ -627,23 +852,6 @@ export default function VideoPlayer({
               className="flex size-8 items-center justify-center rounded-md hover:bg-white/15"
             >
               <Settings2 className="size-4" />
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setSettingsOpen(false);
-                setQualityMenuOpen(false);
-                setComposerOpen((value) => !value);
-              }}
-              title={t("Player.sendDanmaku")}
-              aria-label={t("Player.sendDanmaku")}
-              aria-pressed={composerOpen}
-              className={cn(
-                "flex size-8 items-center justify-center rounded-md hover:bg-white/15",
-                composerOpen && "bg-white/15"
-              )}
-            >
-              <MessageSquarePlus className="size-4" />
             </button>
             <button
               type="button"
@@ -687,24 +895,13 @@ export default function VideoPlayer({
         </div>
       </div>
 
-      {composerOpen && (
-        <div className="absolute inset-x-3 bottom-14 z-40">
-          <DanmakuComposer
-            aid={aid}
-            cid={cid}
-            bvid={bvid}
-            currentTime={currentTime}
-            onSent={onDanmakuSent}
-          />
-        </div>
-      )}
-
       <PlayerSettingsDialog
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         portalContainer={containerRef.current}
         preferences={preferences}
         qualities={session.qualities}
+        onQualityChange={switchQuality}
         onPreferencesChange={updatePreferences}
         onReset={() =>
           updatePreferences(() => createDefaultPlayerPreferences())

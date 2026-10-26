@@ -15,6 +15,7 @@ import { usePageTitlebar } from "@/contexts/pageTitlebar";
 import PlayerWindowPage from "@/features/player/PlayerWindowPage";
 import {
   createPlaybackSession,
+  fetchAuthStatus,
   fetchDanmaku,
   fetchResumePoint,
   fetchVideoDetail,
@@ -22,19 +23,30 @@ import {
 } from "@/lib/bili";
 import { createVideoSummary } from "@/test/fixtures/bili";
 
-const dashPlayerMock = vi.hoisted(() => ({
-  destroy: vi.fn(),
-  initialize: vi.fn(),
-  on: vi.fn(),
-  setRepresentationForTypeById: vi.fn(),
-  updateSettings: vi.fn(),
-}));
+const dashPlayerMock = vi.hoisted(() => {
+  const handlers = new Map<string, (event: unknown) => void>();
+  return {
+    destroy: vi.fn(),
+    emit(type: string, event: unknown) {
+      handlers.get(type)?.(event);
+    },
+    getCurrentRepresentationForType: vi.fn(),
+    handlers,
+    initialize: vi.fn(),
+    on: vi.fn((type: string, handler: (event: unknown) => void) => {
+      handlers.set(type, handler);
+    }),
+    setRepresentationForTypeById: vi.fn(),
+    updateSettings: vi.fn(),
+  };
+});
 
 vi.mock("@/lib/bili", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/bili")>();
   return {
     ...actual,
     createPlaybackSession: vi.fn(),
+    fetchAuthStatus: vi.fn(),
     fetchDanmaku: vi.fn(),
     fetchResumePoint: vi.fn(),
     fetchVideoDetail: vi.fn(),
@@ -51,6 +63,7 @@ vi.mock("dashjs", () => ({
 
 const fetchVideoDetailMock = vi.mocked(fetchVideoDetail);
 const createPlaybackSessionMock = vi.mocked(createPlaybackSession);
+const fetchAuthStatusMock = vi.mocked(fetchAuthStatus);
 const fetchDanmakuMock = vi.mocked(fetchDanmaku);
 const fetchResumePointMock = vi.mocked(fetchResumePoint);
 const openPlayerWindowMock = vi.mocked(openPlayerWindow);
@@ -116,6 +129,18 @@ describe("PlayerWindowPage", () => {
       ],
       dimension: { width: 1920, height: 1080, rotate: 0 },
     });
+    fetchAuthStatusMock.mockResolvedValue({
+      authenticated: true,
+      storageAvailable: true,
+      profile: {
+        mid: "42",
+        name: "测试用户",
+        avatarUrl: "",
+        level: 6,
+        vipStatus: false,
+        vipLabel: null,
+      },
+    });
     createPlaybackSessionMock.mockResolvedValue({
       sessionId: "test-session",
       mpdUrl: "http://bilistream.localhost/mpd/test-session",
@@ -145,6 +170,10 @@ describe("PlayerWindowPage", () => {
       lastPlayCid: 0,
     });
     openPlayerWindowMock.mockResolvedValue();
+    dashPlayerMock.handlers.clear();
+    dashPlayerMock.getCurrentRepresentationForType.mockReturnValue({
+      id: "video-64",
+    });
     dashPlayerMock.setRepresentationForTypeById.mockClear();
   });
 
@@ -215,7 +244,6 @@ describe("PlayerWindowPage", () => {
       name: "Player.quality",
     });
     fireEvent.change(quality, { target: { value: "80" } });
-    await waitFor(() => expect(quality).toHaveValue("80"));
     await waitFor(() =>
       expect(dashPlayerMock.setRepresentationForTypeById).toHaveBeenCalledWith(
         "video",
@@ -223,7 +251,22 @@ describe("PlayerWindowPage", () => {
         true
       )
     );
-    expect(screen.getByTestId("player-settings-dialog")).toBeVisible();
+    expect(screen.getByTestId("player-quality-switching")).toBeVisible();
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("player-settings-dialog")
+      ).not.toBeInTheDocument()
+    );
+
+    dashPlayerMock.emit("qualityChangeRendered", {
+      mediaType: "video",
+      newRepresentation: { id: "video-80" },
+    });
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("player-quality-switching")
+      ).not.toBeInTheDocument()
+    );
 
     expect(screen.getByTestId("player-window-page")).toHaveClass(
       "overflow-hidden"
@@ -231,14 +274,35 @@ describe("PlayerWindowPage", () => {
     expect(screen.getByTestId("video-player")).toBeVisible();
   });
 
-  it("changes quality from the player control bar", async () => {
+  it("pauses and resumes around a control-bar quality switch", async () => {
     renderPlayer();
 
-    await screen.findByTestId("video-player");
+    const video = (await screen.findByTestId(
+      "video-player"
+    )) as HTMLVideoElement;
+    let paused = false;
+    Object.defineProperty(video, "paused", {
+      configurable: true,
+      get: () => paused,
+    });
+    Object.defineProperty(video, "ended", {
+      configurable: true,
+      value: false,
+    });
+    const pause = vi.spyOn(video, "pause").mockImplementation(() => {
+      paused = true;
+    });
+    const play = vi.spyOn(video, "play").mockImplementation(async () => {
+      paused = false;
+    });
+
     fireEvent.click(
       screen.getByRole("button", { name: "Player.quality.current" })
     );
     fireEvent.click(await screen.findByRole("option", { name: "1080P" }));
+
+    expect(pause).toHaveBeenCalledOnce();
+    expect(screen.getByTestId("player-quality-switching")).toBeVisible();
 
     await waitFor(() =>
       expect(dashPlayerMock.setRepresentationForTypeById).toHaveBeenCalledWith(
@@ -247,8 +311,35 @@ describe("PlayerWindowPage", () => {
         true
       )
     );
+
+    dashPlayerMock.emit("qualityChangeRendered", {
+      mediaType: "video",
+      newRepresentation: { id: "video-80" },
+    });
+
+    await waitFor(() => expect(play).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("player-quality-switching")
+      ).not.toBeInTheDocument()
+    );
     expect(
       screen.getByRole("button", { name: "Player.quality.current" })
     ).toHaveTextContent("1080P");
+  });
+
+  it("places the danmaku input directly in the player controls", async () => {
+    renderPlayer();
+
+    const controls = await screen.findByTestId("player-controls");
+    expect(
+      await within(controls).findByPlaceholderText("Danmaku.placeholder")
+    ).toBeVisible();
+    expect(
+      within(controls).getByRole("button", { name: "Danmaku.style" })
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Player.sendDanmaku" })
+    ).not.toBeInTheDocument();
   });
 });
