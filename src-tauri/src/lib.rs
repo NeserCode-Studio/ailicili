@@ -12,22 +12,22 @@ mod downloads;
 use bili::{
     client::BiliClient,
     commands::{
-        bili_add_watch_later, bili_auth_status, bili_clear_history, bili_coin_video, bili_comments,
-        bili_danmaku, bili_delete_history, bili_dynamic_feed, bili_favorite_folders,
-        bili_favorite_resources, bili_follow_user, bili_heartbeat, bili_history, bili_like_video,
-        bili_live_areas, bili_live_chat_poll, bili_live_chat_start, bili_live_chat_stop,
-        bili_live_playback_session, bili_live_room, bili_live_rooms, bili_login_poll,
-        bili_login_start, bili_logout, bili_pgc_index, bili_pgc_season, bili_pgc_timeline,
-        bili_playback_session, bili_popular_videos, bili_post_comment, bili_remove_watch_later,
-        bili_resume_point, bili_search, bili_search_suggestions, bili_send_danmaku,
-        bili_set_video_favorite, bili_space_profile, bili_space_videos, bili_triple_video,
-        bili_video_actions, bili_video_detail, bili_watch_later,
+        bili_add_watch_later, bili_auth_status, bili_clear_history, bili_clear_watch_later,
+        bili_coin_video, bili_comments, bili_danmaku, bili_delete_history, bili_dynamic_feed,
+        bili_favorite_folders, bili_favorite_resources, bili_follow_user, bili_heartbeat,
+        bili_history, bili_like_video, bili_live_areas, bili_live_chat_poll, bili_live_chat_start,
+        bili_live_chat_stop, bili_live_playback_session, bili_live_room, bili_live_rooms,
+        bili_login_poll, bili_login_start, bili_logout, bili_pgc_index, bili_pgc_season,
+        bili_pgc_timeline, bili_playback_session, bili_popular_videos, bili_post_comment,
+        bili_remove_watch_later, bili_resume_point, bili_search, bili_search_suggestions,
+        bili_send_danmaku, bili_set_video_favorite, bili_space_profile, bili_space_videos,
+        bili_triple_video, bili_video_actions, bili_video_detail, bili_watch_later,
     },
 };
 use downloads::{
-    download_cancel, download_create, download_options, download_pause, download_remove,
-    download_resume, download_retry, download_reveal, download_set_ffmpeg_path, download_set_root,
-    download_settings, download_snapshot, DownloadManager,
+    download_cancel, download_create, download_offline_library, download_options, download_pause,
+    download_remove, download_resume, download_retry, download_reveal, download_set_ffmpeg_path,
+    download_set_root, download_settings, download_snapshot, DownloadManager,
 };
 
 #[tauri::command]
@@ -178,6 +178,7 @@ pub fn run() {
             bili_watch_later,
             bili_add_watch_later,
             bili_remove_watch_later,
+            bili_clear_watch_later,
             bili_favorite_resources,
             bili_resume_point,
             bili_heartbeat,
@@ -186,6 +187,7 @@ pub fn run() {
             download_options,
             download_create,
             download_snapshot,
+            download_offline_library,
             download_settings,
             download_set_root,
             download_set_ffmpeg_path,

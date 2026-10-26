@@ -363,6 +363,31 @@ export interface DownloadSnapshot {
   completedCount: number;
 }
 
+export interface OfflineLibraryEntry {
+  id: string;
+  bvid: string;
+  cid: number;
+  aid: number;
+  title: string;
+  partTitle: string;
+  coverUrl: string;
+  durationSeconds: number;
+  qualityLabel: string;
+  width: number;
+  height: number;
+  totalBytes: number;
+  completedAt: number | null;
+  hasDirectory: boolean;
+  hasMergedMp4: boolean;
+  hasVideoStream: boolean;
+  hasAudioStream: boolean;
+  hasCover: boolean;
+  hasDanmaku: boolean;
+  hasSubtitle: boolean;
+  hasMetadata: boolean;
+  warnings: string[];
+}
+
 export interface DownloadProgressEvent {
   task: DownloadTask;
 }

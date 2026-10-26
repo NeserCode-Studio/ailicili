@@ -21,7 +21,7 @@ use super::{
     error::DownloadError,
     model::{
         DownloadPhase, DownloadProgressEvent, DownloadSettings, DownloadSnapshot, DownloadStatus,
-        DownloadTask, NewDownloadTask,
+        DownloadTask, NewDownloadTask, OfflineLibraryEntry,
     },
     muxer::detect_ffmpeg,
     paths::{canonical_download_root, create_task_directory, ensure_within_root},
@@ -192,6 +192,14 @@ impl DownloadManager {
             queued_count,
             completed_count,
         })
+    }
+
+    pub fn offline_library(&self) -> Result<Vec<OfflineLibraryEntry>, DownloadError> {
+        self.repository
+            .list_completed(500)?
+            .iter()
+            .map(offline_library_entry)
+            .collect()
     }
 
     pub async fn settings(&self) -> Result<DownloadSettings, DownloadError> {
@@ -649,10 +657,72 @@ pub fn unix_timestamp_millis() -> i64 {
         .min(i64::MAX as u128) as i64
 }
 
+fn offline_library_entry(task: &DownloadTask) -> Result<OfflineLibraryEntry, DownloadError> {
+    let directory = Path::new(&task.directory_path)
+        .canonicalize()
+        .ok()
+        .filter(|path| path.is_dir());
+    let available = |value: Option<&str>| {
+        let (Some(directory), Some(value)) = (directory.as_deref(), value) else {
+            return false;
+        };
+        Path::new(value)
+            .canonicalize()
+            .is_ok_and(|path| path.is_file() && path.starts_with(directory))
+    };
+
+    Ok(OfflineLibraryEntry {
+        id: task.id.clone(),
+        bvid: task.bvid.clone(),
+        cid: task.cid,
+        aid: task.aid,
+        title: task.title.clone(),
+        part_title: task.part_title.clone(),
+        cover_url: task.cover_url.clone(),
+        duration_seconds: task.duration_seconds,
+        quality_label: task.quality_label.clone(),
+        width: task.width,
+        height: task.height,
+        total_bytes: task.total_bytes,
+        completed_at: task.completed_at,
+        has_directory: directory.is_some(),
+        has_merged_mp4: available(task.output_path.as_deref()),
+        has_video_stream: available(task.video_path.as_deref()),
+        has_audio_stream: available(task.audio_path.as_deref()),
+        has_cover: available(task.cover_path.as_deref()),
+        has_danmaku: available(task.danmaku_path.as_deref()),
+        has_subtitle: available(task.subtitle_path.as_deref()),
+        has_metadata: available(task.metadata_path.as_deref()),
+        warnings: task.warnings.clone(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{unix_timestamp_millis, DownloadControl};
-    use crate::downloads::error::DownloadError;
+    use std::{
+        fs,
+        path::PathBuf,
+        sync::atomic::{AtomicU64, Ordering},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use super::{offline_library_entry, unix_timestamp_millis, DownloadControl};
+    use crate::downloads::{
+        error::DownloadError,
+        model::{DownloadPhase, DownloadStatus, DownloadTask},
+    };
+
+    fn temp_directory() -> PathBuf {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let token = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let sequence = COUNTER.fetch_add(1, Ordering::Relaxed);
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../.agent/test-tmp")
+            .join(format!("offline-library-{token}-{sequence}"))
+    }
 
     #[test]
     fn timestamps_are_positive() {
@@ -672,5 +742,62 @@ mod tests {
             control.stopped_error(),
             Some(DownloadError::Cancelled)
         ));
+    }
+
+    #[test]
+    fn offline_entry_reports_only_files_inside_the_task_directory() {
+        let directory = temp_directory();
+        fs::create_dir_all(&directory).expect("directory");
+        let merged = directory.join("video.mp4");
+        let cover = directory.join("cover.jpg");
+        fs::write(&merged, b"video").expect("merged");
+        fs::write(&cover, b"cover").expect("cover");
+        let outside = directory.with_extension("outside.mp4");
+        fs::write(&outside, b"outside").expect("outside");
+
+        let task = DownloadTask {
+            id: "offline-test".to_owned(),
+            bvid: "BV1xx411c7mD".to_owned(),
+            cid: 42,
+            aid: 7,
+            title: "离线测试".to_owned(),
+            part_title: "P1".to_owned(),
+            cover_url: String::new(),
+            duration_seconds: 120,
+            quality_id: 80,
+            quality_label: "1080P".to_owned(),
+            width: 1920,
+            height: 1080,
+            status: DownloadStatus::Completed,
+            phase: DownloadPhase::Complete,
+            progress_percent: 100,
+            downloaded_bytes: 10,
+            total_bytes: 10,
+            speed_bytes_per_second: 0,
+            eta_seconds: None,
+            directory_path: directory.to_string_lossy().into_owned(),
+            output_path: Some(merged.to_string_lossy().into_owned()),
+            video_path: Some(outside.to_string_lossy().into_owned()),
+            audio_path: None,
+            cover_path: Some(cover.to_string_lossy().into_owned()),
+            danmaku_path: None,
+            subtitle_path: None,
+            metadata_path: None,
+            error_code: None,
+            error_message: None,
+            warnings: vec![],
+            created_at: 1,
+            updated_at: 2,
+            completed_at: Some(2),
+        };
+
+        let entry = offline_library_entry(&task).expect("offline entry");
+        assert!(entry.has_directory);
+        assert!(entry.has_merged_mp4);
+        assert!(entry.has_cover);
+        assert!(!entry.has_video_stream);
+
+        let _ = fs::remove_dir_all(directory);
+        let _ = fs::remove_file(outside);
     }
 }

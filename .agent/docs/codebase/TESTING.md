@@ -20,6 +20,7 @@ cargo test --manifest-path src-tauri/Cargo.toml bili::pgc::tests::live_pgc_smoke
 cargo test --manifest-path src-tauri/Cargo.toml bili::live::tests::live_catalog_and_stream_smoke -- --ignored --nocapture
 cargo test --manifest-path src-tauri/Cargo.toml bili::live_chat::tests::live_chat_connection_smoke -- --ignored --nocapture
 pnpm exec playwright test --config .agent/screenshots/playwright.config.ts --grep "live"
+pnpm exec playwright test --config .agent/screenshots/playwright.config.ts --grep "offline library"
 ```
 
 ### 2) Test Layout
@@ -36,7 +37,7 @@ pnpm exec playwright test --config .agent/screenshots/playwright.config.ts --gre
 | Scope | Covered? | Typical target | Notes |
 |-------|----------|----------------|-------|
 | Unit | Yes | Formatters, layouts, preferences, Rust DTO mapping | Fast deterministic checks |
-| Component | Yes | Discovery, PGC, live catalog/player/chat, UGC player, comments, social actions, libraries | TanStack Query and command wrappers are isolated |
+| Component | Yes | Discovery, PGC, live catalog/player/chat, UGC player, comments, social actions, account libraries, offline metadata | TanStack Query and command wrappers are isolated |
 | Route | Yes | Main app and dedicated-player routes | Verifies route composition and lazy boundaries |
 | Live network | Opt-in | Public discovery, search, comments, playback, PGC, live catalog, HLS session | Depends on upstream availability and risk controls |
 | Visual/E2E | Partial | Responsive viewport and dedicated-window smoke | Covers major surfaces, but not native window/tray automation |
@@ -57,8 +58,8 @@ pnpm exec playwright test --config .agent/screenshots/playwright.config.ts --gre
 
 - Coverage provider and threshold: `[TODO]` No coverage command or threshold is configured.
 - Current reported coverage: `[TODO]`
-- Highest-risk gaps: native window/tray automation, download resume integrity, FFmpeg capability
-  detection, and repository-level cross-window E2E coverage.
+- Highest-risk gaps: native window/tray automation, FFmpeg capability behavior on target Windows
+  machines, sustained live/download load, and repository-level cross-window E2E coverage.
 - Baseline checks should include `pnpm test`, `pnpm lint`, `pnpm build`, and Cargo tests before
   phase completion.
 
@@ -73,4 +74,6 @@ pnpm exec playwright test --config .agent/screenshots/playwright.config.ts --gre
 - `src-tauri/src/bili/live.rs`
 - `src-tauri/src/bili/live_chat.rs`
 - `src/features/live/*.test.tsx`
+- `src/features/library/OfflineLibraryTab.test.tsx`
+- `src-tauri/src/downloads/`
 - `.agent/screenshots/visual.spec.ts`

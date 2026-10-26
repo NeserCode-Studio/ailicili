@@ -8,6 +8,7 @@ import {
 import {
   Bookmark,
   Clock3,
+  Download,
   FolderHeart,
   History,
   Inbox,
@@ -36,9 +37,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useI18n, useToast } from "@/composables";
 import { useAuthStatus } from "@/features/auth/useAuthStatus";
 import LibraryVideoCard from "@/features/library/LibraryVideoCard";
+import OfflineLibraryTab from "@/features/library/OfflineLibraryTab";
 import {
   biliKeys,
   clearHistory,
+  clearWatchLater,
   deleteHistory,
   fetchFavoriteFolders,
   fetchFavoriteResources,
@@ -54,7 +57,7 @@ import type {
 } from "@/shared/bili.types";
 import { cn } from "@/lib/utils";
 
-type LibraryTab = "history" | "watch-later" | "favorites";
+type LibraryTab = "history" | "watch-later" | "favorites" | "offline";
 
 interface HistoryCursor {
   max: number;
@@ -282,6 +285,14 @@ function WatchLaterTab() {
     },
     onError: () => toastError("Library.actionError"),
   });
+  const clearMutation = useMutation({
+    mutationFn: clearWatchLater,
+    onSuccess: () => {
+      success("Library.watchLater.cleared");
+      void queryClient.invalidateQueries({ queryKey: biliKeys.watchLater() });
+    },
+    onError: (error) => toastError(normalizeBiliError(error).message),
+  });
 
   if (watchLaterQuery.isPending) return <LibrarySkeleton />;
   if (watchLaterQuery.error) {
@@ -303,18 +314,78 @@ function WatchLaterTab() {
   }
 
   return (
-    <div className="divide-border/70 divide-y">
-      {watchLaterQuery.data.videos.map((video) => (
-        <LibraryVideoCard
-          key={`${video.bvid}:${video.cid}`}
-          video={video}
-          removing={
-            removeMutation.isPending && removeMutation.variables === video.aid
-          }
-          onRemove={() => removeMutation.mutate(video.aid)}
-        />
-      ))}
-    </div>
+    <>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium">
+            {t("Library.watchLater.heading")}
+          </p>
+          <p className="text-muted-foreground mt-0.5 text-xs">
+            {t("Library.watchLater.count", {
+              count: watchLaterQuery.data.count,
+            })}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            size="icon"
+            variant="outline"
+            aria-label={t("Library.refresh")}
+            disabled={watchLaterQuery.isFetching}
+            onClick={() => void watchLaterQuery.refetch()}
+          >
+            <RefreshCw
+              className={cn(watchLaterQuery.isFetching && "animate-spin")}
+            />
+          </Button>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={clearMutation.isPending}
+              >
+                <Trash2 />
+                {t("Library.watchLater.clear")}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  {t("Library.watchLater.clearTitle")}
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  {t("Library.watchLater.clearDescription")}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>{t("Common.cancel")}</AlertDialogCancel>
+                <AlertDialogAction
+                  className="bg-destructive hover:bg-destructive/90 text-white"
+                  onClick={() => clearMutation.mutate()}
+                >
+                  {t("Library.watchLater.clear")}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
+      </div>
+      <div className="divide-border/70 divide-y">
+        {watchLaterQuery.data.videos.map((video) => (
+          <LibraryVideoCard
+            key={`${video.bvid}:${video.cid}`}
+            video={video}
+            removing={
+              removeMutation.isPending && removeMutation.variables === video.aid
+            }
+            onRemove={() => removeMutation.mutate(video.aid)}
+          />
+        ))}
+      </div>
+    </>
   );
 }
 
@@ -453,15 +524,18 @@ function LoginRequired() {
 
 export default function LibraryPage() {
   const { t } = useI18n();
-  const [tab, setTab] = useState<LibraryTab>("history");
+  const [tab, setTab] = useState<LibraryTab | null>(null);
   const authQuery = useAuthStatus();
   const authenticated = Boolean(authQuery.data?.authenticated);
+  const activeTab =
+    tab ?? (authQuery.isPending || authenticated ? "history" : "offline");
   const tabs = useMemo(
     () =>
       [
         ["history", History, "Library.history"],
         ["watch-later", Clock3, "Library.watchLater"],
         ["favorites", FolderHeart, "Library.favorites"],
+        ["offline", Download, "Library.offline"],
       ] as const,
     []
   );
@@ -477,34 +551,52 @@ export default function LibraryPage() {
         </p>
       </header>
 
-      {authQuery.isPending ? (
-        <LibrarySkeleton />
-      ) : !authenticated ? (
-        <LoginRequired />
-      ) : (
-        <Tabs
-          value={tab}
-          onValueChange={(value) => setTab(value as LibraryTab)}
-        >
-          <TabsList className="mb-4 grid h-auto w-full grid-cols-3 sm:w-fit">
-            {tabs.map(([value, Icon, label]) => (
-              <TabsTrigger key={value} value={value} className="gap-2 px-4">
-                <Icon className="size-4" />
-                {t(label)}
-              </TabsTrigger>
+      <Tabs
+        value={activeTab}
+        onValueChange={(value) => setTab(value as LibraryTab)}
+      >
+        <TabsList className="mb-4 grid h-auto w-full grid-cols-2 sm:w-fit sm:grid-cols-4">
+          {tabs.map(([value, Icon, label]) => (
+            <TabsTrigger key={value} value={value} className="gap-2 px-4">
+              <Icon className="size-4" />
+              {t(label)}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        <TabsContent value="history">
+          {activeTab === "history" &&
+            (authQuery.isPending ? (
+              <LibrarySkeleton />
+            ) : authenticated ? (
+              <HistoryTab />
+            ) : (
+              <LoginRequired />
             ))}
-          </TabsList>
-          <TabsContent value="history">
-            {tab === "history" && <HistoryTab />}
-          </TabsContent>
-          <TabsContent value="watch-later">
-            {tab === "watch-later" && <WatchLaterTab />}
-          </TabsContent>
-          <TabsContent value="favorites">
-            {tab === "favorites" && <FavoritesTab />}
-          </TabsContent>
-        </Tabs>
-      )}
+        </TabsContent>
+        <TabsContent value="watch-later">
+          {activeTab === "watch-later" &&
+            (authQuery.isPending ? (
+              <LibrarySkeleton />
+            ) : authenticated ? (
+              <WatchLaterTab />
+            ) : (
+              <LoginRequired />
+            ))}
+        </TabsContent>
+        <TabsContent value="favorites">
+          {activeTab === "favorites" &&
+            (authQuery.isPending ? (
+              <LibrarySkeleton />
+            ) : authenticated ? (
+              <FavoritesTab />
+            ) : (
+              <LoginRequired />
+            ))}
+        </TabsContent>
+        <TabsContent value="offline">
+          {activeTab === "offline" && <OfflineLibraryTab />}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

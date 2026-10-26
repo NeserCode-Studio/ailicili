@@ -407,6 +407,11 @@ pub async fn bili_remove_watch_later(
 }
 
 #[tauri::command]
+pub async fn bili_clear_watch_later(client: State<'_, BiliClient>) -> Result<(), BiliCommandError> {
+    client.clear_watch_later().await.map_err(Into::into)
+}
+
+#[tauri::command]
 pub async fn bili_favorite_resources(
     client: State<'_, BiliClient>,
     media_id: String,

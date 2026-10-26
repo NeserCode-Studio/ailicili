@@ -182,6 +182,12 @@ impl BiliClient {
         Ok(())
     }
 
+    pub async fn clear_watch_later(&self) -> Result<(), BiliError> {
+        self.post_authenticated_form("/x/v2/history/toview/clear", BTreeMap::new())
+            .await?;
+        Ok(())
+    }
+
     pub async fn favorite_resources(
         &self,
         media_id: &str,

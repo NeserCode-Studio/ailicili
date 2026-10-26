@@ -442,6 +442,9 @@ export default function DownloadsPage() {
       const key = ACTION_TOAST_KEY[action.kind];
       if (key) success(key);
       void queryClient.invalidateQueries({ queryKey: biliKeys.downloads() });
+      void queryClient.invalidateQueries({
+        queryKey: biliKeys.offlineLibrary(),
+      });
     },
     onError: (error) => toastError(normalizeBiliError(error).message),
   });

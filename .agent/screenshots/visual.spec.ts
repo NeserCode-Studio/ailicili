@@ -237,10 +237,64 @@ const downloadTasks = [
   },
 ];
 
+const offlineLibraryEntries = [
+  {
+    id: "download-completed",
+    bvid: "BV1xx411c7mH",
+    cid: 2005,
+    aid: 1005,
+    title: "完整离线视频：DASH 播放与弹幕轨道",
+    partTitle: "媒体封装",
+    coverUrl: "https://i0.hdslb.com/bfs/archive/cover.jpg",
+    durationSeconds: 638,
+    qualityLabel: "1080P",
+    width: 1920,
+    height: 1080,
+    totalBytes: 96_000_000,
+    completedAt: 1_792_910_000_000,
+    hasDirectory: true,
+    hasMergedMp4: true,
+    hasVideoStream: true,
+    hasAudioStream: true,
+    hasCover: true,
+    hasDanmaku: true,
+    hasSubtitle: false,
+    hasMetadata: true,
+    warnings: [],
+  },
+  {
+    id: "download-split-streams",
+    bvid: "BV1xx411c7mJ",
+    cid: 2006,
+    aid: 1006,
+    title: "独立音视频流的离线缓存",
+    partTitle: "未安装 FFmpeg",
+    coverUrl: "https://i0.hdslb.com/bfs/archive/cover.jpg",
+    durationSeconds: 754,
+    qualityLabel: "720P",
+    width: 1280,
+    height: 720,
+    totalBytes: 58_000_000,
+    completedAt: 1_792_900_000_000,
+    hasDirectory: true,
+    hasMergedMp4: false,
+    hasVideoStream: true,
+    hasAudioStream: true,
+    hasCover: true,
+    hasDanmaku: true,
+    hasSubtitle: false,
+    hasMetadata: true,
+    warnings: ["ffmpeg_missing"],
+  },
+];
+
 test.beforeEach(async ({ page }, testInfo) => {
   const windowLabel = testInfo.title.includes("dedicated player window")
     ? "player"
     : "main";
+  const auth = testInfo.title.includes("guest offline library")
+    ? { ...authStatus, authenticated: false, profile: null }
+    : authStatus;
   await page.addInitScript(() => localStorage.clear());
   await page.addInitScript(
     ({
@@ -250,6 +304,7 @@ test.beforeEach(async ({ page }, testInfo) => {
       liveRoomDetail,
       windowLabel,
       downloadTasks,
+      offlineLibraryEntries,
     }) => {
       const callbacks: Record<number, (payload: unknown) => void> = {};
       let callbackId = 0;
@@ -524,6 +579,7 @@ test.beforeEach(async ({ page }, testInfo) => {
           queuedCount: 1,
           completedCount: 1,
         },
+        download_offline_library: offlineLibraryEntries,
         download_settings: {
           rootPath: "C:\\Users\\Visual\\Downloads\\Ailicili",
           ffmpegPath: null,
@@ -653,12 +709,13 @@ test.beforeEach(async ({ page }, testInfo) => {
       ).__TAURI_TEST_INVOCATIONS__ = invocations;
     },
     {
-      auth: authStatus,
+      auth,
       video: libraryVideo,
       liveRoom,
       liveRoomDetail,
       windowLabel,
       downloadTasks,
+      offlineLibraryEntries,
     }
   );
   await page.route(/dashjs|dash\.all/, async (route) => {
@@ -1080,6 +1137,75 @@ test("renders downloads and settings at desktop and compact sizes", async ({
     });
     await downloadDialog.getByRole("button", { name: "取消" }).click();
   }
+
+  expect(errors).toEqual([]);
+});
+
+test("renders the offline library at desktop and compact sizes", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.stack ?? error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(message.text());
+  });
+
+  for (const viewport of [
+    { name: "desktop", width: 1440, height: 900 },
+    { name: "compact", width: 900, height: 720 },
+  ] as const) {
+    await page.setViewportSize(viewport);
+    await page.goto("/library", { waitUntil: "networkidle" });
+    await page.getByRole("tab", { name: "离线" }).click();
+    await expect(
+      page.getByText("完整离线视频：DASH 播放与弹幕轨道", { exact: true })
+    ).toBeVisible();
+    await expect(
+      page.getByText("独立音视频流的离线缓存", { exact: true })
+    ).toBeVisible();
+    await expect(page.getByText("MP4", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("独立视频流", { exact: true }).first()
+    ).toBeVisible();
+    await expect(
+      page.getByText("独立音频流", { exact: true }).first()
+    ).toBeVisible();
+    await expect(page.getByText("元数据", { exact: true }).first()).toBeVisible();
+
+    const metrics = await page.evaluate(() => ({
+      clientWidth: document.documentElement.clientWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+    }));
+    expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
+    await page.screenshot({
+      path: `.agent/screenshots/library-offline-${viewport.name}.png`,
+      fullPage: true,
+    });
+  }
+
+  expect(errors).toEqual([]);
+});
+
+test("renders the guest offline library without a login gate", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.stack ?? error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(message.text());
+  });
+  await page.setViewportSize({ width: 900, height: 720 });
+  await page.goto("/library", { waitUntil: "networkidle" });
+
+  await expect(page.getByRole("tab", { name: "离线" })).toBeVisible();
+  await expect(
+    page.getByText("完整离线视频：DASH 播放与弹幕轨道", { exact: true })
+  ).toBeVisible();
+  await expect(page.getByText("登录后查看账号内容")).toHaveCount(0);
+  await page.screenshot({
+    path: ".agent/screenshots/library-offline-guest-compact.png",
+    fullPage: true,
+  });
 
   expect(errors).toEqual([]);
 });

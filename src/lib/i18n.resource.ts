@@ -443,17 +443,19 @@ export const I18nTexts = {
 
     "Library.title": "Library",
     "Library.description":
-      "Resume recent videos and manage favorites and Watch later.",
+      "Resume recent videos, manage saved content, and browse downloaded metadata.",
     "Library.history": "History",
     "Library.watchLater": "Watch later",
     "Library.favorites": "Favorites",
+    "Library.offline": "Offline",
+    "Library.refresh": "Refresh",
     "Library.retry": "Try again",
     "Library.error.title": "Could not load your library",
     "Library.error.description":
       "Bilibili did not return this account data. Check your connection and try again.",
-    "Library.login.title": "Sign in to use your library",
+    "Library.login.title": "Sign in for account content",
     "Library.login.description":
-      "History, Watch later and favorites are loaded only after QR authorization.",
+      "History, Watch later, and favorites require QR authorization. Offline downloads remain available without signing in.",
     "Library.remove": "Remove",
     "Library.removeConfirm.title": "Remove this video?",
     "Library.removeConfirm.description":
@@ -472,6 +474,13 @@ export const I18nTexts = {
     "Library.watchLater.emptyDescription":
       "Use Watch later on a video to add it here.",
     "Library.watchLater.removed": "Removed from Watch later",
+    "Library.watchLater.heading": "Watch later items",
+    "Library.watchLater.count": "Videos: {count}",
+    "Library.watchLater.clear": "Clear Watch later",
+    "Library.watchLater.clearTitle": "Clear all Watch later videos?",
+    "Library.watchLater.clearDescription":
+      "This removes every video from Bilibili Watch later and cannot be undone.",
+    "Library.watchLater.cleared": "Watch later cleared",
     "Library.favorites.emptyTitle": "No favorite folders",
     "Library.favorites.emptyDescription":
       "Create a favorite folder on Bilibili, then return here.",
@@ -479,6 +488,32 @@ export const I18nTexts = {
     "Library.favorites.folderEmptyTitle": "{title} is empty",
     "Library.favorites.folderEmptyDescription":
       "Videos saved to this folder will appear here.",
+    "Library.offline.errorTitle": "Could not load offline videos",
+    "Library.offline.errorDescription":
+      "The local download records could not be read. Check the download folder and try again.",
+    "Library.offline.emptyTitle": "No downloaded videos",
+    "Library.offline.emptyDescription":
+      "Completed downloads will appear here with their available local files.",
+    "Library.offline.openDownloads": "Open downloads",
+    "Library.offline.savedVideos": "Downloaded videos",
+    "Library.offline.count": "Videos: {count}",
+    "Library.offline.part": "Part: {title}",
+    "Library.offline.saved": "Saved",
+    "Library.offline.mp4": "MP4",
+    "Library.offline.videoStream": "Video stream",
+    "Library.offline.audioStream": "Audio stream",
+    "Library.offline.cover": "Cover",
+    "Library.offline.danmaku": "Danmaku",
+    "Library.offline.subtitle": "Subtitles",
+    "Library.offline.metadata": "Metadata",
+    "Library.offline.missingFiles":
+      "This record is missing its media directory or playable media files.",
+    "Library.offline.reveal": "Show in folder",
+    "Library.offline.remove": "Remove record",
+    "Library.offline.removeTitle": "Remove this offline record?",
+    "Library.offline.removeDescription":
+      "Only the download record for “{title}” will be removed. Files in its download folder will stay on disk.",
+    "Library.offline.removed": "Offline record removed",
 
     "Space.back": "Back to search",
     "Space.retry": "Try again",
@@ -912,7 +947,8 @@ export const I18nTexts = {
     "Pgc.season.sectionMain": "正片",
 
     "Live.title": "直播",
-    "Live.description": "按分区浏览直播间，或查看 Bilibili 当前推荐的全站直播。",
+    "Live.description":
+      "按分区浏览直播间，或查看 Bilibili 当前推荐的全站直播。",
     "Live.feed.recommended": "全站推荐",
     "Live.feed.area": "分区直播",
     "Live.areas": "直播分区",
@@ -1177,17 +1213,20 @@ export const I18nTexts = {
     "Auth.openProfile": "打开我的空间",
 
     "Library.title": "个人库",
-    "Library.description": "继续最近观看，并管理收藏与稍后再看。",
+    "Library.description":
+      "继续最近观看，管理收藏内容，并浏览已下载的离线元数据。",
     "Library.history": "观看历史",
     "Library.watchLater": "稍后再看",
     "Library.favorites": "收藏夹",
+    "Library.offline": "离线",
+    "Library.refresh": "刷新",
     "Library.retry": "重试",
     "Library.error.title": "无法加载个人库",
     "Library.error.description":
       "Bilibili 未返回当前账号数据，请检查网络后重试。",
-    "Library.login.title": "登录后使用个人库",
+    "Library.login.title": "登录后查看账号内容",
     "Library.login.description":
-      "观看历史、稍后再看与收藏夹会在扫码授权后加载。",
+      "观看历史、稍后再看与收藏夹需要扫码授权；离线下载无需登录即可查看。",
     "Library.remove": "移除",
     "Library.removeConfirm.title": "移除这个视频？",
     "Library.removeConfirm.description": "“{title}”将从当前列表中移除。",
@@ -1205,6 +1244,13 @@ export const I18nTexts = {
     "Library.watchLater.emptyDescription":
       "在视频页使用“稍后再看”后，视频会加入这里。",
     "Library.watchLater.removed": "已从稍后再看移除",
+    "Library.watchLater.heading": "稍后再看列表",
+    "Library.watchLater.count": "共 {count} 个视频",
+    "Library.watchLater.clear": "清空稍后再看",
+    "Library.watchLater.clearTitle": "清空全部稍后再看？",
+    "Library.watchLater.clearDescription":
+      "这会删除 Bilibili 中稍后再看的全部视频，且无法撤销。",
+    "Library.watchLater.cleared": "稍后再看已清空",
     "Library.favorites.emptyTitle": "暂无收藏夹",
     "Library.favorites.emptyDescription":
       "请先在 Bilibili 创建收藏夹，再回到这里查看。",
@@ -1212,6 +1258,31 @@ export const I18nTexts = {
     "Library.favorites.folderEmptyTitle": "{title} 为空",
     "Library.favorites.folderEmptyDescription":
       "保存到这个收藏夹的视频会出现在这里。",
+    "Library.offline.errorTitle": "无法加载离线视频",
+    "Library.offline.errorDescription":
+      "无法读取本地下载记录，请检查下载文件夹后重试。",
+    "Library.offline.emptyTitle": "暂无已下载视频",
+    "Library.offline.emptyDescription":
+      "下载完成的视频会连同可用的本地文件显示在这里。",
+    "Library.offline.openDownloads": "打开下载中心",
+    "Library.offline.savedVideos": "已下载视频",
+    "Library.offline.count": "共 {count} 个已下载视频",
+    "Library.offline.part": "分P：{title}",
+    "Library.offline.saved": "已保存",
+    "Library.offline.mp4": "MP4",
+    "Library.offline.videoStream": "独立视频流",
+    "Library.offline.audioStream": "独立音频流",
+    "Library.offline.cover": "封面",
+    "Library.offline.danmaku": "弹幕",
+    "Library.offline.subtitle": "字幕",
+    "Library.offline.metadata": "元数据",
+    "Library.offline.missingFiles": "这条记录缺少媒体目录或可用的媒体文件。",
+    "Library.offline.reveal": "在文件夹中显示",
+    "Library.offline.remove": "移除记录",
+    "Library.offline.removeTitle": "移除这条离线记录？",
+    "Library.offline.removeDescription":
+      "只会移除“{title}”的下载记录，下载文件夹中的文件仍会保留在磁盘中。",
+    "Library.offline.removed": "离线记录已移除",
 
     "Space.back": "返回搜索",
     "Space.retry": "重试",
@@ -1373,8 +1444,7 @@ export const I18nTexts = {
     "Download.empty.title": "还没有下载任务",
     "Download.empty.description": "打开视频后，可从应用标题栏选择下载。",
     "Download.error.title": "无法读取下载任务",
-    "Download.error.description":
-      "本地下载数据库或文件目前无法读取。",
+    "Download.error.description": "本地下载数据库或文件目前无法读取。",
     "Download.retry": "重试",
     "Download.status.queued": "排队中",
     "Download.status.downloading": "下载中",
@@ -1402,7 +1472,8 @@ export const I18nTexts = {
     "Download.action.remove": "移除下载记录",
     "Download.action.reveal": "在文件夹中显示",
     "Download.action.cancelTitle": "取消这个下载任务？",
-    "Download.action.cancelDescription": "已下载的部分文件会保留，之后可以重试。",
+    "Download.action.cancelDescription":
+      "已下载的部分文件会保留，之后可以重试。",
     "Download.action.removeTitle": "移除这条下载记录？",
     "Download.action.removeDescription":
       "已下载文件仍会保留在磁盘中，只会删除任务记录。",

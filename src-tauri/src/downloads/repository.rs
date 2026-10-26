@@ -232,6 +232,21 @@ impl DownloadRepository {
             .map_err(DownloadError::from)
     }
 
+    pub fn list_completed(&self, limit: u32) -> Result<Vec<DownloadTask>, DownloadError> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "
+            SELECT * FROM download_tasks
+            WHERE status = 'completed'
+            ORDER BY COALESCE(completed_at, updated_at) DESC
+            LIMIT ?1
+            ",
+        )?;
+        let rows = statement.query_map([limit.clamp(1, 500)], task_from_row)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(DownloadError::from)
+    }
+
     pub fn has_equivalent(
         &self,
         bvid: &str,
@@ -529,6 +544,37 @@ mod tests {
         value.status = DownloadStatus::Completed;
         repository.update(&value).expect("completed update");
         assert!(!repository.has_incomplete().expect("completed"));
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(path.with_extension("sqlite3-wal"));
+        let _ = fs::remove_file(path.with_extension("sqlite3-shm"));
+    }
+
+    #[test]
+    fn lists_only_completed_tasks_in_completion_order() {
+        let path = temp_database();
+        let repository = DownloadRepository::open(&path).expect("repository");
+        let mut first = task();
+        first.id = "completed-first".to_owned();
+        first.status = DownloadStatus::Completed;
+        first.completed_at = Some(10);
+        repository.insert(&first).expect("first insert");
+
+        let mut second = task();
+        second.id = "completed-second".to_owned();
+        second.status = DownloadStatus::Completed;
+        second.completed_at = Some(20);
+        repository.insert(&second).expect("second insert");
+
+        let mut active = task();
+        active.id = "active".to_owned();
+        active.status = DownloadStatus::Downloading;
+        repository.insert(&active).expect("active insert");
+
+        let completed = repository.list_completed(10).expect("completed list");
+        assert_eq!(completed.len(), 2);
+        assert_eq!(completed[0].id, "completed-second");
+        assert_eq!(completed[1].id, "completed-first");
 
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(path.with_extension("sqlite3-wal"));

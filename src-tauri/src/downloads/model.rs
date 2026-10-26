@@ -165,6 +165,33 @@ pub struct DownloadProgressEvent {
     pub task: DownloadTask,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OfflineLibraryEntry {
+    pub id: String,
+    pub bvid: String,
+    pub cid: u64,
+    pub aid: u64,
+    pub title: String,
+    pub part_title: String,
+    pub cover_url: String,
+    pub duration_seconds: u32,
+    pub quality_label: String,
+    pub width: u32,
+    pub height: u32,
+    pub total_bytes: u64,
+    pub completed_at: Option<i64>,
+    pub has_directory: bool,
+    pub has_merged_mp4: bool,
+    pub has_video_stream: bool,
+    pub has_audio_stream: bool,
+    pub has_cover: bool,
+    pub has_danmaku: bool,
+    pub has_subtitle: bool,
+    pub has_metadata: bool,
+    pub warnings: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct NewDownloadTask {
     pub bvid: String,

@@ -4,8 +4,7 @@ Ailicili is an unofficial, non-commercial Bilibili desktop client for Windows, b
 on the existing Tauri 2 and React 19 application shell. It is not affiliated with or
 endorsed by Bilibili.
 
-The project is being delivered in phases. Phases 1 through 3 and the PGC and live parts of
-phase 4 currently provide:
+The project is being delivered in phases. Phases 1 through 4 currently provide:
 
 - A branded desktop shell with discovery navigation, settings, tray, theme, and command palette.
 - Live public Bilibili discovery data backed by a typed Rust command.
@@ -28,11 +27,12 @@ phase 4 currently provide:
 - A persistent two-job download queue with pause, resume, retry, cancel, HTTP Range continuation,
   optional FFmpeg muxing, cover/danmaku/subtitle attachments, progress events, tray status, and
   completion notifications.
+- A guest-accessible offline library backed by completed download records, with explicit
+  availability for merged MP4, split media streams, covers, danmaku, subtitles, and metadata.
+- A complete watch-later view with item count, refresh, removal, and confirmed clear-all actions.
 - Explicit loading, error, retry, empty, and pagination states.
 - Unit, component, route, Rust mapping, and opt-in live network tests, with Playwright available
   for viewport and visual smoke checks.
-
-Offline metadata browsing and watch-later completion remain in the final phase 4 sub-phase.
 
 ## Stack
 
@@ -109,6 +109,10 @@ credential storage inside the Rust boundary.
 - Each task folder may include the cover, raw danmaku, subtitles when available, and a
   metadata manifest. A failed optional attachment is reported as a warning without discarding
   successfully downloaded media.
+- The offline library is available without signing in. It returns stable metadata and file
+  availability only; absolute task paths stay behind the download-center commands.
+- Completed files are marked available only after canonical path checks confirm they are regular
+  files inside the recorded task directory. Removing an offline record does not delete its files.
 - The download folder cannot be changed while incomplete task records exist, because those
   records retain paths needed for resume and retry.
 
@@ -118,9 +122,9 @@ credential storage inside the Rust boundary.
 2. Complete: QR authentication, secure sessions, WBI search, and account identity.
 3. Complete: UGC playback, danmaku, comments, social actions, history, favorites,
    watch-later, user space, and dynamic feeds.
-4. In progress: PGC catalogs, live streaming, and downloads are complete; offline metadata
-   browsing and final phase verification are next.
-5. Security, accessibility, performance, packaging, updates, and release hardening.
+4. Complete: PGC catalogs, live streaming, resumable downloads, offline metadata, and
+   watch-later workflows.
+5. Next: security, accessibility, performance, packaging, updates, and release hardening.
 
 ## Compliance
 

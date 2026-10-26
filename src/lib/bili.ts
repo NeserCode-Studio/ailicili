@@ -10,6 +10,7 @@ import type {
   DownloadSettings,
   DownloadSnapshot,
   DownloadTask,
+  OfflineLibraryEntry,
   DynamicPage,
   FavoriteFolder,
   FavoriteResourcePage,
@@ -217,6 +218,7 @@ export const biliKeys = {
   favoriteFolders: () => [...biliKeys.all, "favorites", "folders"] as const,
   history: () => [...biliKeys.all, "history"] as const,
   watchLater: () => [...biliKeys.all, "watch-later"] as const,
+  offlineLibrary: () => [...biliKeys.all, "library", "offline"] as const,
   favoriteResources: (mediaId: string, page: number) =>
     [...biliKeys.all, "favorites", mediaId, page] as const,
   space: (mid: string) => [...biliKeys.all, "space", mid] as const,
@@ -490,6 +492,10 @@ export function removeWatchLater(aid: number): Promise<void> {
   return invoke<void>("bili_remove_watch_later", { aid });
 }
 
+export function clearWatchLater(): Promise<void> {
+  return invoke<void>("bili_clear_watch_later");
+}
+
 export function fetchFavoriteResources(
   mediaId: string,
   page = 1
@@ -554,6 +560,10 @@ export function createDownload(
 
 export function fetchDownloadSnapshot(): Promise<DownloadSnapshot> {
   return invoke<DownloadSnapshot>("download_snapshot");
+}
+
+export function fetchOfflineLibrary(): Promise<OfflineLibraryEntry[]> {
+  return invoke<OfflineLibraryEntry[]>("download_offline_library");
 }
 
 export function fetchDownloadSettings(): Promise<DownloadSettings> {

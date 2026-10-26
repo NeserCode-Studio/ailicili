@@ -71,6 +71,11 @@ export function useDownloadProgressEvents() {
             queryKey: biliKeys.downloads(),
           });
         }
+        if (task.status === "completed") {
+          void queryClient.invalidateQueries({
+            queryKey: biliKeys.offlineLibrary(),
+          });
+        }
       }
     );
 

@@ -7,7 +7,10 @@ use crate::bili::client::BiliClient;
 use super::{
     error::DownloadCommandError,
     manager::DownloadManager,
-    model::{DownloadOptions, DownloadSettings, DownloadSnapshot, DownloadTask, NewDownloadTask},
+    model::{
+        DownloadOptions, DownloadSettings, DownloadSnapshot, DownloadTask, NewDownloadTask,
+        OfflineLibraryEntry,
+    },
 };
 
 #[tauri::command]
@@ -84,6 +87,13 @@ pub fn download_snapshot(
     manager: State<'_, Arc<DownloadManager>>,
 ) -> Result<DownloadSnapshot, DownloadCommandError> {
     manager.snapshot().map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn download_offline_library(
+    manager: State<'_, Arc<DownloadManager>>,
+) -> Result<Vec<OfflineLibraryEntry>, DownloadCommandError> {
+    manager.offline_library().map_err(Into::into)
 }
 
 #[tauri::command]

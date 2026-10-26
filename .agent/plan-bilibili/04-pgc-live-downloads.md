@@ -1,10 +1,10 @@
 ---
 goal: Add PGC catalogs, live streaming, downloads, offline cache, and watch-later workflows
-version: 1.2
+version: 1.3
 date_created: 2026-10-26
 last_updated: 2026-10-26
 owner: Root
-status: 'In progress'
+status: 'Complete'
 tags:
   - feature
   - pgc
@@ -14,7 +14,7 @@ tags:
 
 # Introduction
 
-![Status: In progress](https://img.shields.io/badge/status-In%20progress-yellow)
+![Status: Complete](https://img.shields.io/badge/status-Complete-brightgreen)
 
 This phase extends the media client beyond UGC while retaining explicit capability and legal
 boundaries for paid, regional, and live-interaction features. Work proceeds in four ordered
@@ -119,11 +119,23 @@ Verification for 4C:
 
 ### 4D: Watch later and completion
 
+Detailed execution plan: [04d-library-completion.md](04d-library-completion.md)
+
 | Task | Description | Status | Date |
 |------|-------------|--------|------|
-| FIN-001 | Complete watch-later and offline metadata browsing across existing library surfaces | Planned | |
-| FIN-002 | Reconcile all capability fallbacks, README, architecture docs, and phase test coverage | Planned | |
-| FIN-003 | Run the complete Phase 4 quality gate and commit the final sub-phase separately | Planned | |
+| FIN-001 | Complete watch-later and offline metadata browsing across existing library surfaces | Complete | 2026-10-26 |
+| FIN-002 | Reconcile all capability fallbacks, README, architecture docs, and phase test coverage | Complete | 2026-10-26 |
+| FIN-003 | Run the complete Phase 4 quality gate and commit the final sub-phase separately | Complete | 2026-10-26 |
+
+Verification for 4D:
+
+- The offline library is login-independent, capped at 500 completed records, and exposes file
+  availability only after canonical containment checks.
+- Guest, account protection, artifact badges, split-media labeling, empty, error, reveal, and
+  remove flows have component coverage.
+- Watch later now includes count, refresh, individual removal, and confirmed clear-all behavior.
+- Playwright checks cover desktop and compact offline layouts plus the guest default tab.
+- The full frontend, Rust, typecheck, lint, build, and formatting gates pass.
 
 ## 3. Alternatives
 
