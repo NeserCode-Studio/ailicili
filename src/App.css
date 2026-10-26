@@ -4,25 +4,26 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  --radius: 0.5rem;
+  --background: oklch(0.975 0.004 250);
+  --foreground: oklch(0.18 0.008 250);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.18 0.008 250);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.18 0.008 250);
+  --primary: oklch(0.56 0.19 5);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.945 0.008 250);
+  --secondary-foreground: oklch(0.24 0.008 250);
+  --muted: oklch(0.945 0.008 250);
+  --muted-foreground: oklch(0.5 0.012 250);
+  --accent: oklch(0.94 0.012 250);
+  --accent-foreground: oklch(0.22 0.008 250);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --border: oklch(0.895 0.008 250);
+  --input: oklch(0.895 0.008 250);
+  --ring: oklch(0.56 0.19 5);
+  --brand-blue: oklch(0.69 0.14 232);
 
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
@@ -30,35 +31,36 @@
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
 
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar: oklch(0.955 0.005 250);
+  --sidebar-foreground: oklch(0.18 0.008 250);
+  --sidebar-primary: oklch(0.56 0.19 5);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar-accent: oklch(0.92 0.01 250);
+  --sidebar-accent-foreground: oklch(0.2 0.008 250);
+  --sidebar-border: oklch(0.88 0.008 250);
+  --sidebar-ring: oklch(0.56 0.19 5);
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
+  --background: oklch(0.155 0.008 250);
+  --foreground: oklch(0.94 0.005 250);
+  --card: oklch(0.205 0.009 250);
+  --card-foreground: oklch(0.94 0.005 250);
+  --popover: oklch(0.205 0.009 250);
+  --popover-foreground: oklch(0.94 0.005 250);
+  --primary: oklch(0.73 0.16 5);
+  --primary-foreground: oklch(0.16 0.01 250);
+  --secondary: oklch(0.255 0.009 250);
+  --secondary-foreground: oklch(0.94 0.005 250);
+  --muted: oklch(0.255 0.009 250);
+  --muted-foreground: oklch(0.68 0.012 250);
+  --accent: oklch(0.28 0.012 250);
+  --accent-foreground: oklch(0.94 0.005 250);
   --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
+  --border: oklch(1 0 0 / 11%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --ring: oklch(0.73 0.16 5);
+  --brand-blue: oklch(0.73 0.13 232);
 
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);
@@ -66,12 +68,12 @@
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
 
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar: oklch(0.185 0.009 250);
+  --sidebar-foreground: oklch(0.94 0.005 250);
+  --sidebar-primary: oklch(0.73 0.16 5);
+  --sidebar-primary-foreground: oklch(0.16 0.01 250);
+  --sidebar-accent: oklch(0.26 0.01 250);
+  --sidebar-accent-foreground: oklch(0.94 0.005 250);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
 }
@@ -100,6 +102,7 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-brand-blue: var(--brand-blue);
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
   --color-chart-3: var(--chart-3);
@@ -120,7 +123,9 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+    font-family:
+      "Archivo Variable", "Noto Sans SC Variable", "Segoe UI", sans-serif;
   }
   button {
     @apply cursor-pointer;
@@ -157,15 +162,15 @@
     @apply flex flex-row items-center gap-1;
   }
   .row-label {
-    @apply flex items-center gap-1.5 text-xs font-medium text-muted-foreground;
+    @apply text-muted-foreground flex items-center gap-1.5 text-xs font-medium;
   }
 
   /* ===== 文本 ===== */
   .text-muted-sm {
-    @apply text-sm text-muted-foreground;
+    @apply text-muted-foreground text-sm;
   }
   .text-muted-xs {
-    @apply text-xs text-muted-foreground;
+    @apply text-muted-foreground text-xs;
   }
 
   /* ===== 图标 ===== */
@@ -176,18 +181,18 @@
     @apply h-3.5 w-3.5;
   }
   .icon-action {
-    @apply h-3.5 w-3.5 shrink-0 text-muted-foreground transition-colors
-      group-hover:text-accent-foreground;
+    @apply text-muted-foreground group-hover:text-accent-foreground h-3.5 w-3.5 shrink-0 transition-colors;
   }
 
   /* ===== 应用骨架 ===== */
   .app-shell {
-    @apply flex h-screen w-screen flex-row items-center justify-center;
+    @apply bg-background flex h-screen w-screen flex-col overflow-hidden;
   }
   .app-body {
-    @apply fixed bottom-0 flex h-[calc(100vh-2rem)] w-screen flex-col
-      items-center justify-center bg-neutral-50 select-none
-      transition-colors duration-100 ease-in-out dark:bg-neutral-700;
+    @apply mt-8 flex min-h-0 w-full flex-1 overflow-hidden;
+  }
+  .app-sidebar {
+    @apply border-sidebar-border bg-sidebar text-sidebar-foreground flex w-52 shrink-0 flex-col border-r;
   }
 
   /* ===== 视图容器 ===== */
@@ -212,16 +217,23 @@
      注意：标题栏里的 <Separator> 是 shadcn 组件，其样式在调用处平铺。
   */
   .titlebar-op {
-    @apply inline-flex h-full w-fit cursor-pointer items-center justify-center
-      px-2.5 py-0.5 transition-colors delay-0 duration-100 ease-in-out
-      hover:bg-neutral-200 dark:hover:bg-neutral-600
-      last:hover:bg-red-400 dark:last:hover:bg-red-600;
+    @apply hover:bg-muted inline-flex h-full w-fit cursor-pointer items-center justify-center px-2.5 py-0.5 transition-colors delay-0 duration-100 ease-in-out last:hover:bg-red-500 last:hover:text-white;
   }
   .titlebar-op-icon {
     @apply h-4 w-4 transition-all duration-100 ease-in-out;
   }
   .titlebar-op.is-pinned .titlebar-op-icon {
     @apply rotate-135 fill-green-500;
+  }
+}
+
+@media (max-width: 1100px) {
+  .app-sidebar {
+    width: 4.5rem;
+  }
+
+  .app-sidebar-label {
+    display: none;
   }
 }
 

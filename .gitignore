@@ -27,6 +27,7 @@ dist-ssr
 .workbuddy/
 
 # Agent workspace data
+.agent/
 .agents/
 .omo/
 

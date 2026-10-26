@@ -18,6 +18,7 @@ import TitlebarTitle from "./TitlebarTitle";
 import { useI18n } from "@/composables";
 import { useSettingsDialog } from "@/contexts/settings";
 import * as editorActions from "@/lib/editor.actions";
+import { WindowUtils } from "@/lib/window.utils";
 
 export default function Titlebar() {
   /* I18n */
@@ -38,10 +39,10 @@ export default function Titlebar() {
 
   return (
     <div
-      className="fixed top-0 z-50 flex h-8 w-screen flex-row items-center justify-between border-b border-neutral-400 bg-white pl-2 shadow-sm transition-colors duration-100 ease-in-out dark:border-neutral-600 dark:bg-black"
+      className="border-border bg-background fixed top-0 z-50 flex h-8 w-screen flex-row items-center justify-between border-b pl-2 transition-colors duration-100 ease-in-out"
       data-tauri-drag-region
     >
-      <Menubar className="h-6 w-fit gap-1 rounded-none border-0 bg-transparent p-0 text-neutral-600 shadow-none transition-colors duration-100 ease-in-out dark:text-neutral-200">
+      <Menubar className="text-muted-foreground h-6 w-fit gap-1 rounded-none border-0 bg-transparent p-0 text-xs shadow-none transition-colors duration-100 ease-in-out">
         <MenubarMenu>
           <MenubarTrigger className="h-full w-fit px-2 text-sm">
             {t("Titlebar.menu.turnto")}
@@ -66,7 +67,9 @@ export default function Titlebar() {
               {t("Titlebar.menu.turnto.theme")}
               <ThemeIcon />
             </MenubarItem>
-            <MenubarItem>{t("Titlebar.menu.turnto.exit")}</MenubarItem>
+            <MenubarItem onSelect={() => void WindowUtils.windowsQuit()}>
+              {t("Titlebar.menu.turnto.exit")}
+            </MenubarItem>
           </MenubarContent>
         </MenubarMenu>
 

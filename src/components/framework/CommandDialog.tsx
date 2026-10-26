@@ -1,5 +1,11 @@
 import * as React from "react";
-import { Home, Settings, RefreshCcw, Sparkles } from "lucide-react";
+import {
+  Home,
+  Search,
+  Settings,
+  RefreshCcw,
+  Sparkles,
+} from "lucide-react";
 import { useMemoizedFn } from "ahooks";
 
 import {
@@ -68,14 +74,23 @@ export default function CommandMenu() {
       value: "navigate::/",
       icon: Home,
       label: t("Command.turnto.home"),
-      shortcut: "⌘H",
+      shortcut: "Ctrl+H",
       keywords: ["home", "index", "首页", "主页"],
+    },
+    {
+      value: `search::${cmdkSearch.trim()}`,
+      icon: Search,
+      label: cmdkSearch.trim()
+        ? t("Command.searchFor", { query: cmdkSearch.trim() })
+        : t("Command.search"),
+      shortcut: "Ctrl+F",
+      keywords: ["search", "find", "搜索", "查找", cmdkSearch],
     },
     {
       value: "settings::open",
       icon: Settings,
       label: t("Command.turnto.settings"),
-      shortcut: "⌘S",
+      shortcut: "Ctrl+,",
       keywords: ["settings", "设置", "配置", "选项", "preferences"],
     },
     {
@@ -103,6 +118,13 @@ export default function CommandMenu() {
 
     if (symbol === "navigate") {
       navigator(value);
+    } else if (symbol === "search") {
+      const query = cmdkSearch.trim();
+      navigator(
+        query
+          ? `/search?q=${encodeURIComponent(query)}&type=video&page=1`
+          : "/search"
+      );
     } else if (symbol === "settings") {
       openSettings();
     } else if (symbol === "reload") {
@@ -121,10 +143,20 @@ export default function CommandMenu() {
   const handleInputChange = useMemoizedFn((val: string) => setCmdkSearch(val));
 
   const openShortcut = useMemoizedFn((e: KeyboardEvent) => {
-    if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
+    if (
+      (e.key.toLowerCase() === "k" || e.key.toLowerCase() === "f") &&
+      (e.metaKey || e.ctrlKey) &&
+      !e.altKey
+    ) {
       e.preventDefault();
       setOpen((prev) => !prev);
       setCmdkSearch("");
+    } else if (e.key.toLowerCase() === "h" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      navigator("/");
+    } else if (e.key === "," && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      openSettings();
     }
   });
 

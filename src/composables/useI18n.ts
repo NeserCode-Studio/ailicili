@@ -12,13 +12,20 @@ export function useI18nLogic() {
   );
 
   const t = useCallback(
-    (meaning: string) => {
+    (
+      meaning: string,
+      variables?: Record<string, string | number>
+    ) => {
       const texts =
         I18nTexts[lang as keyof typeof I18nTexts] || I18nTexts["zh-CN"];
       const hit = texts[meaning as keyof typeof texts];
       // 未命中时回退返回 key 本身；这属于开发期问题，需要留痕
       if (!hit) log.warn("missing i18n key", meaning, `lang=${lang}`);
-      return hit || meaning;
+      return Object.entries(variables ?? {}).reduce(
+        (text, [name, value]) =>
+          text.split(`{${name}}`).join(String(value)),
+        hit || meaning
+      );
     },
     [lang]
   );

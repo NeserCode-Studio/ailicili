@@ -1,8 +1,23 @@
 use tauri::{
-    Manager,
     image::Image,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Emitter, Position, Size,
+    Emitter, Manager, Position, Size,
+};
+
+mod bili;
+
+use bili::{
+    client::BiliClient,
+    commands::{
+        bili_add_watch_later, bili_auth_status, bili_clear_history, bili_coin_video, bili_comments,
+        bili_danmaku, bili_delete_history, bili_dynamic_feed, bili_favorite_folders,
+        bili_favorite_resources, bili_follow_user, bili_heartbeat, bili_history, bili_like_video,
+        bili_login_poll, bili_login_start, bili_logout, bili_playback_session, bili_popular_videos,
+        bili_post_comment, bili_remove_watch_later, bili_resume_point, bili_search,
+        bili_search_suggestions, bili_send_danmaku, bili_set_video_favorite, bili_space_profile,
+        bili_space_videos, bili_triple_video, bili_video_actions, bili_video_detail,
+        bili_watch_later,
+    },
 };
 
 #[tauri::command]
@@ -48,12 +63,15 @@ fn toggle_main_window(app: &tauri::AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
+            let bili_client = BiliClient::new()?;
+            app.manage(bili_client);
+
             let icon = Image::from_bytes(include_bytes!("../icons/32x32.png"))
                 .expect("Failed to load tray icon");
 
             TrayIconBuilder::new()
                 .icon(icon)
-                .tooltip("App Template")
+                .tooltip("Ailicili")
                 .on_tray_icon_event(|tray, event| {
                     let (rx, ry, rw, is_right) = match event {
                         TrayIconEvent::Click {
@@ -77,10 +95,13 @@ pub fn run() {
 
                     if is_right {
                         if let Some(window) = tray.app_handle().get_webview_window("main") {
-                            let _ = window.emit("tray-popup", serde_json::json!({
-                                "x": (rx + rw / 2.0) as i32,
-                                "y": ry as i32,
-                            }));
+                            let _ = window.emit(
+                                "tray-popup",
+                                serde_json::json!({
+                                    "x": (rx + rw / 2.0) as i32,
+                                    "y": ry as i32,
+                                }),
+                            );
                         }
                     } else {
                         toggle_main_window(tray.app_handle());
@@ -92,7 +113,45 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet, open_devtools])
+        .register_asynchronous_uri_scheme_protocol("bilistream", |context, request, responder| {
+            bili::stream::handle(context.app_handle().clone(), context, request, responder);
+        })
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            open_devtools,
+            bili_popular_videos,
+            bili_video_detail,
+            bili_playback_session,
+            bili_auth_status,
+            bili_login_start,
+            bili_login_poll,
+            bili_logout,
+            bili_search,
+            bili_search_suggestions,
+            bili_danmaku,
+            bili_dynamic_feed,
+            bili_send_danmaku,
+            bili_comments,
+            bili_post_comment,
+            bili_video_actions,
+            bili_like_video,
+            bili_coin_video,
+            bili_triple_video,
+            bili_follow_user,
+            bili_favorite_folders,
+            bili_set_video_favorite,
+            bili_history,
+            bili_delete_history,
+            bili_clear_history,
+            bili_watch_later,
+            bili_add_watch_later,
+            bili_remove_watch_later,
+            bili_favorite_resources,
+            bili_resume_point,
+            bili_heartbeat,
+            bili_space_profile,
+            bili_space_videos
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

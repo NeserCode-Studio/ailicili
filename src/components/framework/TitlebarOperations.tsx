@@ -1,14 +1,6 @@
 import { Tooltip } from "./Tooltip";
 
-import {
-  Minus,
-  X,
-  Sun,
-  Moon,
-  Paperclip,
-  Square,
-  Copy,
-} from "lucide-react";
+import { Minus, X, Sun, Moon, Paperclip, Square, Copy } from "lucide-react";
 import { ThemeContext } from "@/contexts/theme";
 import { Separator } from "../ui/separator";
 import { useContext, useEffect, useState } from "react";
@@ -48,7 +40,11 @@ async function handleOperation(operation: "minimize" | "close") {
       await currentWindow.minimize();
       break;
     case "close":
-      await WindowUtils.windowsQuit();
+      if (currentWindow.label === "player") {
+        await currentWindow.close();
+      } else {
+        await WindowUtils.windowsQuit();
+      }
       break;
   }
 }
@@ -106,7 +102,7 @@ export default function TitlebarOperations() {
       <div className="inline-flex h-full w-fit flex-row items-center justify-center">
         <Separator
           orientation="vertical"
-          className="mx-0.5 h-1/2 rounded bg-neutral-300 transition-colors duration-100 ease-in-out dark:bg-neutral-700"
+          className="bg-border mx-0.5 h-1/2 rounded transition-colors duration-100 ease-in-out"
         />
         <Tooltip content={t("Titlebar.operations.always-on-top.tooltip")}>
           <span

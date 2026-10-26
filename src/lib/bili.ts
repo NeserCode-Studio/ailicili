@@ -1,0 +1,333 @@
+import { invoke } from "@tauri-apps/api/core";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+
+import type {
+  AuthStatus,
+  BiliCommandError,
+  CommentPage,
+  DanmakuItem,
+  DynamicPage,
+  FavoriteFolder,
+  FavoriteResourcePage,
+  HistoryPage,
+  LibraryVideo,
+  PopularPage,
+  PlaybackSession,
+  QrLoginPoll,
+  QrLoginStart,
+  ResumePoint,
+  SearchKind,
+  SearchPage,
+  SearchSuggestion,
+  SpaceProfile,
+  SpaceVideoPage,
+  TripleResult,
+  VideoDetail,
+  VideoActionState,
+  WatchLaterPage,
+} from "@/shared/bili.types";
+
+const DEFAULT_PAGE_SIZE = 20;
+
+export const biliKeys = {
+  all: ["bili"] as const,
+  popular: (page: number, pageSize = DEFAULT_PAGE_SIZE) =>
+    [...biliKeys.all, "popular", page, pageSize] as const,
+  video: (bvid: string) => [...biliKeys.all, "video", bvid] as const,
+  auth: () => [...biliKeys.all, "auth", "status"] as const,
+  qrLogin: (generation: number) =>
+    [...biliKeys.all, "auth", "qr", generation] as const,
+  qrLoginPoll: (attemptId: string) =>
+    [...biliKeys.all, "auth", "qr-poll", attemptId] as const,
+  search: (query: string, kind: SearchKind, page: number) =>
+    [...biliKeys.all, "search", kind, query, page] as const,
+  searchSuggestions: (term: string) =>
+    [...biliKeys.all, "search", "suggestions", term] as const,
+  playback: (bvid: string, cid: number, qn: number) =>
+    [...biliKeys.all, "playback", bvid, cid, qn] as const,
+  danmaku: (cid: number) => [...biliKeys.all, "danmaku", cid] as const,
+  comments: (aid: number, page: number, sort: string) =>
+    [...biliKeys.all, "comments", aid, page, sort] as const,
+  actions: (bvid: string) => [...biliKeys.all, "actions", bvid] as const,
+  favoriteFolders: () => [...biliKeys.all, "favorites", "folders"] as const,
+  history: () => [...biliKeys.all, "history"] as const,
+  watchLater: () => [...biliKeys.all, "watch-later"] as const,
+  favoriteResources: (mediaId: string, page: number) =>
+    [...biliKeys.all, "favorites", mediaId, page] as const,
+  space: (mid: string) => [...biliKeys.all, "space", mid] as const,
+  spaceVideos: (mid: string, page: number) =>
+    [...biliKeys.all, "space", mid, "videos", page] as const,
+  resume: (bvid: string, cid: number) =>
+    [...biliKeys.all, "resume", bvid, cid] as const,
+  dynamicFeed: () => [...biliKeys.all, "dynamic", "feed"] as const,
+};
+
+export function fetchPopularVideos(
+  page = 1,
+  pageSize = DEFAULT_PAGE_SIZE
+): Promise<PopularPage> {
+  return invoke<PopularPage>("bili_popular_videos", { page, pageSize });
+}
+
+export function fetchVideoDetail(bvid: string): Promise<VideoDetail> {
+  return invoke<VideoDetail>("bili_video_detail", { bvid });
+}
+
+export function fetchAuthStatus(): Promise<AuthStatus> {
+  return invoke<AuthStatus>("bili_auth_status");
+}
+
+export function startQrLogin(): Promise<QrLoginStart> {
+  return invoke<QrLoginStart>("bili_login_start");
+}
+
+export function pollQrLogin(attemptId: string): Promise<QrLoginPoll> {
+  return invoke<QrLoginPoll>("bili_login_poll", { attemptId });
+}
+
+export function logoutBili(): Promise<void> {
+  return invoke<void>("bili_logout");
+}
+
+export function searchBili(
+  query: string,
+  searchType: SearchKind,
+  page = 1
+): Promise<SearchPage> {
+  return invoke<SearchPage>("bili_search", { query, searchType, page });
+}
+
+export function fetchSearchSuggestions(
+  term: string
+): Promise<SearchSuggestion[]> {
+  return invoke<SearchSuggestion[]>("bili_search_suggestions", { term });
+}
+
+export function createPlaybackSession(
+  bvid: string,
+  cid: number,
+  qn = 80
+): Promise<PlaybackSession> {
+  return invoke<PlaybackSession>("bili_playback_session", { bvid, cid, qn });
+}
+
+export async function openPlayerWindow(
+  bvid: string,
+  cid: number
+): Promise<void> {
+  if ("__TAURI_INTERNALS__" in window) {
+    const route = `/player/${encodeURIComponent(bvid)}/${cid}`;
+    const existing = (await WebviewWindow.getAll()).find(
+      (window) => window.label === "player"
+    );
+    if (existing) {
+      await existing.emitTo("player", "player-navigate", route);
+      await existing.show();
+      await existing.setFocus();
+      return;
+    }
+
+    const player = new WebviewWindow("player", {
+      url: route,
+      title: "Ailicili Player",
+      width: 1280,
+      height: 820,
+      minWidth: 800,
+      minHeight: 500,
+      decorations: false,
+      shadow: true,
+    });
+    await new Promise<void>((resolve, reject) => {
+      void player.once("tauri://created", () => resolve());
+      void player.once<unknown>("tauri://error", (event) => {
+        reject(
+          new Error(
+            typeof event.payload === "string"
+              ? event.payload
+              : "Player window creation failed"
+          )
+        );
+      });
+    });
+    return;
+  }
+
+  const playerWindow = window.open(
+    `/player/${encodeURIComponent(bvid)}/${cid}`,
+    "ailicili-player",
+    "popup,width=1280,height=820"
+  );
+  if (!playerWindow) {
+    throw new Error("Player window was blocked");
+  }
+}
+
+export function fetchDanmaku(cid: number): Promise<DanmakuItem[]> {
+  return invoke<DanmakuItem[]>("bili_danmaku", { cid });
+}
+
+export interface SendDanmakuInput {
+  aid: number;
+  cid: number;
+  bvid: string;
+  message: string;
+  progressMs: number;
+  mode: number;
+  color: number;
+  fontSize: number;
+}
+
+export function sendDanmaku(input: SendDanmakuInput): Promise<string> {
+  return invoke<string>("bili_send_danmaku", { ...input });
+}
+
+export function fetchComments(
+  aid: number,
+  page = 1,
+  sort: "hot" | "time" = "hot"
+): Promise<CommentPage> {
+  return invoke<CommentPage>("bili_comments", { aid, page, sort });
+}
+
+export function postComment(input: {
+  aid: number;
+  message: string;
+  root?: number;
+  parent?: number;
+}): Promise<string> {
+  return invoke<string>("bili_post_comment", input);
+}
+
+export function fetchVideoActions(
+  bvid: string,
+  authorMid: number
+): Promise<VideoActionState> {
+  return invoke<VideoActionState>("bili_video_actions", { bvid, authorMid });
+}
+
+export function likeVideo(bvid: string, liked: boolean): Promise<void> {
+  return invoke<void>("bili_like_video", { bvid, liked });
+}
+
+export function coinVideo(
+  bvid: string,
+  multiply: number,
+  withLike: boolean
+): Promise<void> {
+  return invoke<void>("bili_coin_video", { bvid, multiply, withLike });
+}
+
+export function tripleVideo(bvid: string): Promise<TripleResult> {
+  return invoke<TripleResult>("bili_triple_video", { bvid });
+}
+
+export function followUser(mid: number, follow: boolean): Promise<void> {
+  return invoke<void>("bili_follow_user", { mid, follow });
+}
+
+export function fetchFavoriteFolders(): Promise<FavoriteFolder[]> {
+  return invoke<FavoriteFolder[]>("bili_favorite_folders");
+}
+
+export function setVideoFavorite(input: {
+  aid: number;
+  addMediaIds: string[];
+  removeMediaIds: string[];
+}): Promise<void> {
+  return invoke<void>("bili_set_video_favorite", input);
+}
+
+export function fetchHistory(max = 0, viewAt = 0): Promise<HistoryPage> {
+  return invoke<HistoryPage>("bili_history", { max, viewAt });
+}
+
+export function deleteHistory(aid: number): Promise<void> {
+  return invoke<void>("bili_delete_history", { aid });
+}
+
+export function clearHistory(): Promise<void> {
+  return invoke<void>("bili_clear_history");
+}
+
+export function fetchWatchLater(): Promise<WatchLaterPage> {
+  return invoke<WatchLaterPage>("bili_watch_later");
+}
+
+export function addWatchLater(bvid: string): Promise<void> {
+  return invoke<void>("bili_add_watch_later", { bvid });
+}
+
+export function removeWatchLater(aid: number): Promise<void> {
+  return invoke<void>("bili_remove_watch_later", { aid });
+}
+
+export function fetchFavoriteResources(
+  mediaId: string,
+  page = 1
+): Promise<FavoriteResourcePage> {
+  return invoke<FavoriteResourcePage>("bili_favorite_resources", {
+    mediaId,
+    page,
+  });
+}
+
+export function fetchResumePoint(
+  bvid: string,
+  cid: number
+): Promise<ResumePoint> {
+  return invoke<ResumePoint>("bili_resume_point", { bvid, cid });
+}
+
+export function reportHeartbeat(input: {
+  aid: number;
+  cid: number;
+  bvid: string;
+  playedSeconds: number;
+  durationSeconds: number;
+  playType?: number;
+}): Promise<void> {
+  return invoke<void>("bili_heartbeat", input);
+}
+
+export function fetchSpaceProfile(mid: number): Promise<SpaceProfile> {
+  return invoke<SpaceProfile>("bili_space_profile", { mid });
+}
+
+export function fetchSpaceVideos(
+  mid: number,
+  page = 1
+): Promise<SpaceVideoPage> {
+  return invoke<SpaceVideoPage>("bili_space_videos", { mid, page });
+}
+
+export function fetchDynamicFeed(offset = ""): Promise<DynamicPage> {
+  return invoke<DynamicPage>("bili_dynamic_feed", { offset });
+}
+
+export type { LibraryVideo };
+
+export function normalizeBiliError(error: unknown): BiliCommandError {
+  if (isBiliCommandError(error)) {
+    return error;
+  }
+
+  if (error instanceof Error) {
+    return { code: "unexpected_error", message: error.message };
+  }
+
+  return {
+    code: "unexpected_error",
+    message: typeof error === "string" ? error : "Unknown error",
+  };
+}
+
+export function isBiliCommandError(error: unknown): error is BiliCommandError {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    "message" in error &&
+    typeof error.code === "string" &&
+    typeof error.message === "string"
+  );
+}

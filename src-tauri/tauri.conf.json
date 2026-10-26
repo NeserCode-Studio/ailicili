@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "app-template",
+  "productName": "Ailicili",
   "version": "0.1.0",
-  "identifier": "com.app-template.app",
+  "identifier": "com.nesercode.ailicili",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:8888",
@@ -13,11 +13,11 @@
     "windows": [
       {
         "label": "main",
-        "title": "app-template",
-        "width": 800,
-        "height": 600,
-        "minWidth": 800,
-        "minHeight": 600,
+        "title": "Ailicili",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 960,
+        "minHeight": 640,
         "decorations": false,
         "resizable": true,
         "maximizable": true,

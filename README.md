@@ -1,227 +1,109 @@
-<div align="center">
+# Ailicili
 
-# app-template
+Ailicili is an unofficial, non-commercial Bilibili desktop client for Windows, built
+on the existing Tauri 2 and React 19 application shell. It is not affiliated with or
+endorsed by Bilibili.
 
-**Tauri 2 + React 19 桌面应用开发模板**
+The project is being delivered in phases. Phases 1 through 3 currently provide:
 
-开箱即用的桌面应用骨架 —— 窗口管理、系统托盘、命令面板、设置中心、多语言、主题切换，一次配好，直接写业务。
+- A branded desktop shell with discovery navigation, settings, tray, theme, and command palette.
+- Live public Bilibili discovery data backed by a typed Rust command.
+- Video detail pages with author, statistics, description, and multi-part metadata.
+- QR authentication with locally rendered codes and live account status.
+- Windows Credential Manager-backed sessions and an account identity menu.
+- WBI-signed video, user, PGC, and live search with suggestions, history, and pagination.
+- A dedicated player window with DASH playback, proxied media ranges, quality and speed
+  controls, theater mode, fullscreen, picture-in-picture, local resume, and watch-progress
+  synchronization.
+- Canvas danmaku with mode, density, opacity, area, font-size, speed, and collision handling,
+  plus authenticated danmaku sending.
+- Comments with emote rendering, nested replies, and authenticated comment and reply posting.
+- Optimistic like, coin, favorite, follow, and triple actions with rollback on failure.
+- Personal history, favorites, watch-later, user-space, and dynamic-feed pages.
+- Explicit loading, error, retry, empty, and pagination states.
+- Unit, component, route, Playwright visual, and opt-in live network tests.
 
-[![Tauri](https://img.shields.io/badge/Tauri-2-blue?style=flat-round&logo=tauri&logoColor=white)](https://tauri.app)
-[![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-round&logo=react&logoColor=black)](https://react.dev)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-round&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
-[![Tailwind CSS](https://img.shields.io/badge/Tailwind-4-06B6D4?style=flat-round&logo=tailwindcss&logoColor=white)](https://tailwindcss.com)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=flat-round)](LICENSE)
+PGC and live detail pages, downloads, and offline caching remain planned.
 
-</div>
+## Stack
 
----
+- Tauri 2 and Rust
+- React 19, React Router 7, and TypeScript
+- TanStack Query
+- Tailwind CSS 4 and shadcn/Radix primitives
+- Vitest, Testing Library, and Playwright
 
-## 特性
+## Development
 
-| | |
-| --- | --- |
-| **双窗口架构** | 主窗口 + 托盘弹窗，同一 bundle 按窗口标签分流 |
-| **无边框标题栏** | Windows 风格原生菜单（转到 / 编辑 / 帮助），标题栏可拖拽 |
-| **系统托盘** | 托盘图标 + 自绘弹出菜单，左键显隐主窗口、右键唤出菜单 |
-| **命令面板** | `⌘K` / `Ctrl+K` 唤起，支持模糊搜索与快捷键提示 |
-| **设置中心** | 通用设置项组件（输入框 / 下拉 / 开关），内置搜索与修改记录 |
-| **主题切换** | 亮色 / 暗色，跟随系统，用户手动选择后不再自动跟随 |
-| **国际化** | 中英双语，语言可运行时切换 |
-| **生命周期钩子** | 阶段化的启动 / 挂载 / 就绪钩子，业务初始化有明确落点 |
-| **跨窗口通信** | Rust ↔ 前端双向事件通道，托盘可直接唤起主窗口功能 |
+Prerequisites:
 
-技术底座：**Tauri 2** · **React 19** · **TypeScript** · **Tailwind CSS 4** · **shadcn/ui** · **Radix UI** · **Rust**
-
----
-
-## 快速开始
-
-### 环境要求
-
-- Node.js ≥ 18
-- pnpm ≥ 9
-- Rust（stable）
-- Tauri 平台依赖（Linux 需 `webkit2gtk` 等，详见[官方文档](https://tauri.app/start/prerequisites/)）
-
-### 安装与启动
+- Windows 10 or 11 with Microsoft Edge WebView2 Runtime
+- Node.js 20 or newer
+- pnpm 9 or newer
+- A stable Rust toolchain
+- Tauri Windows build dependencies and the Windows SDK
 
 ```bash
-# 安装前端依赖
 pnpm install
-
-# 启动开发环境（自动编译 Rust，首次较慢）
 pnpm tauri dev
 ```
 
-### 构建
+Useful checks:
 
 ```bash
-pnpm tauri build     # 生成安装包
-pnpm build           # 仅构建前端
+pnpm lint
+pnpm test
+pnpm build
+cargo check --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-### 其他命令
+## Architecture
 
-| 命令 | 说明 |
-| --- | --- |
-| `pnpm dev` | 启动前端开发服务器（端口 8888） |
-| `pnpm preview` | 预览前端构建产物 |
-| `pnpm lint` | ESLint 检查 |
-| `pnpm format` | Prettier 格式化 |
+- `src-tauri/src/bili/` owns HTTP transport, WBI signing, session persistence,
+  response validation, stable DTO mapping, playback sessions, media proxying, and
+  command registration.
+- `src/app/` owns providers, query caching, the window shell, and route composition.
+- `src/features/` owns discovery, playback, danmaku, comments, social actions,
+  personal libraries, authentication, and search UI.
+- `src/shared/` owns frontend contracts shared by features.
+- `src/components/ui/` is generated shadcn code and is not edited manually.
 
-> 浏览器环境下界面可渲染，但托盘、跨窗口、原生能力不可用 —— 这些需 `pnpm tauri dev` 验证。
+React calls typed Tauri commands rather than Bilibili endpoints directly, keeping
+cookies, CSRF values, WBI signatures, signed media URLs, CDN-specific headers, and
+credential storage inside the Rust boundary.
 
----
+## Account and Privacy
 
-## 项目结构
+- QR login state is tracked by a short-lived opaque attempt ID. The Bilibili
+  `qrcode_key` never leaves the Rust process.
+- Only `SESSDATA`, `bili_jct`, `DedeUserID`, and `DedeUserID__ckMd5` are persisted,
+  using Windows Credential Manager under the current Windows account.
+- Session cookies and CSRF values are never written to frontend storage or exposed
+  through Tauri command DTOs.
+- Guest search identity cookies are held in process memory. Network failures return
+  fixed error details so signed URLs are not reflected to the WebView.
 
-```
-src/
-├── main.tsx              # 入口
-├── App.tsx               # 根组件：路由装配、Context、跨窗口事件、生命周期触发
-├── App.css               # 设计令牌 + 组件类
-│
-├── components/
-│   ├── framework/        # 框架组件
-│   │   ├── Titlebar*         # 无边框标题栏
-│   │   ├── CommandDialog     # 命令面板
-│   │   ├── SettingsDialog    # 设置弹窗
-│   │   ├── AboutDialog       # 关于弹窗
-│   │   └── Tooltip
-│   └── ui/               # shadcn/ui 组件库
-│
-├── views/                # 页面
-│   ├── Home / Software / Framework
-│   └── TrayMenu          # 托盘菜单
-│
-├── composables/          # 业务 Hook
-│   ├── useTheme          # 主题
-│   ├── useI18n           # 国际化
-│   ├── useToast          # 轻提示
-│   └── useSuperCommand   # 命令注册表
-│
-├── contexts/             # 全局 Context
-├── lifecycle/            # 生命周期总线（阶段：mount / ready）
-├── lib/                  # 工具与资源
-│   ├── i18n.resource.ts  # 中英文案表
-│   ├── window.utils.ts   # 窗口工具
-│   ├── editor.actions.ts # 编辑命令
-│   ├── logger.ts         # 日志模块
-│   └── utils.ts          # cn()
-└── shared/               # 共享类型
+## Delivery Phases
 
-src-tauri/
-├── tauri.conf.json       # 窗口与打包配置
-├── capabilities/         # 权限白名单
-└── src/lib.rs            # 托盘与 Rust 命令
-```
+1. Complete: foundation, public discovery, and video detail.
+2. Complete: QR authentication, secure sessions, WBI search, and account identity.
+3. Complete: UGC playback, danmaku, comments, social actions, history, favorites,
+   watch-later, user space, and dynamic feeds.
+4. Next: PGC and live detail pages, downloads, and offline cache workflows.
+5. Security, accessibility, performance, packaging, updates, and release hardening.
 
----
+## Compliance
 
-## 架构说明
+Ailicili is non-commercial and currently targets Windows only. It does not implement
+DRM circumvention, paid-content bypass, region unlocking, ad removal, bulk scraping,
+or automated mass actions. Users are responsible for accessing only content they are
+entitled to view.
 
-### 双窗口模型
+The repository is MIT-licensed. Wiliwili and Bili.Copilot are GPL-3.0 projects and
+are used only as high-level design references; their source is not copied into this
+repository.
 
-配置了两个窗口，**同一份前端代码按窗口标签分流**：
-
-| 窗口 | 用途 |
-| --- | --- |
-| `main` | 主界面：无边框、可拖拽标题栏、路由内容 |
-| `tray` | 托盘弹出菜单：独立小窗、失焦自动隐藏 |
-
-托盘右键 → Rust 侧发出定位事件 → 主窗口计算坐标后弹出托盘菜单；托盘菜单中的操作通过事件反向通知主窗口。
-
-### 生命周期系统
-
-提供阶段化钩子，让初始化逻辑有明确落点：
-
-```
-mount（React 挂载完成） → ready（应用就绪）
-```
-
-钩子支持优先级排序、一次性执行、卸载函数。同阶段按优先级顺序 `await` 执行，行为可预测。
-
-内置两个阶段对应两个真实触发点（均在 `App.tsx` 的挂载 effect 内按序触发）：
-
-| 阶段 | 时机 | 典型用途 |
-| --- | --- | --- |
-| `mount` | React 挂载完成 | 注册全局事件监听、启动定时任务 |
-| `ready` | 挂载完成后 | 需要窗口就绪才能执行的动作（聚焦、置前） |
-
-需要扩展时，在 `src/lifecycle/types.ts` 的 `LifecycleStage` 联合类型里加阶段，并在合适位置补上 `lifecycle.fire(...)`，`register` / `fire` 的实现无需改动。
-
-### 状态与持久化
-
-- 全局状态用 React Context，value 统一经 `useMemo` 固定引用，避免无关状态引发全量重渲染
-- 用户偏好（主题、语言、标题、置顶状态等）持久化到 `localStorage`
-- 弹窗开关状态集中在根组件，通过 Context 下发
-
-### 主题机制
-
-- CSS 变量驱动，所有颜色集中在 `App.css` 定义，亮/暗两套令牌
-- 首次启动跟随系统；用户手动切换后不再自动跟随
-- 切换无闪烁，状态与 DOM 始终一致
-
-### 国际化
-
-- 文案集中在 `src/lib/i18n.resource.ts`，新增文案改一处即可
-- 运行时可切换语言，无需重启
-- 未命中的 key 会回退为 key 本身，不会崩溃
-
-### 命令系统
-
-命令面板提供两种模式：
-
-- **普通模式** —— 页面跳转、设置打开、重载等常用操作
-- **高级模式** —— 输入 `@super` 前缀后执行扩展命令，支持前端动作与 Rust 命令两种执行方式
-
-命令以注册表形式管理，新增命令即插即用。
-
-### 日志
-
-`src/lib/logger.ts` 提供带级别过滤的日志模块：
-
-```ts
-import { createLogger } from "@/lib/logger";
-
-const log = createLogger("MyModule");
-log.debug("detail", { some: "data" });
-log.info("something happened");
-log.warn("recoverable problem");
-log.error("failed", error);
-```
-
-- 输出格式统一为 `[模块:级别]`，带颜色高亮，可按模块检索
-- **开发环境**输出全部级别；**生产构建**默认只保留 `warn` / `error`
-- 支持子 logger：`log.child("Sub")` → `[MyModule/Sub:info]`
-
-运行时切换级别（无需重新构建），在控制台执行：
-
-```js
-localStorage.setItem("app-log-level", "debug"); // 打开全部
-localStorage.removeItem("app-log-level");        // 恢复默认
-```
-
----
-
-## 开发约定
-
-### 样式
-
-- **shadcn 组件的样式覆盖请平铺写进 `className`**，由组件内的 `cn()`（`twMerge`）自动合并
-- `@layer components` 只用于纯自有元素；该层优先级低于 Tailwind 工具类，覆盖 shadcn 组件会静默失效
-- 重复出现 3 次以上的样式组合可收纳为组件类，统一维护在 `App.css`
-
-### shadcn 组件
-
-`src/components/ui/` 由 shadcn CLI 生成，请勿手动修改 —— 会被 `shadcn add/update` 覆盖。全局定制请改 `App.css` 中的设计令牌。
-
-### 权限
-
-Tauri 采用权限白名单机制。新增原生能力时，在 `src-tauri/capabilities/default.json` 中显式声明后前端才能调用。
-
----
-
-## 许可
+## License
 
 [MIT](LICENSE)

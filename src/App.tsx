@@ -1,13 +1,18 @@
 import "./App.css";
 
-import Titlebar from "@/components/framework/Titlebar";
-import CommandDialog from "@/components/framework/CommandDialog";
 import { Toaster } from "@/components/ui/sonner";
-import { Routes, Route, useNavigate } from "react-router";
+import { useNavigate } from "react-router";
 
 import { useTheme, useI18nLogic } from "@/composables";
-import { lazy, Suspense, useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+  useRef,
+} from "react";
 import { useLocalStorageState } from "ahooks";
 import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
@@ -22,12 +27,12 @@ import SettingsDialog from "@/components/framework/SettingsDialog";
 import AboutDialog from "@/components/framework/AboutDialog";
 import { SettingsDialogContext } from "@/contexts/settings";
 import { createLogger } from "@/lib/logger";
+import AppShell from "@/app/AppShell";
+import AppRoutes from "@/app/AppRoutes";
+import PlayerWindowShell from "@/app/PlayerWindowShell";
 
 const log = createLogger("App");
 
-const Home = lazy(() => import("@/views/Home"));
-const Software = lazy(() => import("@/views/Software"));
-const Framework = lazy(() => import("@/views/Framework"));
 const TrayMenu = lazy(() => import("@/views/TrayMenu"));
 
 /**
@@ -43,7 +48,7 @@ lifecycle.register({
   stage: "ready",
   once: true,
   run: () => {
-    if (getCurrentWindow().label === "tray") return;
+    if (["tray", "player"].includes(getCurrentWindow().label)) return;
     return $windowMain.renderFocus();
   },
 });
@@ -58,7 +63,7 @@ function App() {
     localStorageKey: "theme-mode",
   });
   /* Title */
-  const [title, setTitle] = useLocalStorageState("app-title", {
+  const [title, setTitle] = useLocalStorageState("ailicili:app-title", {
     defaultValue: t("Titlebar.default.title"),
   });
 
@@ -86,7 +91,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (currentLabel === "tray") return;
+    if (currentLabel !== "main") return;
 
     const unlistenPopup = listen<{ x: number; y: number }>(
       "tray-popup",
@@ -124,6 +129,16 @@ function App() {
     };
   }, [navigate, currentLabel, openSettings, openAbout]);
 
+  useEffect(() => {
+    if (currentLabel !== "player") return;
+    const unlisten = listen<string>("player-navigate", (event) => {
+      navigate(event.payload);
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, [navigate, currentLabel]);
+
   /* 固定 Context value 引用，避免任意状态变化导致所有消费者全量重渲染 */
   const i18nValue = useMemo(
     () => ({ lang, t, setLang: setLanguage }),
@@ -152,6 +167,19 @@ function App() {
     );
   }
 
+  if (currentLabel === "player") {
+    return (
+      <I18nContext.Provider value={i18nValue}>
+        <ThemeContext.Provider value={themeValue}>
+          <PlayerWindowShell>
+            <AppRoutes />
+          </PlayerWindowShell>
+          <Toaster richColors theme={theme} position="bottom-right" />
+        </ThemeContext.Provider>
+      </I18nContext.Provider>
+    );
+  }
+
   return (
     <>
       <SettingsDialogContext.Provider value={settingsValue}>
@@ -159,22 +187,9 @@ function App() {
           <ThemeContext.Provider value={themeValue}>
             <TitleContext.Provider value={titleValue}>
               <NavigatorContext.Provider value={navigatorValue}>
-                <main id="app-main" className="app-shell">
-                  <Titlebar />
-                  <CommandDialog />
-
-                  <div id="container" className="app-body">
-                    <ScrollArea className="h-[calc(100vh-2rem)] w-full">
-                      <Suspense fallback={null}>
-                        <Routes>
-                          <Route path="/" index element={<Home />} />
-                          <Route path="/software" element={<Software />} />
-                          <Route path="/framework" element={<Framework />} />
-                        </Routes>
-                      </Suspense>
-                    </ScrollArea>
-                  </div>
-                </main>
+                <AppShell>
+                  <AppRoutes />
+                </AppShell>
                 <SettingsDialog
                   open={settingsOpen}
                   onOpenChange={setSettingsOpen}

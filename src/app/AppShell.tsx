@@ -1,0 +1,122 @@
+import type { PropsWithChildren } from "react";
+import { NavLink } from "react-router";
+import {
+  Compass,
+  Frame,
+  Library,
+  Radio,
+  Search,
+  Settings2,
+} from "lucide-react";
+
+import CommandDialog from "@/components/framework/CommandDialog";
+import Titlebar from "@/components/framework/Titlebar";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { useI18n } from "@/composables";
+import { useSettingsDialog } from "@/contexts/settings";
+import AccountMenu from "@/features/auth/AccountMenu";
+import { cn } from "@/lib/utils";
+
+interface SidebarItemProps {
+  to: string;
+  icon: typeof Compass;
+  label: string;
+}
+
+function SidebarItem({ to, icon: Icon, label }: SidebarItemProps) {
+  return (
+    <NavLink
+      to={to}
+      end={to === "/"}
+      aria-label={label}
+      title={label}
+      className={({ isActive }) =>
+        cn(
+          "group text-muted-foreground hover:bg-muted hover:text-foreground relative flex h-10 w-full items-center gap-3 rounded-md px-3 text-sm font-medium transition-colors",
+          isActive && "bg-muted text-foreground"
+        )
+      }
+    >
+      {({ isActive }) => (
+        <>
+          <span
+            className={cn(
+              "bg-primary absolute left-0 h-5 w-0.5 rounded-full opacity-0 transition-opacity",
+              isActive && "opacity-100"
+            )}
+          />
+          <Icon className="size-4 shrink-0" />
+          <span className="app-sidebar-label truncate">{label}</span>
+        </>
+      )}
+    </NavLink>
+  );
+}
+
+export default function AppShell({ children }: PropsWithChildren) {
+  const { t } = useI18n();
+  const { openSettings } = useSettingsDialog();
+
+  return (
+    <main id="app-main" className="app-shell">
+      <Titlebar />
+      <CommandDialog />
+
+      <div id="container" className="app-body">
+        <aside className="app-sidebar" aria-label={t("Nav.primary")}>
+          <div className="flex h-16 items-center gap-2.5 px-4">
+            <span className="bg-primary text-primary-foreground flex size-8 shrink-0 items-center justify-center rounded-md text-base font-bold">
+              A
+            </span>
+            <span className="app-sidebar-label truncate text-base font-semibold tracking-tight">
+              Ailicili
+            </span>
+          </div>
+
+          <nav className="flex flex-1 flex-col gap-1 px-2 pt-2">
+            <SidebarItem to="/" icon={Compass} label={t("Nav.discover")} />
+            <SidebarItem to="/search" icon={Search} label={t("Nav.search")} />
+            <SidebarItem
+              to="/dynamics"
+              icon={Radio}
+              label={t("Nav.dynamics")}
+            />
+            <SidebarItem
+              to="/library"
+              icon={Library}
+              label={t("Nav.library")}
+            />
+            <SidebarItem
+              to="/framework"
+              icon={Frame}
+              label={t("Nav.framework")}
+            />
+          </nav>
+
+          <div className="border-border/70 flex flex-col gap-2 border-t p-2">
+            <AccountMenu />
+            <button
+              type="button"
+              onClick={openSettings}
+              aria-label={t("Nav.settings")}
+              title={t("Nav.settings")}
+              className="text-muted-foreground hover:bg-muted hover:text-foreground flex h-10 w-full items-center gap-3 rounded-md px-3 text-sm font-medium transition-colors"
+            >
+              <Settings2 className="size-4 shrink-0" />
+              <span className="app-sidebar-label truncate">
+                {t("Nav.settings")}
+              </span>
+            </button>
+            <p className="app-sidebar-label text-muted-foreground/70 px-3 pb-1 text-[11px]">
+              {t("App.unofficial")}
+            </p>
+          </div>
+        </aside>
+
+        <ScrollArea className="min-h-0 min-w-0 flex-1">
+          <div className="min-h-full w-full">{children}</div>
+        </ScrollArea>
+      </div>
+    </main>
+  );
+}

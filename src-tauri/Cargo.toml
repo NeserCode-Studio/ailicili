@@ -1,21 +1,33 @@
 [package]
-name = "app-template"
+name = "ailicili"
 version = "0.1.0"
-description = "A Tauri App"
+description = "An unofficial Bilibili desktop client"
 authors = ["nesercode"]
 edition = "2021"
 
 [lib]
-name = "app_template_lib"
+name = "ailicili_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2.7", features = [] }
 
 [dependencies]
-tauri = { version = "2.10", features = ["tray-icon", "image-png", "devtools"] }
-tauri-plugin-opener = "2.5"
-tauri-plugin-shell = "2.3"
-tauri-plugin-http = "2.5"
+tauri = { version = "2.12", features = ["tray-icon", "image-png", "devtools"] }
+tauri-plugin-opener = "2.7"
+tauri-plugin-shell = "2.5"
+tauri-plugin-http = "2.8"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "gzip", "brotli", "rustls", "query", "form"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+thiserror = "2.0.21"
+keyring = { version = "4.2", default-features = false, features = ["v1", "windows-native-keyring-store"] }
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+md5 = "0.8"
+percent-encoding = "2"
+html-escape = "0.2"
+uuid = { version = "1", features = ["v4"] }
+tokio = { version = "1", features = ["macros", "rt", "sync"] }
+flate2 = "1.1.10"
+quick-xml = "0.42.0"
+http = "1.5.0"

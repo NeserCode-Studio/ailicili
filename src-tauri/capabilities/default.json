@@ -2,9 +2,10 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window",
-  "windows": ["main", "tray"],
+  "windows": ["main", "tray", "player"],
   "permissions": [
     "core:app:default",
+    "opener:default",
     "shell:allow-open",
     "core:window:allow-get-all-windows",
     "core:window:default",
@@ -24,6 +25,7 @@
     "core:window:allow-set-position",
     "core:window:allow-set-size",
     "core:window:allow-is-visible",
+    "core:webview:allow-create-webview-window",
     "core:app:allow-default-window-icon",
     "core:event:default",
     {
