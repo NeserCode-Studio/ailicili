@@ -22,6 +22,14 @@ import {
 } from "@/lib/bili";
 import { createVideoSummary } from "@/test/fixtures/bili";
 
+const dashPlayerMock = vi.hoisted(() => ({
+  destroy: vi.fn(),
+  initialize: vi.fn(),
+  on: vi.fn(),
+  setRepresentationForTypeById: vi.fn(),
+  updateSettings: vi.fn(),
+}));
+
 vi.mock("@/lib/bili", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/bili")>();
   return {
@@ -37,14 +45,7 @@ vi.mock("@/lib/bili", async (importOriginal) => {
 
 vi.mock("dashjs", () => ({
   MediaPlayer: () => ({
-    create: () => ({
-      destroy: vi.fn(),
-      getBitrateInfoListFor: () => [],
-      initialize: vi.fn(),
-      on: vi.fn(),
-      setQualityFor: vi.fn(),
-      updateSettings: vi.fn(),
-    }),
+    create: () => dashPlayerMock,
   }),
 }));
 
@@ -123,6 +124,13 @@ describe("PlayerWindowPage", () => {
       selectedQuality: 80,
       qualities: [
         {
+          id: 64,
+          label: "720P",
+          width: 1280,
+          height: 720,
+          bandwidth: 1_000_000,
+        },
+        {
           id: 80,
           label: "1080P",
           width: 1920,
@@ -137,6 +145,7 @@ describe("PlayerWindowPage", () => {
       lastPlayCid: 0,
     });
     openPlayerWindowMock.mockResolvedValue();
+    dashPlayerMock.setRepresentationForTypeById.mockClear();
   });
 
   it("renders the player in its dedicated window route", async () => {
@@ -207,11 +216,39 @@ describe("PlayerWindowPage", () => {
     });
     fireEvent.change(quality, { target: { value: "80" } });
     await waitFor(() => expect(quality).toHaveValue("80"));
+    await waitFor(() =>
+      expect(dashPlayerMock.setRepresentationForTypeById).toHaveBeenCalledWith(
+        "video",
+        "video-80",
+        true
+      )
+    );
     expect(screen.getByTestId("player-settings-dialog")).toBeVisible();
 
     expect(screen.getByTestId("player-window-page")).toHaveClass(
       "overflow-hidden"
     );
     expect(screen.getByTestId("video-player")).toBeVisible();
+  });
+
+  it("changes quality from the player control bar", async () => {
+    renderPlayer();
+
+    await screen.findByTestId("video-player");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Player.quality.current" })
+    );
+    fireEvent.click(await screen.findByRole("option", { name: "1080P" }));
+
+    await waitFor(() =>
+      expect(dashPlayerMock.setRepresentationForTypeById).toHaveBeenCalledWith(
+        "video",
+        "video-80",
+        true
+      )
+    );
+    expect(
+      screen.getByRole("button", { name: "Player.quality.current" })
+    ).toHaveTextContent("1080P");
   });
 });

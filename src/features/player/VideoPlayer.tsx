@@ -25,6 +25,7 @@ import { Button } from "@/components/ui/button";
 import { useI18n } from "@/composables";
 import DanmakuComposer from "@/features/danmaku/DanmakuComposer";
 import DanmakuCanvas from "@/features/danmaku/DanmakuCanvas";
+import PlayerQualityMenu from "@/features/player/PlayerQualityMenu";
 import PlayerSettingsDialog from "@/features/player/PlayerSettingsDialog";
 import {
   createDefaultPlayerPreferences,
@@ -35,18 +36,11 @@ import {
 import { formatDuration } from "@/lib/format";
 import type {
   DanmakuItem,
+  PlaybackQuality,
   PlaybackSession,
   VideoPart,
 } from "@/shared/bili.types";
 import { cn } from "@/lib/utils";
-
-interface DashPlayerApi extends MediaPlayerClass {
-  getBitrateInfoListFor(type: "video"): Array<{
-    qualityIndex: number;
-    quality: number;
-  }>;
-  setQualityFor(type: "video", value: number): void;
-}
 
 interface VideoPlayerProps {
   session: PlaybackSession;
@@ -101,8 +95,9 @@ function getInitialProgress(bvid: string, cid: number, serverStart: number) {
 }
 
 function applyDashPreferences(
-  player: DashPlayerApi,
-  preferences: PlayerPreferences
+  player: MediaPlayerClass,
+  preferences: PlayerPreferences,
+  qualities: PlaybackQuality[]
 ) {
   try {
     player.updateSettings({
@@ -118,17 +113,11 @@ function applyDashPreferences(
     });
 
     if (preferences.quality === "auto") return;
-    if (
-      typeof player.getBitrateInfoListFor !== "function" ||
-      typeof player.setQualityFor !== "function"
-    ) {
-      return;
-    }
-    const target = Number(preferences.quality);
-    const bitrate = player
-      .getBitrateInfoListFor("video")
-      .find((item) => item.quality === target);
-    if (bitrate) player.setQualityFor("video", bitrate.qualityIndex);
+    const quality = qualities.find(
+      (item) => String(item.id) === preferences.quality
+    );
+    if (!quality) return;
+    player.setRepresentationForTypeById("video", `video-${quality.id}`, true);
   } catch {
     // dash.js can reject updates before stream initialization; retry later.
   }
@@ -156,7 +145,7 @@ export default function VideoPlayer({
   const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const playerRef = useRef<DashPlayerApi | null>(null);
+  const playerRef = useRef<MediaPlayerClass | null>(null);
   const hideTimerRef = useRef<number | null>(null);
   const lastHeartbeatRef = useRef(0);
   const [playing, setPlaying] = useState(false);
@@ -168,6 +157,7 @@ export default function VideoPlayer({
   const [fullscreen, setFullscreen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preferences, setPreferences] = useState<PlayerPreferences>(() => {
@@ -206,33 +196,37 @@ export default function VideoPlayer({
       videoRef.current.playbackRate = preferences.speed;
     }
     if (playerRef.current) {
-      applyDashPreferences(playerRef.current, preferences);
+      applyDashPreferences(playerRef.current, preferences, session.qualities);
     }
     if (!preferences.autoHideControls) {
       if (hideTimerRef.current) window.clearTimeout(hideTimerRef.current);
       setControlsVisible(true);
     }
-  }, [preferences]);
+  }, [preferences, session.qualities]);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
     let disposed = false;
-    let player: DashPlayerApi | null = null;
+    let player: MediaPlayerClass | null = null;
 
     const initialize = async () => {
       try {
         const { MediaPlayer } = await import("dashjs");
         if (disposed) return;
-        player = MediaPlayer().create() as DashPlayerApi;
+        player = MediaPlayer().create();
         playerRef.current = player;
-        applyDashPreferences(player, preferencesRef.current);
+        applyDashPreferences(player, preferencesRef.current, session.qualities);
         player.on("streamInitialized", () => {
           setBuffering(false);
           const videoElement = videoRef.current;
           if (!videoElement) return;
           if (!player) return;
-          applyDashPreferences(player, preferencesRef.current);
+          applyDashPreferences(
+            player,
+            preferencesRef.current,
+            session.qualities
+          );
           if (!preferencesRef.current.autoPlay) {
             videoElement.pause();
             setPlaying(false);
@@ -273,7 +267,7 @@ export default function VideoPlayer({
       playerRef.current = null;
       player?.destroy();
     };
-  }, [bvid, cid, durationSeconds, session.mpdUrl, startAt]);
+  }, [bvid, cid, durationSeconds, session.mpdUrl, session.qualities, startAt]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -395,7 +389,7 @@ export default function VideoPlayer({
   }, []);
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (settingsOpen) return;
+    if (settingsOpen || qualityMenuOpen) return;
     if (
       event.target instanceof HTMLInputElement ||
       event.target instanceof HTMLSelectElement ||
@@ -501,7 +495,7 @@ export default function VideoPlayer({
       <div
         className={cn(
           "absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-black/85 via-black/50 to-transparent px-3 pt-12 pb-2 transition-opacity duration-200",
-          controlsVisible || !playing || settingsOpen
+          controlsVisible || !playing || settingsOpen || qualityMenuOpen
             ? "opacity-100"
             : "pointer-events-none opacity-0"
         )}
@@ -606,10 +600,26 @@ export default function VideoPlayer({
                 ))}
               </div>
             )}
+            <PlayerQualityMenu
+              quality={preferences.quality}
+              qualities={session.qualities}
+              portalContainer={containerRef.current}
+              open={qualityMenuOpen}
+              onOpenChange={(open) => {
+                setQualityMenuOpen(open);
+                if (open) setComposerOpen(false);
+                showControls();
+              }}
+              onQualityChange={(quality) => {
+                updatePreferences((current) => ({ ...current, quality }));
+                showControls();
+              }}
+            />
             <button
               type="button"
               onClick={() => {
                 setComposerOpen(false);
+                setQualityMenuOpen(false);
                 setSettingsOpen((value) => !value);
               }}
               title={t("Player.settings")}
@@ -622,6 +632,7 @@ export default function VideoPlayer({
               type="button"
               onClick={() => {
                 setSettingsOpen(false);
+                setQualityMenuOpen(false);
                 setComposerOpen((value) => !value);
               }}
               title={t("Player.sendDanmaku")}
