@@ -244,7 +244,6 @@ export const I18nTexts = {
     "Auth.signOut": "Sign out",
     "Auth.logout.error": "Could not sign out. Please try again.",
     "Auth.login.success": "Signed in successfully",
-    "Auth.eyebrow": "Account access",
     "Auth.title": "Sign in to Ailicili",
     "Auth.description":
       "Use the Bilibili mobile app to authorize this device without entering your password here.",
@@ -279,7 +278,6 @@ export const I18nTexts = {
     "Auth.statusError.title": "Could not check account status",
     "Auth.statusError.description":
       "Ailicili could not reach Bilibili. Check your connection and try again.",
-    "Auth.accountEyebrow": "Signed in",
     "Auth.accountTitle": "Your account",
     "Auth.accountDescription":
       "Account-aware browsing is active on this device.",
@@ -744,7 +742,6 @@ export const I18nTexts = {
     "Auth.signOut": "退出登录",
     "Auth.logout.error": "退出登录失败，请重试。",
     "Auth.login.success": "登录成功",
-    "Auth.eyebrow": "账号接入",
     "Auth.title": "登录 Ailicili",
     "Auth.description":
       "使用 Bilibili 手机客户端授权当前设备，无需在此输入账号密码。",
@@ -776,7 +773,6 @@ export const I18nTexts = {
     "Auth.statusError.title": "无法检查账号状态",
     "Auth.statusError.description":
       "Ailicili 当前无法连接 Bilibili，请检查网络后重试。",
-    "Auth.accountEyebrow": "已登录",
     "Auth.accountTitle": "当前账号",
     "Auth.accountDescription": "当前设备已启用账号相关浏览能力。",
     "Auth.sessionStored": "会话由 Windows 安全保存",

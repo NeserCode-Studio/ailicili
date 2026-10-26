@@ -44,19 +44,13 @@ const SEARCH_TYPE_META = {
   user: { icon: Users, label: "Search.type.user" },
   pgc: { icon: Clapperboard, label: "Search.type.pgc" },
   live: { icon: Radio, label: "Search.type.live" },
-} satisfies Record<
-  SearchKind,
-  { icon: typeof Video; label: string }
->;
+} satisfies Record<SearchKind, { icon: typeof Video; label: string }>;
 
 function SearchResultsSkeleton() {
   return (
     <div className="space-y-3" data-testid="search-loading">
       {Array.from({ length: 5 }, (_, index) => (
-        <div
-          key={index}
-          className="grid gap-4 p-3 sm:grid-cols-[11rem_1fr]"
-        >
+        <div key={index} className="grid gap-4 p-3 sm:grid-cols-[11rem_1fr]">
           <Skeleton className="aspect-video rounded-md" />
           <div className="flex flex-col justify-center gap-3">
             <Skeleton className="h-4 w-4/5" />
@@ -78,8 +72,7 @@ export default function SearchPage() {
     ? (rawKind as SearchKind)
     : "video";
   const parsedPage = Number(searchParams.get("page") ?? "1");
-  const page =
-    Number.isInteger(parsedPage) && parsedPage > 0 ? parsedPage : 1;
+  const page = Number.isInteger(parsedPage) && parsedPage > 0 ? parsedPage : 1;
   const [input, setInput] = useState(query);
   const [history, setHistory] = useState(readSearchHistory);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
@@ -103,9 +96,7 @@ export default function SearchPage() {
     queryKey: biliKeys.searchSuggestions(debouncedInput),
     queryFn: () => fetchSearchSuggestions(debouncedInput),
     enabled:
-      suggestionsOpen &&
-      debouncedInput.length >= 2 &&
-      debouncedInput !== query,
+      suggestionsOpen && debouncedInput.length >= 2 && debouncedInput !== query,
     staleTime: 5 * 60 * 1000,
     retry: false,
   });
@@ -179,10 +170,6 @@ export default function SearchPage() {
   return (
     <div className="mx-auto w-full max-w-6xl px-5 py-6 sm:px-7 lg:px-8">
       <header>
-        <div className="text-brand-blue mb-1.5 flex items-center gap-2 text-[11px] font-semibold tracking-[0.14em] uppercase">
-          <span className="bg-brand-blue h-px w-5" />
-          Bilibili Search
-        </div>
         <h1 className="text-2xl font-semibold tracking-tight">
           {t("Search.title")}
         </h1>
@@ -332,11 +319,7 @@ export default function SearchPage() {
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-medium">{t("Search.history")}</h2>
                 {history.length > 0 && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={clearHistory}
-                  >
+                  <Button variant="ghost" size="sm" onClick={clearHistory}>
                     <Trash2 className="size-3.5" />
                     {t("Search.clearHistory")}
                   </Button>
@@ -449,9 +432,7 @@ export default function SearchPage() {
             <Button
               variant="outline"
               size="sm"
-              disabled={
-                !searchQuery.data?.hasMore || searchQuery.isFetching
-              }
+              disabled={!searchQuery.data?.hasMore || searchQuery.isFetching}
               onClick={() => setUrlState({ page: page + 1 })}
             >
               {t("Search.next")}

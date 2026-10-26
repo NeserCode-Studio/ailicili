@@ -469,10 +469,6 @@ export default function LibraryPage() {
   return (
     <div className="mx-auto w-full max-w-5xl px-5 py-6 sm:px-7 lg:px-8">
       <header className="mb-6">
-        <div className="text-primary mb-1.5 flex items-center gap-2 text-[11px] font-semibold tracking-[0.14em] uppercase">
-          <span className="bg-primary h-px w-5" />
-          Bilibili
-        </div>
         <h1 className="text-2xl font-semibold tracking-tight">
           {t("Library.title")}
         </h1>

@@ -1,9 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
   Crown,
@@ -69,10 +65,6 @@ function AuthenticatedAccount({ profile }: { profile: AccountProfile }) {
 
   return (
     <div className="mx-auto w-full max-w-5xl px-6 py-8 sm:px-8">
-      <div className="text-brand-blue mb-2 flex items-center gap-2 text-[11px] font-semibold tracking-[0.16em] uppercase">
-        <span className="bg-brand-blue h-px w-7" />
-        {t("Auth.accountEyebrow")}
-      </div>
       <h1 className="text-2xl font-semibold tracking-tight">
         {t("Auth.accountTitle")}
       </h1>
@@ -257,10 +249,6 @@ function GuestLoginPanel({ storageAvailable }: { storageAvailable: boolean }) {
 
   return (
     <div className="mx-auto w-full max-w-6xl px-6 py-8 sm:px-8">
-      <div className="text-brand-blue mb-2 flex items-center gap-2 text-[11px] font-semibold tracking-[0.16em] uppercase">
-        <span className="bg-brand-blue h-px w-7" />
-        {t("Auth.eyebrow")}
-      </div>
       <h1 className="text-2xl font-semibold tracking-tight">
         {t("Auth.title")}
       </h1>
@@ -275,7 +263,9 @@ function GuestLoginPanel({ storageAvailable }: { storageAvailable: boolean }) {
               <span className="bg-brand-blue flex size-9 items-center justify-center rounded-md text-white">
                 <QrCode className="size-5" />
               </span>
-              <span className="text-sm font-medium">{t("Auth.scanMethod")}</span>
+              <span className="text-sm font-medium">
+                {t("Auth.scanMethod")}
+              </span>
             </div>
             <ol className="mt-8 space-y-5">
               {(["openApp", "scan", "confirm"] as const).map((step, index) => (
@@ -349,8 +339,7 @@ function GuestLoginPanel({ storageAvailable }: { storageAvailable: boolean }) {
                   alt={t("Auth.qr.alt")}
                   className={cn(
                     "size-full transition-opacity",
-                    (state === "expired" || pollQuery.isError) &&
-                      "opacity-15"
+                    (state === "expired" || pollQuery.isError) && "opacity-15"
                   )}
                 />
                 {state === "expired" && (
