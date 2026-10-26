@@ -169,7 +169,7 @@ export default function VideoDetailPage() {
         <CoverImage
           src={video.coverUrl}
           alt=""
-          className="size-full scale-105 opacity-60 blur-lg saturate-125"
+          className="size-full scale-110 opacity-60 blur-2xl saturate-125"
           eager
         />
       </div>

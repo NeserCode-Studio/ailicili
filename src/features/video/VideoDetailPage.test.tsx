@@ -91,7 +91,7 @@ describe("VideoDetailPage", () => {
 
     const background = await screen.findByTestId("video-detail-background");
     expect(background).toHaveAttribute("aria-hidden", "true");
-    expect(background.firstElementChild).toHaveClass("blur-lg");
+    expect(background.firstElementChild).toHaveClass("blur-2xl");
     expect(background.querySelector("img")).toHaveAttribute(
       "src",
       "https://i0.hdslb.com/cover.jpg"
