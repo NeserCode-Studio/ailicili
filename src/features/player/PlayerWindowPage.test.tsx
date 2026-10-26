@@ -146,6 +146,8 @@ describe("PlayerWindowPage", () => {
     expect(screen.getByTestId("player-window-page")).toHaveClass(
       "overflow-hidden"
     );
+    expect(screen.getByTestId("player-stage")).toHaveClass("h-full", "w-full");
+    expect(screen.getByTestId("video-player")).toHaveClass("h-auto", "w-full");
     await waitFor(() =>
       expect(screen.getByTestId("titlebar-title")).toHaveTextContent("测试视频")
     );

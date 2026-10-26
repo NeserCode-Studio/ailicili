@@ -21,7 +21,6 @@ import {
 } from "@/lib/bili";
 import { openExternalUrl } from "@/lib/external";
 import type { DanmakuItem, VideoPart } from "@/shared/bili.types";
-import { cn } from "@/lib/utils";
 
 const BVID_PATTERN = /^BV[0-9A-Za-z]{8,22}$/;
 
@@ -173,22 +172,20 @@ export default function PlayerWindowPage() {
         label={t("Video.openOnBilibili")}
         onOpen={() => void openExternal()}
       />
-      <div
-        className={cn(
-          "flex min-h-0 w-full flex-1 items-stretch justify-center p-3 sm:p-4",
-          theater && "p-0"
-        )}
-      >
-        <div className="relative mx-auto flex h-full min-h-0 w-full max-w-[1440px]">
+      <div className="flex min-h-0 w-full flex-1 items-stretch justify-center">
+        <div
+          data-testid="player-stage"
+          className="relative flex h-full min-h-0 w-full overflow-hidden bg-black"
+        >
           {playbackQuery.isPending ? (
-            <div className="flex size-full items-center justify-center rounded-lg bg-black">
+            <div className="flex size-full items-center justify-center bg-black">
               <LoaderCircle
                 className="size-8 animate-spin text-white/75"
                 aria-label={t("Player.loading")}
               />
             </div>
           ) : playbackQuery.error ? (
-            <div className="flex size-full flex-col items-center justify-center gap-3 rounded-lg bg-black px-6 text-center">
+            <div className="flex size-full flex-col items-center justify-center gap-3 bg-black px-6 text-center">
               <p className="text-sm text-white/80">{t("Player.unavailable")}</p>
               <div className="flex gap-2">
                 <Button

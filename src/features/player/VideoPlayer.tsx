@@ -434,7 +434,7 @@ export default function VideoPlayer({
         playing && preferences.autoHideControls && setControlsVisible(false)
       }
       className={cn(
-        "group relative isolate size-full min-h-0 overflow-hidden rounded-lg bg-black text-white outline-none",
+        "group relative isolate size-full min-h-0 overflow-hidden bg-black text-white outline-none",
         fullscreen && "rounded-none",
         theater && "shadow-lg"
       )}
@@ -443,7 +443,7 @@ export default function VideoPlayer({
       <video
         ref={videoRef}
         data-testid="video-player"
-        className="size-full bg-black object-contain"
+        className="absolute inset-x-0 top-1/2 h-auto w-full -translate-y-1/2 bg-black"
         poster={posterUrl}
         playsInline
         preload="metadata"
