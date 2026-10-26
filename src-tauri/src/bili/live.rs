@@ -149,6 +149,7 @@ struct LiveMediaSession {
     playlist_url: String,
     cookie_header: String,
     assets: RwLock<HashMap<String, LiveMediaAsset>>,
+    asset_tokens: RwLock<HashMap<String, String>>,
     last_access: RwLock<Instant>,
 }
 
@@ -350,7 +351,22 @@ impl LiveMediaSession {
         let asset_token = Uuid::new_v4().to_string();
         let now = Instant::now();
         let mut assets = self.assets.write().map_err(|_| BiliError::Internal)?;
+        let mut asset_tokens = self
+            .asset_tokens
+            .write()
+            .map_err(|_| BiliError::Internal)?;
         assets.retain(|_, asset| asset.is_active_at(now));
+        asset_tokens.retain(|_, token| assets.contains_key(token));
+        let remote_url = remote.to_string();
+        if let Some(asset_token) = asset_tokens.get(&remote_url) {
+            if let Some(asset) = assets.get(asset_token) {
+                asset.touch();
+                return Ok(format!(
+                    "{LIVE_MEDIA_ORIGIN}/live/{}/asset/{asset_token}",
+                    self.token
+                ));
+            }
+        }
         if assets.len() >= MAX_LIVE_ASSETS {
             if let Some(oldest) = assets
                 .iter()
@@ -358,17 +374,19 @@ impl LiveMediaSession {
                 .map(|(token, _)| token.clone())
             {
                 assets.remove(&oldest);
+                asset_tokens.remove(&oldest);
             }
         }
         assets.insert(
             asset_token.clone(),
             LiveMediaAsset {
-                remote_url: remote.to_string(),
+                remote_url: remote_url.clone(),
                 is_playlist: remote.path().to_ascii_lowercase().ends_with(".m3u8"),
                 created_at: now,
                 last_access: RwLock::new(now),
             },
         );
+        asset_tokens.insert(remote_url, asset_token.clone());
         Ok(format!(
             "{LIVE_MEDIA_ORIGIN}/live/{}/asset/{asset_token}",
             self.token
@@ -655,6 +673,7 @@ impl BiliClient {
             playlist_url,
             cookie_header,
             assets: RwLock::new(HashMap::new()),
+            asset_tokens: RwLock::new(HashMap::new()),
             last_access: RwLock::new(Instant::now()),
         };
         let stream_format = selected.format_name.to_owned();
@@ -1416,6 +1435,7 @@ mod tests {
             playlist_url: "https://media.example/live/index.m3u8?sign=secret".to_owned(),
             cookie_header: "buvid3=secret".to_owned(),
             assets: RwLock::new(Default::default()),
+            asset_tokens: RwLock::new(Default::default()),
             last_access: RwLock::new(Instant::now()),
         };
         let playlist = session
@@ -1429,6 +1449,16 @@ mod tests {
         assert!(!playlist.contains("media.example"));
         assert!(!playlist.contains("secret"));
         assert_eq!(session.assets.read().expect("assets").len(), 2);
+
+        let refreshed = session
+            .rewrite_playlist(
+                "#EXTM3U\n#EXT-X-MAP:URI=\"init.m4s\"\n#EXTINF:1,\nsegment.m4s\n",
+                "https://media.example/live/index.m3u8?sign=secret",
+            )
+            .expect("refreshed playlist");
+
+        assert_eq!(playlist, refreshed);
+        assert_eq!(session.assets.read().expect("assets").len(), 2);
     }
 
     #[test]
@@ -1440,6 +1470,7 @@ mod tests {
             playlist_url: "https://media.example/live/index.m3u8?sign=main".to_owned(),
             cookie_header: "buvid3=secret".to_owned(),
             assets: RwLock::new(Default::default()),
+            asset_tokens: RwLock::new(Default::default()),
             last_access: RwLock::new(Instant::now()),
         };
         let main = session

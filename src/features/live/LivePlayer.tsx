@@ -147,6 +147,14 @@ export default function LivePlayer({
         hls.on(Hls.Events.MANIFEST_PARSED, markReady);
         hls.on(Hls.Events.ERROR, (_event, data) => {
           if (!data.fatal) return;
+          if (import.meta.env.DEV) {
+            console.warn("[live-hls] fatal error", {
+              type: data.type,
+              details: data.details,
+              reason: data.reason,
+              responseCode: data.response?.code,
+            });
+          }
           if (
             data.type === Hls.ErrorTypes.NETWORK_ERROR &&
             networkRetries < 2
