@@ -81,7 +81,8 @@ export const biliKeys = {
     [...biliKeys.all, "search", "suggestions", term] as const,
   playback: (bvid: string, cid: number, qn: number) =>
     [...biliKeys.all, "playback", bvid, cid, qn] as const,
-  danmaku: (cid: number) => [...biliKeys.all, "danmaku", cid] as const,
+  danmaku: (cid: number, durationSeconds: number) =>
+    [...biliKeys.all, "danmaku", cid, durationSeconds] as const,
   comments: (aid: number, page: number, sort: string) =>
     [...biliKeys.all, "comments", aid, page, sort] as const,
   actions: (bvid: string) => [...biliKeys.all, "actions", bvid] as const,
@@ -218,8 +219,11 @@ export async function openLastPlayerWindow(): Promise<boolean> {
   return true;
 }
 
-export function fetchDanmaku(cid: number): Promise<DanmakuItem[]> {
-  return invoke<DanmakuItem[]>("bili_danmaku", { cid });
+export function fetchDanmaku(
+  cid: number,
+  durationSeconds: number
+): Promise<DanmakuItem[]> {
+  return invoke<DanmakuItem[]>("bili_danmaku", { cid, durationSeconds });
 }
 
 export interface SendDanmakuInput {

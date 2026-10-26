@@ -50,6 +50,8 @@ export default function PlayerWindowPage() {
     detailQuery.data?.parts.find((part) => part.cid === requestedCid) ??
     detailQuery.data?.parts[0];
   const resolvedCid = activePart?.cid ?? requestedCid;
+  const playbackDurationSeconds =
+    activePart?.durationSeconds ?? video?.durationSeconds ?? 0;
 
   const playbackQuery = useQuery({
     queryKey: biliKeys.playback(bvid, resolvedCid, 80),
@@ -59,9 +61,9 @@ export default function PlayerWindowPage() {
     gcTime: 20 * 60_000,
   });
   const danmakuQuery = useQuery({
-    queryKey: biliKeys.danmaku(resolvedCid),
-    queryFn: () => fetchDanmaku(resolvedCid),
-    enabled: validRoute && resolvedCid > 0,
+    queryKey: biliKeys.danmaku(resolvedCid, playbackDurationSeconds),
+    queryFn: () => fetchDanmaku(resolvedCid, playbackDurationSeconds),
+    enabled: validRoute && resolvedCid > 0 && playbackDurationSeconds > 0,
     staleTime: 5 * 60_000,
   });
   const resumeQuery = useQuery({
@@ -80,26 +82,26 @@ export default function PlayerWindowPage() {
         cid: resolvedCid,
         bvid: video.bvid,
         playedSeconds: seconds,
-        durationSeconds: video.durationSeconds,
+        durationSeconds: playbackDurationSeconds,
         playType: 0,
       }).catch(() => {
         // Playback must continue when an optional history write fails.
       });
     },
-    [resolvedCid, video]
+    [playbackDurationSeconds, resolvedCid, video]
   );
 
   const onDanmakuSent = useCallback(
     (item: DanmakuItem) => {
       queryClient.setQueryData<DanmakuItem[]>(
-        biliKeys.danmaku(resolvedCid),
+        biliKeys.danmaku(resolvedCid, playbackDurationSeconds),
         (items = []) =>
           [...items, item].sort(
             (left, right) => left.progressMs - right.progressMs
           )
       );
     },
-    [queryClient, resolvedCid]
+    [playbackDurationSeconds, queryClient, resolvedCid]
   );
 
   const openPart = async (part: VideoPart) => {
@@ -207,13 +209,13 @@ export default function PlayerWindowPage() {
               cid={resolvedCid}
               title={video.title}
               posterUrl={video.coverUrl}
-              durationSeconds={video.durationSeconds}
+              durationSeconds={playbackDurationSeconds}
               startAt={resumeQuery.data?.lastPlayTimeSeconds ?? 0}
               danmaku={danmakuQuery.data ?? []}
               theater={theater}
               onToggleTheater={() => setTheater((value) => !value)}
               onProgress={onProgress}
-              onEnded={() => onProgress(video.durationSeconds)}
+              onEnded={() => onProgress(playbackDurationSeconds)}
               onDanmakuSent={onDanmakuSent}
               parts={detailQuery.data.parts}
               activeCid={resolvedCid}

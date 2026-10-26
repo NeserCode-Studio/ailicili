@@ -210,6 +210,7 @@ describe("PlayerWindowPage", () => {
       2001,
       80
     );
+    expect(fetchDanmakuMock).toHaveBeenCalledWith(2001, 125);
   });
 
   it("opens grouped playback settings without replacing the player", async () => {

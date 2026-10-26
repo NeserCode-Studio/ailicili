@@ -103,8 +103,12 @@ pub async fn bili_search_suggestions(
 pub async fn bili_danmaku(
     client: State<'_, BiliClient>,
     cid: u64,
+    duration_seconds: u64,
 ) -> Result<Vec<DanmakuItem>, BiliCommandError> {
-    client.danmaku(cid).await.map_err(Into::into)
+    client
+        .danmaku(cid, duration_seconds)
+        .await
+        .map_err(Into::into)
 }
 
 #[tauri::command]
