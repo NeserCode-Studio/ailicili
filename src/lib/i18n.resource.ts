@@ -102,6 +102,67 @@ export const I18nTexts = {
     "Player.progress": "Playback progress",
     "Player.volume": "Volume",
     "Player.settings": "Playback settings",
+    "Player.settings.description":
+      "Adjust playback, buffering, watch history, and danmaku display. Changes apply immediately.",
+    "Player.settings.close": "Close playback settings",
+    "Player.settings.group.playback": "Playback",
+    "Player.settings.group.playback.description":
+      "Control how a stream starts and when the control bar gets out of the way.",
+    "Player.settings.speed.description":
+      "Change the playback rate while keeping the original audio pitch.",
+    "Player.settings.autoPlay": "Autoplay after load",
+    "Player.settings.autoPlay.description":
+      "Start playback automatically when the media stream is ready.",
+    "Player.settings.autoHideControls": "Auto-hide controls",
+    "Player.settings.autoHideControls.description":
+      "Hide the control bar after a short period while the video is playing.",
+    "Player.settings.group.quality": "Quality and buffering",
+    "Player.settings.group.quality.description":
+      "Balance image detail, bandwidth use, and switching behavior.",
+    "Player.settings.quality.description":
+      "Auto adapts to network conditions. A fixed quality may buffer more often.",
+    "Player.settings.fastSwitch": "Fast bitrate switching",
+    "Player.settings.fastSwitch.description":
+      "Reuse compatible buffered segments when the bitrate changes. Uses more memory.",
+    "Player.settings.group.progress": "Watch history",
+    "Player.settings.group.progress.description":
+      "Choose whether this device remembers where you stopped and syncs history.",
+    "Player.settings.resumeProgress": "Resume last position",
+    "Player.settings.resumeProgress.description":
+      "Continue from the saved position the next time this part is opened.",
+    "Player.settings.syncProgress": "Sync watch progress",
+    "Player.settings.syncProgress.description":
+      "Save progress on this device and periodically report it to Bilibili history.",
+    "Player.settings.group.danmaku": "Danmaku display",
+    "Player.settings.group.danmaku.description":
+      "Tune readability and density without changing the comments sent to Bilibili.",
+    "Player.settings.danmakuEnabled": "Show danmaku",
+    "Player.settings.danmakuEnabled.description":
+      "Display comments over the video. Sending comments remains available.",
+    "Player.settings.danmakuOpacity.description":
+      "Lower opacity keeps video details visible behind the comments.",
+    "Player.settings.danmakuFontSize.description":
+      "Scale comment text while keeping it inside a readable range.",
+    "Player.settings.danmakuWeight": "Font weight",
+    "Player.settings.danmakuWeight.description":
+      "Choose a thicker weight when comments are difficult to read.",
+    "Player.settings.fontWeight.regular": "Regular",
+    "Player.settings.fontWeight.medium": "Medium",
+    "Player.settings.fontWeight.semibold": "Semibold",
+    "Player.settings.fontWeight.bold": "Bold",
+    "Player.settings.danmakuOutline": "Text outline",
+    "Player.settings.danmakuOutline.description":
+      "Add a dark edge around text so comments stay legible on bright scenes.",
+    "Player.settings.danmakuSpeed.description":
+      "Higher values move rolling comments across the screen faster.",
+    "Player.settings.danmakuArea.description":
+      "Limit how much of the vertical video area may contain comments.",
+    "Player.settings.danmakuDensity.description":
+      "Lower percentages sample fewer comments when the screen is crowded.",
+    "Player.settings.danmakuTypes.description":
+      "Choose which comment positions are displayed.",
+    "Player.settings.reset": "Restore defaults",
+    "Player.settings.done": "Done",
     "Player.sendDanmaku": "Send danmaku",
     "Player.theater": "Theater mode",
     "Player.pictureInPicture": "Picture in picture",
@@ -542,6 +603,64 @@ export const I18nTexts = {
     "Player.progress": "播放进度",
     "Player.volume": "音量",
     "Player.settings": "播放设置",
+    "Player.settings.description":
+      "调整播放、缓冲、观看记录与弹幕显示；修改会立即生效。",
+    "Player.settings.close": "关闭播放设置",
+    "Player.settings.group.playback": "播放行为",
+    "Player.settings.group.playback.description":
+      "控制视频开始方式，以及播放时控制栏何时自动隐藏。",
+    "Player.settings.speed.description": "改变播放速度，同时尽量保留原始音调。",
+    "Player.settings.autoPlay": "加载后自动播放",
+    "Player.settings.autoPlay.description": "媒体流准备完成后自动开始播放。",
+    "Player.settings.autoHideControls": "自动隐藏控制栏",
+    "Player.settings.autoHideControls.description":
+      "视频播放期间，在一段时间没有操作后隐藏底部控制栏。",
+    "Player.settings.group.quality": "画质与缓冲",
+    "Player.settings.group.quality.description":
+      "在画面细节、带宽占用和切换行为之间取得平衡。",
+    "Player.settings.quality.description":
+      "自动模式会根据网络调整清晰度；固定画质可能更频繁地进入缓冲。",
+    "Player.settings.fastSwitch": "快速码率切换",
+    "Player.settings.fastSwitch.description":
+      "切换码率时尽量复用兼容的缓冲片段，但会占用更多内存。",
+    "Player.settings.group.progress": "观看记录",
+    "Player.settings.group.progress.description":
+      "决定是否在当前设备记住停止位置，并向 Bilibili 同步观看历史。",
+    "Player.settings.resumeProgress": "恢复上次进度",
+    "Player.settings.resumeProgress.description":
+      "下次打开当前分 P 时，从已保存的位置继续播放。",
+    "Player.settings.syncProgress": "同步观看进度",
+    "Player.settings.syncProgress.description":
+      "将进度保存在当前设备，并定期写入 Bilibili 观看历史。",
+    "Player.settings.group.danmaku": "弹幕显示",
+    "Player.settings.group.danmaku.description":
+      "调整弹幕的可读性与密度，不会改变已经发送到 Bilibili 的内容。",
+    "Player.settings.danmakuEnabled": "显示弹幕",
+    "Player.settings.danmakuEnabled.description":
+      "在视频上显示评论；关闭后仍可发送弹幕。",
+    "Player.settings.danmakuOpacity.description":
+      "降低不透明度可以减少弹幕对画面细节的遮挡。",
+    "Player.settings.danmakuFontSize.description":
+      "缩放弹幕文字，并保持在可读范围内。",
+    "Player.settings.danmakuWeight": "字体粗细",
+    "Player.settings.danmakuWeight.description":
+      "文字难以辨认时，可以选择更粗的字重。",
+    "Player.settings.fontWeight.regular": "常规",
+    "Player.settings.fontWeight.medium": "中等",
+    "Player.settings.fontWeight.semibold": "半粗",
+    "Player.settings.fontWeight.bold": "粗体",
+    "Player.settings.danmakuOutline": "文字描边",
+    "Player.settings.danmakuOutline.description":
+      "为文字增加深色边缘，让亮色画面上的弹幕保持清晰。",
+    "Player.settings.danmakuSpeed.description":
+      "数值越高，滚动弹幕横穿屏幕的速度越快。",
+    "Player.settings.danmakuArea.description":
+      "限制弹幕最多占用视频画面的垂直范围。",
+    "Player.settings.danmakuDensity.description":
+      "弹幕拥挤时，降低百分比会按比例减少显示的弹幕。",
+    "Player.settings.danmakuTypes.description": "选择需要显示的弹幕位置类型。",
+    "Player.settings.reset": "恢复默认",
+    "Player.settings.done": "完成",
     "Player.sendDanmaku": "发送弹幕",
     "Player.theater": "影院模式",
     "Player.pictureInPicture": "画中画",

@@ -10,6 +10,8 @@ import {
 } from "@/features/danmaku/danmakuLayout";
 import type { DanmakuItem } from "@/shared/bili.types";
 
+export type DanmakuFontWeight = 400 | 500 | 600 | 700;
+
 export interface DanmakuSettings {
   enabled: boolean;
   opacity: number;
@@ -18,6 +20,8 @@ export interface DanmakuSettings {
   speed: number;
   modes: DanmakuItem["mode"][];
   density: number;
+  outlineWidth: number;
+  fontWeight: DanmakuFontWeight;
 }
 
 interface DanmakuCanvasProps {
@@ -110,7 +114,7 @@ export default function DanmakuCanvas({
             12,
             Math.min(44, item.size * current.fontScale)
           );
-          context.font = `600 ${fontSize}px "Noto Sans SC Variable", "Segoe UI", sans-serif`;
+          context.font = `${current.fontWeight} ${fontSize}px "Noto Sans SC Variable", "Segoe UI", sans-serif`;
           const textWidth = context.measureText(item.text).width;
           const laneCount = danmakuLaneCount(height, current.area);
           const lane = findDanmakuLane(
@@ -150,12 +154,14 @@ export default function DanmakuCanvas({
             : (width - item.width) / 2;
         context.save();
         context.globalAlpha = current.opacity * fade;
-        context.font = `600 ${item.fontSize}px "Noto Sans SC Variable", "Segoe UI", sans-serif`;
+        context.font = `${current.fontWeight} ${item.fontSize}px "Noto Sans SC Variable", "Segoe UI", sans-serif`;
         context.textBaseline = "middle";
         context.lineJoin = "round";
-        context.lineWidth = Math.max(2, item.fontSize / 6);
-        context.strokeStyle = "rgba(0, 0, 0, 0.72)";
-        context.strokeText(item.item.text, x, item.y);
+        if (current.outlineWidth > 0) {
+          context.lineWidth = current.outlineWidth;
+          context.strokeStyle = "rgba(0, 0, 0, 0.72)";
+          context.strokeText(item.item.text, x, item.y);
+        }
         context.fillStyle = danmakuColor(item.item.color);
         context.fillText(item.item.text, x, item.y);
         context.restore();

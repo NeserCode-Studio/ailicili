@@ -14,6 +14,8 @@ const settings: DanmakuSettings = {
   speed: 1,
   modes: [1, 4, 5],
   density: 100,
+  outlineWidth: 2,
+  fontWeight: 600,
 };
 
 function Harness() {

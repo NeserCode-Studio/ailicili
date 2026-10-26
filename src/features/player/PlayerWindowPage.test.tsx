@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -69,6 +69,7 @@ function renderPlayer() {
 
 describe("PlayerWindowPage", () => {
   beforeEach(() => {
+    localStorage.clear();
     const video = createVideoSummary();
     fetchVideoDetailMock.mockResolvedValue({
       video,
@@ -119,5 +120,46 @@ describe("PlayerWindowPage", () => {
       2001,
       80
     );
+  });
+
+  it("opens grouped playback settings without replacing the player", async () => {
+    renderPlayer();
+
+    await screen.findByTestId("video-player");
+    fireEvent.click(screen.getByRole("button", { name: "Player.settings" }));
+
+    expect(await screen.findByTestId("player-settings-dialog")).toBeVisible();
+    expect(
+      screen.getByRole("heading", {
+        name: "Player.settings.group.playback",
+      })
+    ).toBeVisible();
+    expect(
+      screen.getByRole("heading", {
+        name: "Player.settings.group.quality",
+      })
+    ).toBeVisible();
+    expect(
+      screen.getByText("Player.settings.quality.description")
+    ).toBeVisible();
+
+    const autoHide = screen.getByRole("switch", {
+      name: "Player.settings.autoHideControls",
+    });
+    expect(autoHide).toBeChecked();
+    fireEvent.click(autoHide);
+    await waitFor(() => expect(autoHide).not.toBeChecked());
+
+    const quality = screen.getByRole("combobox", {
+      name: "Player.quality",
+    });
+    fireEvent.change(quality, { target: { value: "80" } });
+    await waitFor(() => expect(quality).toHaveValue("80"));
+    expect(screen.getByTestId("player-settings-dialog")).toBeVisible();
+
+    expect(screen.getByTestId("player-window-page")).toHaveClass(
+      "overflow-hidden"
+    );
+    expect(screen.getByTestId("video-player")).toBeVisible();
   });
 });

@@ -22,12 +22,16 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import { useI18n } from "@/composables";
 import DanmakuComposer from "@/features/danmaku/DanmakuComposer";
-import DanmakuCanvas, {
-  type DanmakuSettings,
-} from "@/features/danmaku/DanmakuCanvas";
+import DanmakuCanvas from "@/features/danmaku/DanmakuCanvas";
+import PlayerSettingsDialog from "@/features/player/PlayerSettingsDialog";
+import {
+  createDefaultPlayerPreferences,
+  readPlayerPreferences,
+  savePlayerPreferences,
+  type PlayerPreferences,
+} from "@/features/player/playerPreferences";
 import { formatDuration } from "@/lib/format";
 import type { DanmakuItem, PlaybackSession } from "@/shared/bili.types";
 import { cn } from "@/lib/utils";
@@ -59,7 +63,6 @@ interface VideoPlayerProps {
 
 const PROGRESS_KEY_PREFIX = "ailicili:playback-progress:";
 const CONTROL_HIDE_DELAY = 2200;
-const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
 function readLocalProgress(bvid: string, cid: number) {
   try {
@@ -90,6 +93,40 @@ function getInitialProgress(bvid: string, cid: number, serverStart: number) {
   return local > 10 ? local : serverStart;
 }
 
+function applyDashPreferences(
+  player: DashPlayerApi,
+  preferences: PlayerPreferences
+) {
+  try {
+    player.updateSettings({
+      streaming: {
+        abr: {
+          autoSwitchBitrate: {
+            video: preferences.quality === "auto",
+            audio: true,
+          },
+        },
+        buffer: { fastSwitchEnabled: preferences.fastSwitchEnabled },
+      },
+    });
+
+    if (preferences.quality === "auto") return;
+    if (
+      typeof player.getBitrateInfoListFor !== "function" ||
+      typeof player.setQualityFor !== "function"
+    ) {
+      return;
+    }
+    const target = Number(preferences.quality);
+    const bitrate = player
+      .getBitrateInfoListFor("video")
+      .find((item) => item.quality === target);
+    if (bitrate) player.setQualityFor("video", bitrate.qualityIndex);
+  } catch {
+    // dash.js can reject updates before stream initialization; retry later.
+  }
+}
+
 export default function VideoPlayer({
   session,
   aid,
@@ -118,30 +155,54 @@ export default function VideoPlayer({
   const [duration, setDuration] = useState(durationSeconds);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
-  const [speed, setSpeed] = useState(1);
-  const [quality, setQuality] = useState("auto");
   const [fullscreen, setFullscreen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [danmakuSettings, setDanmakuSettings] = useState<DanmakuSettings>({
-    enabled: true,
-    opacity: 0.9,
-    fontScale: 1,
-    area: 0.55,
-    speed: 1,
-    modes: [1, 4, 5],
-    density: 100,
+  const [preferences, setPreferences] = useState<PlayerPreferences>(() => {
+    const stored = readPlayerPreferences();
+    const qualityAvailable =
+      stored.quality === "auto" ||
+      session.qualities.some((item) => String(item.id) === stored.quality);
+    return qualityAvailable ? stored : { ...stored, quality: "auto" };
   });
+  const preferencesRef = useRef(preferences);
 
   const showControls = useCallback(() => {
     setControlsVisible(true);
     if (hideTimerRef.current) window.clearTimeout(hideTimerRef.current);
+    if (!preferencesRef.current.autoHideControls) return;
     hideTimerRef.current = window.setTimeout(() => {
       if (!videoRef.current?.paused) setControlsVisible(false);
     }, CONTROL_HIDE_DELAY);
   }, []);
+
+  const updatePreferences = useCallback(
+    (update: (current: PlayerPreferences) => PlayerPreferences) => {
+      setPreferences((current) => {
+        const next = update(current);
+        preferencesRef.current = next;
+        return next;
+      });
+    },
+    []
+  );
+
+  useEffect(() => {
+    preferencesRef.current = preferences;
+    savePlayerPreferences(preferences);
+    if (videoRef.current) {
+      videoRef.current.playbackRate = preferences.speed;
+    }
+    if (playerRef.current) {
+      applyDashPreferences(playerRef.current, preferences);
+    }
+    if (!preferences.autoHideControls) {
+      if (hideTimerRef.current) window.clearTimeout(hideTimerRef.current);
+      setControlsVisible(true);
+    }
+  }, [preferences]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -155,16 +216,18 @@ export default function VideoPlayer({
         if (disposed) return;
         player = MediaPlayer().create() as DashPlayerApi;
         playerRef.current = player;
-        player.updateSettings({
-          streaming: {
-            abr: { autoSwitchBitrate: { video: true, audio: true } },
-            buffer: { fastSwitchEnabled: true },
-          },
-        });
+        applyDashPreferences(player, preferencesRef.current);
         player.on("streamInitialized", () => {
           setBuffering(false);
           const videoElement = videoRef.current;
           if (!videoElement) return;
+          if (!player) return;
+          applyDashPreferences(player, preferencesRef.current);
+          if (!preferencesRef.current.autoPlay) {
+            videoElement.pause();
+            setPlaying(false);
+            return;
+          }
           void videoElement.play().catch(() => setPlaying(false));
         });
         player.on("bufferStateChanged", (event) => {
@@ -176,10 +239,12 @@ export default function VideoPlayer({
           setError("Player.streamError");
         });
 
-        const initial = Math.min(
-          Math.max(0, getInitialProgress(bvid, cid, startAt)),
-          Math.max(0, durationSeconds - 3)
-        );
+        const initial = preferencesRef.current.resumeProgress
+          ? Math.min(
+              Math.max(0, getInitialProgress(bvid, cid, startAt)),
+              Math.max(0, durationSeconds - 3)
+            )
+          : 0;
         player.initialize(
           video,
           session.mpdUrl,
@@ -203,12 +268,16 @@ export default function VideoPlayer({
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
+    if (!preferencesRef.current.resumeProgress) {
+      video.currentTime = 0;
+      return;
+    }
     const initial = Math.min(
-      Math.max(10, startAt),
-      Math.max(10, durationSeconds - 3)
+      Math.max(0, getInitialProgress(bvid, cid, startAt)),
+      Math.max(0, durationSeconds - 3)
     );
     if (initial > 10) video.currentTime = initial;
-  }, [durationSeconds, startAt]);
+  }, [bvid, cid, durationSeconds, startAt]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -216,15 +285,17 @@ export default function VideoPlayer({
     const onTimeUpdate = () => {
       const time = video.currentTime;
       setCurrentTime(time);
-      if (Math.floor(time) % 5 === 0) {
-        saveLocalProgress(bvid, cid, time);
-      }
-      if (
-        time - lastHeartbeatRef.current >= 15 ||
-        time < lastHeartbeatRef.current
-      ) {
-        lastHeartbeatRef.current = time;
-        onProgress(Math.floor(time));
+      if (preferencesRef.current.syncProgress) {
+        if (Math.floor(time) % 5 === 0) {
+          saveLocalProgress(bvid, cid, time);
+        }
+        if (
+          time - lastHeartbeatRef.current >= 15 ||
+          time < lastHeartbeatRef.current
+        ) {
+          lastHeartbeatRef.current = time;
+          onProgress(Math.floor(time));
+        }
       }
     };
     const onLoadedMetadata = () => {
@@ -243,8 +314,10 @@ export default function VideoPlayer({
     const onEndedEvent = () => {
       setPlaying(false);
       setControlsVisible(true);
-      saveLocalProgress(bvid, cid, duration);
-      onEnded();
+      if (preferencesRef.current.syncProgress) {
+        saveLocalProgress(bvid, cid, duration);
+        onEnded();
+      }
     };
 
     video.addEventListener("timeupdate", onTimeUpdate);
@@ -312,6 +385,7 @@ export default function VideoPlayer({
   }, []);
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (settingsOpen) return;
     if (
       event.target instanceof HTMLInputElement ||
       event.target instanceof HTMLSelectElement ||
@@ -338,28 +412,6 @@ export default function VideoPlayer({
     }
   };
 
-  const changeQuality = (value: string) => {
-    setQuality(value);
-    const player = playerRef.current;
-    if (!player) return;
-    if (value === "auto") {
-      player.updateSettings({
-        streaming: { abr: { autoSwitchBitrate: { video: true } } },
-      });
-      return;
-    }
-    const target = Number(value);
-    const bitrate = player
-      .getBitrateInfoListFor("video")
-      .find((item) => item.quality === target);
-    if (bitrate) {
-      player.updateSettings({
-        streaming: { abr: { autoSwitchBitrate: { video: false } } },
-      });
-      player.setQualityFor("video", bitrate.qualityIndex);
-    }
-  };
-
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
 
   return (
@@ -368,7 +420,9 @@ export default function VideoPlayer({
       tabIndex={0}
       onKeyDown={onKeyDown}
       onMouseMove={showControls}
-      onMouseLeave={() => playing && setControlsVisible(false)}
+      onMouseLeave={() =>
+        playing && preferences.autoHideControls && setControlsVisible(false)
+      }
       className={cn(
         "group relative isolate size-full min-h-0 overflow-hidden rounded-lg bg-black text-white outline-none",
         fullscreen && "rounded-none",
@@ -394,7 +448,7 @@ export default function VideoPlayer({
       <DanmakuCanvas
         videoRef={videoRef}
         items={danmaku}
-        settings={danmakuSettings}
+        settings={preferences.danmaku}
       />
 
       {buffering && !error && (
@@ -595,171 +649,17 @@ export default function VideoPlayer({
         </div>
       )}
 
-      {settingsOpen && (
-        <div className="absolute right-3 bottom-14 z-40 max-h-[calc(100%-4.5rem)] w-[min(22rem,calc(100%-1.5rem))] overflow-y-auto rounded-md border border-white/15 bg-neutral-950/95 p-4 text-xs shadow-2xl backdrop-blur-md">
-          <div className="grid grid-cols-[82px_1fr] items-center gap-x-3 gap-y-3">
-            <label htmlFor="player-quality">{t("Player.quality")}</label>
-            <select
-              id="player-quality"
-              value={quality}
-              onChange={(event) => changeQuality(event.currentTarget.value)}
-              className="h-8 rounded-sm border border-white/20 bg-neutral-900 px-2 text-xs outline-none focus:border-white/50"
-            >
-              <option value="auto">{t("Player.auto")}</option>
-              {session.qualities.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-            <label htmlFor="player-speed">{t("Player.speed")}</label>
-            <select
-              id="player-speed"
-              value={speed}
-              onChange={(event) => {
-                const value = Number(event.currentTarget.value);
-                setSpeed(value);
-                if (videoRef.current) videoRef.current.playbackRate = value;
-              }}
-              className="h-8 rounded-sm border border-white/20 bg-neutral-900 px-2 text-xs outline-none focus:border-white/50"
-            >
-              {SPEEDS.map((item) => (
-                <option key={item} value={item}>
-                  {item}x
-                </option>
-              ))}
-            </select>
-            <label htmlFor="danmaku-opacity">
-              {t("Player.danmakuOpacity")}
-            </label>
-            <div className="flex items-center gap-2">
-              <Switch
-                id="danmaku-opacity"
-                checked={danmakuSettings.enabled}
-                onCheckedChange={(checked) =>
-                  setDanmakuSettings((value) => ({
-                    ...value,
-                    enabled: checked,
-                  }))
-                }
-              />
-              <input
-                type="range"
-                min={0.2}
-                max={1}
-                step={0.05}
-                value={danmakuSettings.opacity}
-                onChange={(event) =>
-                  setDanmakuSettings((value) => ({
-                    ...value,
-                    opacity: Number(event.currentTarget.value),
-                  }))
-                }
-                aria-label={t("Player.danmakuOpacity")}
-                className="min-w-0 flex-1 accent-[var(--primary)]"
-              />
-            </div>
-            <label htmlFor="danmaku-font">{t("Player.danmakuFontSize")}</label>
-            <input
-              id="danmaku-font"
-              type="range"
-              min={0.7}
-              max={1.5}
-              step={0.1}
-              value={danmakuSettings.fontScale}
-              onChange={(event) =>
-                setDanmakuSettings((value) => ({
-                  ...value,
-                  fontScale: Number(event.currentTarget.value),
-                }))
-              }
-              className="accent-[var(--primary)]"
-            />
-            <label htmlFor="danmaku-speed">{t("Player.danmakuSpeed")}</label>
-            <input
-              id="danmaku-speed"
-              type="range"
-              min={0.5}
-              max={2}
-              step={0.1}
-              value={danmakuSettings.speed}
-              onChange={(event) =>
-                setDanmakuSettings((value) => ({
-                  ...value,
-                  speed: Number(event.currentTarget.value),
-                }))
-              }
-              className="accent-[var(--primary)]"
-            />
-            <label htmlFor="danmaku-area">{t("Player.danmakuArea")}</label>
-            <input
-              id="danmaku-area"
-              type="range"
-              min={0.2}
-              max={1}
-              step={0.05}
-              value={danmakuSettings.area}
-              onChange={(event) =>
-                setDanmakuSettings((value) => ({
-                  ...value,
-                  area: Number(event.currentTarget.value),
-                }))
-              }
-              className="accent-[var(--primary)]"
-            />
-            <label htmlFor="danmaku-density">
-              {t("Player.danmakuDensity")}
-            </label>
-            <div className="flex items-center gap-2">
-              <input
-                id="danmaku-density"
-                type="range"
-                min={10}
-                max={100}
-                step={10}
-                value={danmakuSettings.density}
-                onChange={(event) =>
-                  setDanmakuSettings((value) => ({
-                    ...value,
-                    density: Number(event.currentTarget.value),
-                  }))
-                }
-                className="min-w-0 flex-1 accent-[var(--primary)]"
-              />
-              <span className="w-8 text-right tabular-nums">
-                {danmakuSettings.density}%
-              </span>
-            </div>
-            <span>{t("Player.danmakuTypes")}</span>
-            <div className="flex gap-3">
-              {(
-                [
-                  [1, "Danmaku.rolling"],
-                  [4, "Danmaku.bottom"],
-                  [5, "Danmaku.top"],
-                ] as const
-              ).map(([type, label]) => (
-                <label key={type} className="flex items-center gap-1.5">
-                  <input
-                    type="checkbox"
-                    checked={danmakuSettings.modes.includes(type)}
-                    onChange={(event) =>
-                      setDanmakuSettings((value) => ({
-                        ...value,
-                        modes: event.currentTarget.checked
-                          ? ([...value.modes, type] as DanmakuItem["mode"][])
-                          : value.modes.filter((mode) => mode !== type),
-                      }))
-                    }
-                    className="accent-[var(--primary)]"
-                  />
-                  {t(label)}
-                </label>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
+      <PlayerSettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        portalContainer={containerRef.current}
+        preferences={preferences}
+        qualities={session.qualities}
+        onPreferencesChange={updatePreferences}
+        onReset={() =>
+          updatePreferences(() => createDefaultPlayerPreferences())
+        }
+      />
     </div>
   );
 }
