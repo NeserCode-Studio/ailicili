@@ -9,6 +9,8 @@ import type { MediaPlayerClass } from "dashjs";
 import {
   LoaderCircle,
   Maximize,
+  MessageSquareOff,
+  MessageSquareText,
   Minimize,
   Pause,
   PictureInPicture2,
@@ -26,6 +28,7 @@ import DanmakuComposer from "@/features/danmaku/DanmakuComposer";
 import DanmakuCanvas from "@/features/danmaku/DanmakuCanvas";
 import PlayerQualityMenu from "@/features/player/PlayerQualityMenu";
 import PlayerSettingsDialog from "@/features/player/PlayerSettingsDialog";
+import PlayerSpeedMenu from "@/features/player/PlayerSpeedMenu";
 import {
   createDefaultPlayerPreferences,
   readPlayerPreferences,
@@ -194,6 +197,7 @@ export default function VideoPlayer({
   const [controlsVisible, setControlsVisible] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
+  const [speedMenuOpen, setSpeedMenuOpen] = useState(false);
   const [qualitySwitching, setQualitySwitching] =
     useState<QualitySwitchingState | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -312,6 +316,7 @@ export default function VideoPlayer({
       if (hideTimerRef.current) window.clearTimeout(hideTimerRef.current);
       setControlsVisible(true);
       setQualityMenuOpen(false);
+      setSpeedMenuOpen(false);
       setSettingsOpen(false);
       setQualitySwitching({ targetLabel, autoResume: wasPlaying });
 
@@ -563,7 +568,7 @@ export default function VideoPlayer({
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (qualitySwitching) return;
-    if (settingsOpen || qualityMenuOpen) return;
+    if (settingsOpen || qualityMenuOpen || speedMenuOpen) return;
     if (
       event.target instanceof HTMLInputElement ||
       event.target instanceof HTMLSelectElement ||
@@ -708,6 +713,7 @@ export default function VideoPlayer({
             !playing ||
             settingsOpen ||
             qualityMenuOpen ||
+            speedMenuOpen ||
             qualitySwitching
             ? "opacity-100"
             : "pointer-events-none opacity-0"
@@ -837,15 +843,74 @@ export default function VideoPlayer({
               open={qualityMenuOpen}
               onOpenChange={(open) => {
                 setQualityMenuOpen(open);
+                if (open) {
+                  setSpeedMenuOpen(false);
+                  setSettingsOpen(false);
+                }
                 showControls();
               }}
               onQualityChange={switchQuality}
             />
+            <PlayerSpeedMenu
+              speed={preferences.speed}
+              portalContainer={containerRef.current}
+              open={speedMenuOpen}
+              onOpenChange={(open) => {
+                setSpeedMenuOpen(open);
+                if (open) {
+                  setQualityMenuOpen(false);
+                  setSettingsOpen(false);
+                }
+                showControls();
+              }}
+              onSpeedChange={(speed) => {
+                updatePreferences((current) => ({ ...current, speed }));
+                showControls();
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => {
+                updatePreferences((current) => ({
+                  ...current,
+                  danmaku: {
+                    ...current.danmaku,
+                    enabled: !current.danmaku.enabled,
+                  },
+                }));
+                showControls();
+              }}
+              title={
+                preferences.danmaku.enabled
+                  ? t("Player.danmaku.hide")
+                  : t("Player.danmaku.show")
+              }
+              aria-label={
+                preferences.danmaku.enabled
+                  ? t("Player.danmaku.hide")
+                  : t("Player.danmaku.show")
+              }
+              aria-pressed={preferences.danmaku.enabled}
+              className={cn(
+                "flex size-8 items-center justify-center rounded-md transition-colors hover:bg-white/15",
+                preferences.danmaku.enabled
+                  ? "bg-white/10 text-white"
+                  : "text-white/65"
+              )}
+            >
+              {preferences.danmaku.enabled ? (
+                <MessageSquareText className="size-4" />
+              ) : (
+                <MessageSquareOff className="size-4" />
+              )}
+            </button>
             <button
               type="button"
               onClick={() => {
                 setQualityMenuOpen(false);
+                setSpeedMenuOpen(false);
                 setSettingsOpen((value) => !value);
+                showControls();
               }}
               title={t("Player.settings")}
               aria-label={t("Player.settings")}
@@ -897,7 +962,13 @@ export default function VideoPlayer({
 
       <PlayerSettingsDialog
         open={settingsOpen}
-        onOpenChange={setSettingsOpen}
+        onOpenChange={(open) => {
+          setSettingsOpen(open);
+          if (open) {
+            setQualityMenuOpen(false);
+            setSpeedMenuOpen(false);
+          }
+        }}
         portalContainer={containerRef.current}
         preferences={preferences}
         qualities={session.qualities}

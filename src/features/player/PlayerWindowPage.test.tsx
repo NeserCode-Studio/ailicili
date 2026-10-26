@@ -328,6 +328,41 @@ describe("PlayerWindowPage", () => {
     ).toHaveTextContent("1080P");
   });
 
+  it("changes speed and toggles danmaku from the control bar", async () => {
+    renderPlayer();
+
+    const controls = await screen.findByTestId("player-controls");
+    const video = screen.getByTestId("video-player") as HTMLVideoElement;
+
+    fireEvent.click(
+      within(controls).getByRole("button", { name: "Player.speed.current" })
+    );
+    fireEvent.click(await screen.findByRole("option", { name: "1.5x" }));
+
+    await waitFor(() => expect(video.playbackRate).toBe(1.5));
+    expect(
+      within(controls).getByRole("button", { name: "Player.speed.current" })
+    ).toHaveTextContent("1.5x");
+
+    const danmakuToggle = within(controls).getByRole("button", {
+      name: "Player.danmaku.hide",
+    });
+    expect(danmakuToggle).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(danmakuToggle);
+
+    const showDanmaku = await within(controls).findByRole("button", {
+      name: "Player.danmaku.show",
+    });
+    expect(showDanmaku).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(screen.getByRole("button", { name: "Player.settings" }));
+    expect(
+      await screen.findByRole("switch", {
+        name: "Player.settings.danmakuEnabled",
+      })
+    ).not.toBeChecked();
+  });
+
   it("places the danmaku input directly in the player controls", async () => {
     renderPlayer();
 
