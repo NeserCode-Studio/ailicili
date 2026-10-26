@@ -131,12 +131,6 @@ export function useVideoActionController(
     [bvid, queryClient]
   );
 
-  const invalidateActions = useCallback(async () => {
-    await queryClient.invalidateQueries({
-      queryKey: biliKeys.actions(bvid),
-    });
-  }, [bvid, queryClient]);
-
   const showActionError = useCallback(
     (error: unknown) => {
       toastError(normalizeBiliError(error).message);
@@ -169,12 +163,10 @@ export function useVideoActionController(
 
   const likeMutation = useMutation({
     mutationFn: (liked: boolean) => likeVideo(bvid, liked),
-    onSuccess: invalidateActions,
   });
 
   const followMutation = useMutation({
     mutationFn: (follow: boolean) => followUser(author.mid, follow),
-    onSuccess: invalidateActions,
   });
 
   const coinMutation = useMutation({
@@ -185,15 +177,14 @@ export function useVideoActionController(
       multiply: number;
       withLike: boolean;
     }) => coinVideo(bvid, multiply, withLike),
-    onSuccess: async () => {
+    onSuccess: () => {
       success("Actions.coinSuccess");
-      await invalidateActions();
     },
   });
 
   const tripleMutation = useMutation({
     mutationFn: () => tripleVideo(bvid),
-    onSuccess: async (result) => {
+    onSuccess: (result) => {
       updateActions((current) => ({
         ...current,
         liked: current.liked || result.liked,
@@ -201,7 +192,6 @@ export function useVideoActionController(
         favorited: current.favorited || result.favorited,
       }));
       success("Actions.tripleSuccess");
-      await invalidateActions();
     },
   });
 
@@ -212,9 +202,8 @@ export function useVideoActionController(
         addMediaIds: input.addMediaIds,
         removeMediaIds: input.removeMediaIds,
       }),
-    onSuccess: async () => {
+    onSuccess: () => {
       success("Actions.favoriteSuccess");
-      await invalidateActions();
     },
   });
 

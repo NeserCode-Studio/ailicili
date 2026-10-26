@@ -67,9 +67,14 @@ impl BiliClient {
     pub async fn like_video(&self, bvid: &str, liked: bool) -> Result<(), BiliError> {
         super::client::validate_bvid(bvid)?;
         let form = like_form(bvid, liked);
-        self.post_authenticated_form("/x/web-interface/archive/like", form)
-            .await?;
-        Ok(())
+        match self
+            .post_authenticated_form("/x/web-interface/archive/like", form)
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(error) if like_error_is_idempotent(liked, &error) => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 
     pub async fn coin_video(
@@ -202,6 +207,14 @@ fn relation_is_followed(attribute: i64) -> bool {
     attribute & 2 != 0
 }
 
+fn like_error_is_idempotent(liked: bool, error: &BiliError) -> bool {
+    matches!(
+        (liked, error),
+        (true, BiliError::Upstream { code: 65006, .. })
+            | (false, BiliError::Upstream { code: 65004, .. })
+    )
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct RawArchiveRelation {
     #[serde(default)]
@@ -241,8 +254,10 @@ mod tests {
     use crate::bili::client::BiliClient;
 
     use super::{
-        coin_form, follow_form, like_form, relation_is_followed, triple_form, RawArchiveRelation,
+        coin_form, follow_form, like_error_is_idempotent, like_form, relation_is_followed,
+        triple_form, RawArchiveRelation,
     };
+    use crate::bili::error::BiliError;
 
     #[test]
     fn maps_partial_archive_relation_payloads() {
@@ -299,6 +314,28 @@ mod tests {
             follow.keys().cloned().collect::<BTreeSet<_>>(),
             BTreeSet::from(["act".to_owned(), "fid".to_owned(), "re_src".to_owned()])
         );
+    }
+
+    #[test]
+    fn treats_already_applied_like_errors_as_success() {
+        let already_liked = BiliError::Upstream {
+            code: 65006,
+            message: "already liked".to_owned(),
+        };
+        let already_unliked = BiliError::Upstream {
+            code: 65004,
+            message: "already unliked".to_owned(),
+        };
+        let other_error = BiliError::Upstream {
+            code: 65007,
+            message: "other error".to_owned(),
+        };
+
+        assert!(like_error_is_idempotent(true, &already_liked));
+        assert!(like_error_is_idempotent(false, &already_unliked));
+        assert!(!like_error_is_idempotent(false, &already_liked));
+        assert!(!like_error_is_idempotent(true, &already_unliked));
+        assert!(!like_error_is_idempotent(true, &other_error));
     }
 
     #[ignore = "requires network access and an authenticated Bilibili session"]

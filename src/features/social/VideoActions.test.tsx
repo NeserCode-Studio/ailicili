@@ -147,6 +147,26 @@ describe("VideoActions", () => {
     await waitFor(() => expect(likeButton).toBeEnabled());
   });
 
+  it("keeps the successful like when the state endpoint is stale", async () => {
+    fetchVideoActionsMock.mockResolvedValue({
+      liked: false,
+      coined: 0,
+      favorited: false,
+      followed: false,
+    });
+    likeVideoMock.mockResolvedValue();
+    renderActions();
+
+    const likeButton = await screen.findByTitle("Actions.like");
+    await waitFor(() => expect(likeButton).toBeEnabled());
+    fireEvent.click(likeButton);
+
+    await waitFor(() => expect(likeButton).toBeEnabled());
+    expect(likeButton).toHaveAttribute("aria-pressed", "true");
+    expect(likeVideoMock).toHaveBeenCalledWith("BV1xx411c7mD", true);
+    expect(fetchVideoActionsMock).toHaveBeenCalledOnce();
+  });
+
   it("serializes follow changes and updates state optimistically", async () => {
     const request = deferred<void>();
     followUserMock.mockReturnValue(request.promise);
