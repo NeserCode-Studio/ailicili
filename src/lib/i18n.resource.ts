@@ -47,9 +47,9 @@ export const I18nTexts = {
     "Nav.search": "Search",
     "Nav.dynamics": "Dynamics",
     "Nav.library": "Library",
+    "Nav.player": "Player",
     "Nav.framework": "Framework",
     "Nav.settings": "Settings",
-    "App.unofficial": "Unofficial Bilibili client",
 
     "Discover.title": "Discover",
     "Discover.description":
@@ -90,6 +90,7 @@ export const I18nTexts = {
     "Player.title": "Video player",
     "Player.loading": "Loading player",
     "Player.openError": "Could not open the player window.",
+    "Player.noRecent": "There is no recent video to resume.",
     "Player.invalid.title": "Invalid playback address",
     "Player.invalid.description":
       "This player route does not contain a valid video and part identifier.",
@@ -493,6 +494,8 @@ export const I18nTexts = {
     "About.identifier": "Identifier",
     "About.website": "Bilibili",
     "About.copyright": "Released under the MIT License",
+    "About.disclaimer":
+      "Ailicili is an unofficial third-party client and is not affiliated with Bilibili.",
 
     "SuperCommand.navigate.home": "Navigate to discovery",
     "SuperCommand.navigate.settings": "Navigate to settings page",
@@ -552,9 +555,9 @@ export const I18nTexts = {
     "Nav.search": "搜索",
     "Nav.dynamics": "关注动态",
     "Nav.library": "个人库",
+    "Nav.player": "播放器",
     "Nav.framework": "框架",
     "Nav.settings": "设置",
-    "App.unofficial": "非官方 Bilibili 客户端",
 
     "Discover.title": "发现",
     "Discover.description": "直接来自 Bilibili 的公开热门视频",
@@ -592,6 +595,7 @@ export const I18nTexts = {
     "Player.title": "视频播放器",
     "Player.loading": "正在加载播放器",
     "Player.openError": "无法打开播放器窗口。",
+    "Player.noRecent": "还没有可继续播放的视频。",
     "Player.invalid.title": "播放地址无效",
     "Player.invalid.description": "当前播放器路由中没有有效的视频或分 P 标识。",
     "Player.unavailable":
@@ -970,6 +974,7 @@ export const I18nTexts = {
     "About.identifier": "应用标识",
     "About.website": "Bilibili",
     "About.copyright": "基于 MIT 协议发布",
+    "About.disclaimer": "Ailicili 是非官方第三方客户端，与哔哩哔哩官方无关联。",
 
     "SuperCommand.navigate.home": "跳转到发现页",
     "SuperCommand.navigate.settings": "跳转到设置页面",

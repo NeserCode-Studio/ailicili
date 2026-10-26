@@ -61,7 +61,7 @@ const detail: VideoDetail = {
   dimension: null,
 };
 
-function renderActions() {
+function renderActions(onPlay?: () => void) {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -78,7 +78,7 @@ function renderActions() {
         }}
       >
         <MemoryRouter>
-          <VideoActions detail={detail} />
+          <VideoActions detail={detail} onPlay={onPlay} />
         </MemoryRouter>
       </I18nContext.Provider>
     </QueryClientProvider>
@@ -101,6 +101,15 @@ beforeEach(() => {
 });
 
 describe("VideoActions", () => {
+  it("runs the primary play action from the action row", () => {
+    const onPlay = vi.fn();
+    renderActions(onPlay);
+
+    fireEvent.click(screen.getByRole("button", { name: "Video.play" }));
+
+    expect(onPlay).toHaveBeenCalledOnce();
+  });
+
   it("rolls back a coin action when the request fails", async () => {
     const request = deferred<void>();
     coinVideoMock.mockReturnValue(request.promise);

@@ -2,6 +2,7 @@ import { ExternalLink } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import PageTitlebarActions from "@/components/framework/PageTitlebarActions";
+import { Tooltip } from "@/components/framework/Tooltip";
 
 interface TitlebarExternalLinkProps {
   label: string;
@@ -14,18 +15,18 @@ export default function TitlebarExternalLink({
 }: TitlebarExternalLinkProps) {
   return (
     <PageTitlebarActions>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        aria-label={label}
-        title={label}
-        onClick={onOpen}
-        className="border-border bg-background/70 mr-1 h-6 gap-1.5 rounded-sm px-2 text-xs shadow-none"
-      >
-        <ExternalLink className="size-3.5" />
-        <span className="hidden min-[900px]:inline">{label}</span>
-      </Button>
+      <Tooltip content={label}>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          aria-label={label}
+          onClick={onOpen}
+          className="border-border bg-background/70 mr-1 size-6 rounded-sm shadow-none"
+        >
+          <ExternalLink className="size-3.5" />
+        </Button>
+      </Tooltip>
     </PageTitlebarActions>
   );
 }

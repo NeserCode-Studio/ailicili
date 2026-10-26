@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import PageTitlebarProvider from "@/components/framework/PageTitlebarProvider";
 import { usePageTitlebar } from "@/contexts/pageTitlebar";
 import VideoDetailPage from "@/features/video/VideoDetailPage";
-import { fetchVideoDetail } from "@/lib/bili";
+import { fetchVideoDetail, openPlayerWindow } from "@/lib/bili";
 import { openExternalUrl } from "@/lib/external";
 import { createVideoSummary } from "@/test/fixtures/bili";
 import { renderWithProviders } from "@/test/render";
@@ -15,6 +15,7 @@ vi.mock("@/lib/bili", async (importOriginal) => {
   return {
     ...actual,
     fetchVideoDetail: vi.fn(),
+    openPlayerWindow: vi.fn(),
   };
 });
 
@@ -27,11 +28,16 @@ vi.mock("@/features/comments/CommentSection", () => ({
 }));
 
 vi.mock("@/features/social/VideoActions", () => ({
-  default: () => <div data-testid="video-actions" />,
+  default: ({ onPlay }: { onPlay?: () => void }) => (
+    <button type="button" onClick={onPlay}>
+      Video.play
+    </button>
+  ),
 }));
 
 const fetchVideoDetailMock = vi.mocked(fetchVideoDetail);
 const openExternalUrlMock = vi.mocked(openExternalUrl);
+const openPlayerWindowMock = vi.mocked(openPlayerWindow);
 
 function DetailTestShell() {
   const { setActionsTarget } = usePageTitlebar();
@@ -77,6 +83,7 @@ describe("VideoDetailPage", () => {
       dimension: { width: 1920, height: 1080, rotate: 0 },
     });
     openExternalUrlMock.mockResolvedValue();
+    openPlayerWindowMock.mockResolvedValue();
   });
 
   it("uses the cover as a blurred background and moves the external action to the titlebar", async () => {
@@ -84,10 +91,18 @@ describe("VideoDetailPage", () => {
 
     const background = await screen.findByTestId("video-detail-background");
     expect(background).toHaveAttribute("aria-hidden", "true");
-    expect(background.firstElementChild).toHaveClass("blur-3xl");
+    expect(background.firstElementChild).toHaveClass("blur-lg");
     expect(background.querySelector("img")).toHaveAttribute(
       "src",
       "https://i0.hdslb.com/cover.jpg"
+    );
+    expect(
+      screen.queryByRole("img", { name: "测试视频" })
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Video.play" }));
+    await waitFor(() =>
+      expect(openPlayerWindowMock).toHaveBeenCalledWith("BV1xx411c7mD", 10)
     );
 
     const titlebarActions = screen.getByTestId("titlebar-actions");
@@ -95,6 +110,7 @@ describe("VideoDetailPage", () => {
       name: "Video.openOnBilibili",
     });
     expect(titlebarAction).toBeVisible();
+    expect(titlebarAction).toHaveTextContent("");
     fireEvent.click(titlebarAction);
     await waitFor(() =>
       expect(openExternalUrlMock).toHaveBeenCalledWith(

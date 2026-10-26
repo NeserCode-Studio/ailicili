@@ -4,6 +4,7 @@ import {
   Clock3,
   Coins,
   LoaderCircle,
+  Play,
   Plus,
   Sparkles,
   Star,
@@ -40,13 +41,14 @@ import type {
 
 interface VideoActionsProps {
   detail: VideoDetail;
+  onPlay?: () => void;
 }
 
 interface ActionSnapshot {
   previous: VideoActionState | undefined;
 }
 
-export default function VideoActions({ detail }: VideoActionsProps) {
+export default function VideoActions({ detail, onPlay }: VideoActionsProps) {
   const { bvid, aid, author, stats } = detail.video;
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -438,6 +440,13 @@ export default function VideoActions({ detail }: VideoActionsProps) {
         <Sparkles />
         {t("Actions.triple")}
       </Button>
+
+      {onPlay && (
+        <Button type="button" size="sm" className="min-w-24" onClick={onPlay}>
+          <Play className="fill-current" />
+          {t("Video.play")}
+        </Button>
+      )}
 
       <Button
         type="button"

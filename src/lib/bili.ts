@@ -28,6 +28,42 @@ import type {
 } from "@/shared/bili.types";
 
 const DEFAULT_PAGE_SIZE = 20;
+const LAST_PLAYER_TARGET_KEY = "ailicili:last-player-target";
+
+interface PlayerTarget {
+  bvid: string;
+  cid: number;
+}
+
+function rememberPlayerTarget(bvid: string, cid: number) {
+  try {
+    window.localStorage.setItem(
+      LAST_PLAYER_TARGET_KEY,
+      JSON.stringify({ bvid, cid })
+    );
+  } catch {
+    // The launcher still works when storage is unavailable.
+  }
+}
+
+function readLastPlayerTarget(): PlayerTarget | null {
+  try {
+    const value = JSON.parse(
+      window.localStorage.getItem(LAST_PLAYER_TARGET_KEY) ?? "null"
+    ) as Partial<PlayerTarget> | null;
+    if (
+      typeof value?.bvid !== "string" ||
+      typeof value.cid !== "number" ||
+      !Number.isSafeInteger(value.cid) ||
+      value.cid <= 0
+    ) {
+      return null;
+    }
+    return { bvid: value.bvid, cid: value.cid };
+  } catch {
+    return null;
+  }
+}
 
 export const biliKeys = {
   all: ["bili"] as const,
@@ -115,6 +151,8 @@ export async function openPlayerWindow(
   bvid: string,
   cid: number
 ): Promise<void> {
+  rememberPlayerTarget(bvid, cid);
+
   if ("__TAURI_INTERNALS__" in window) {
     const route = `/player/${encodeURIComponent(bvid)}/${cid}`;
     const existing = (await WebviewWindow.getAll()).find(
@@ -160,6 +198,24 @@ export async function openPlayerWindow(
   if (!playerWindow) {
     throw new Error("Player window was blocked");
   }
+}
+
+export async function openLastPlayerWindow(): Promise<boolean> {
+  if ("__TAURI_INTERNALS__" in window) {
+    const existing = (await WebviewWindow.getAll()).find(
+      (window) => window.label === "player"
+    );
+    if (existing) {
+      await existing.show();
+      await existing.setFocus();
+      return true;
+    }
+  }
+
+  const target = readLastPlayerTarget();
+  if (!target) return false;
+  await openPlayerWindow(target.bvid, target.cid);
+  return true;
 }
 
 export function fetchDanmaku(cid: number): Promise<DanmakuItem[]> {

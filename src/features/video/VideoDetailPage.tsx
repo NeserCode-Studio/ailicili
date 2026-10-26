@@ -41,7 +41,6 @@ function DetailSkeleton() {
       aria-busy="true"
     >
       <Skeleton className="h-5 w-24" />
-      <Skeleton className="aspect-video w-full rounded-lg" />
       <div className="space-y-3">
         <Skeleton className="h-8 w-4/5" />
         <Skeleton className="h-5 w-44" />
@@ -170,13 +169,13 @@ export default function VideoDetailPage() {
         <CoverImage
           src={video.coverUrl}
           alt=""
-          className="size-full scale-110 opacity-55 blur-3xl saturate-125"
+          className="size-full scale-105 opacity-60 blur-lg saturate-125"
           eager
         />
       </div>
       <div
         aria-hidden="true"
-        className="bg-background/82 via-background/20 to-background pointer-events-none absolute inset-0 -z-10 bg-gradient-to-b from-transparent"
+        className="bg-background/50 from-background/5 via-background/25 to-background/85 pointer-events-none absolute inset-0 -z-10 bg-gradient-to-b"
       />
 
       <article className="mx-auto w-full max-w-6xl px-5 py-5 sm:px-7 lg:px-8">
@@ -200,31 +199,7 @@ export default function VideoDetailPage() {
           )}
         </div>
 
-        <section aria-label={t("Player.title")}>
-          <button
-            type="button"
-            onClick={() => void openPlayer(activePart)}
-            className="group focus-visible:ring-ring relative aspect-video w-full overflow-hidden rounded-lg bg-black text-left outline-none focus-visible:ring-2"
-            aria-label={t("Video.play")}
-          >
-            <CoverImage
-              src={video.coverUrl}
-              alt={video.title}
-              className="size-full"
-              eager
-            />
-            <span className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/30">
-              <span className="flex size-16 items-center justify-center rounded-full bg-black/70 text-white shadow-xl transition-transform group-hover:scale-105">
-                <Play className="ml-1 size-7 fill-current" />
-              </span>
-            </span>
-            <span className="absolute right-3 bottom-3 rounded-sm bg-black/80 px-2 py-1 font-mono text-xs text-white tabular-nums">
-              {formatDuration(video.durationSeconds)}
-            </span>
-          </button>
-        </section>
-
-        <div className="mt-5 grid gap-6 lg:grid-cols-[minmax(0,1fr)_280px] lg:items-start">
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_280px] lg:items-start">
           <div className="min-w-0">
             <div className="mb-2 flex flex-wrap items-center gap-2">
               {video.category && (
@@ -286,7 +261,10 @@ export default function VideoDetailPage() {
             </div>
 
             <div className="mt-4">
-              <VideoActions detail={detail} />
+              <VideoActions
+                detail={detail}
+                onPlay={() => void openPlayer(activePart)}
+              />
             </div>
 
             <section

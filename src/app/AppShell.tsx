@@ -4,6 +4,7 @@ import {
   Compass,
   Frame,
   Library,
+  MonitorPlay,
   Radio,
   Search,
   Settings2,
@@ -12,9 +13,10 @@ import {
 import CommandDialog from "@/components/framework/CommandDialog";
 import Titlebar from "@/components/framework/Titlebar";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useI18n } from "@/composables";
+import { useI18n, useToast } from "@/composables";
 import { useSettingsDialog } from "@/contexts/settings";
 import AccountMenu from "@/features/auth/AccountMenu";
+import { openLastPlayerWindow } from "@/lib/bili";
 import { cn } from "@/lib/utils";
 
 interface SidebarItemProps {
@@ -55,7 +57,17 @@ function SidebarItem({ to, icon: Icon, label }: SidebarItemProps) {
 
 export default function AppShell({ children }: PropsWithChildren) {
   const { t } = useI18n();
+  const { error: toastError } = useToast();
   const { openSettings } = useSettingsDialog();
+
+  const openPlayer = async () => {
+    try {
+      if (await openLastPlayerWindow()) return;
+      toastError("Player.noRecent");
+    } catch {
+      toastError("Player.openError");
+    }
+  };
 
   return (
     <main id="app-main" className="app-shell">
@@ -97,6 +109,18 @@ export default function AppShell({ children }: PropsWithChildren) {
             <AccountMenu />
             <button
               type="button"
+              onClick={() => void openPlayer()}
+              aria-label={t("Nav.player")}
+              title={t("Nav.player")}
+              className="text-muted-foreground hover:bg-muted hover:text-foreground flex h-10 w-full items-center gap-3 rounded-md px-3 text-sm font-medium transition-colors"
+            >
+              <MonitorPlay className="size-4 shrink-0" />
+              <span className="app-sidebar-label truncate">
+                {t("Nav.player")}
+              </span>
+            </button>
+            <button
+              type="button"
               onClick={openSettings}
               aria-label={t("Nav.settings")}
               title={t("Nav.settings")}
@@ -107,9 +131,6 @@ export default function AppShell({ children }: PropsWithChildren) {
                 {t("Nav.settings")}
               </span>
             </button>
-            <p className="app-sidebar-label text-muted-foreground/70 px-3 pb-1 text-[11px]">
-              {t("App.unofficial")}
-            </p>
           </div>
         </aside>
 
