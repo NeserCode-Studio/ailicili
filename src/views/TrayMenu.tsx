@@ -5,11 +5,12 @@ import { useI18n } from "@/composables";
 import { ThemeContext } from "@/contexts/theme";
 import { WindowUtils } from "@/lib/window.utils";
 
-import { Info, Settings, LogOut } from "lucide-react";
+import { Download, Info, Settings, LogOut } from "lucide-react";
 
-type MenuAction = "about" | "settings" | "quit";
+type MenuAction = "downloads" | "about" | "settings" | "quit";
 
 const menuItems: { action: MenuAction; icon: typeof Info; labelKey: string }[] = [
+  { action: "downloads", icon: Download, labelKey: "Tray.menu.downloads" },
   { action: "about", icon: Info, labelKey: "Tray.menu.about" },
   { action: "settings", icon: Settings, labelKey: "Tray.menu.settings" },
   { action: "quit", icon: LogOut, labelKey: "Tray.menu.quit" },
@@ -45,6 +46,12 @@ export default function TrayMenu() {
   const handleAction = useCallback(async (action: MenuAction) => {
     const win = trayWin.current;
     switch (action) {
+      case "downloads": {
+        const mainWin = await WindowUtils.getWindowByLabel("main");
+        if (mainWin) await mainWin.emit("navigate", "/downloads");
+        await WindowUtils.showAndFocus("main");
+        break;
+      }
       case "about": {
         const mainWin = await WindowUtils.getWindowByLabel("main");
         if (mainWin) await mainWin.emit("navigate", "/about");

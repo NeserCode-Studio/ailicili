@@ -6,6 +6,10 @@ import type {
   BiliCommandError,
   CommentPage,
   DanmakuItem,
+  DownloadOptions,
+  DownloadSettings,
+  DownloadSnapshot,
+  DownloadTask,
   DynamicPage,
   FavoriteFolder,
   FavoriteResourcePage,
@@ -221,6 +225,10 @@ export const biliKeys = {
   resume: (bvid: string, cid: number) =>
     [...biliKeys.all, "resume", bvid, cid] as const,
   dynamicFeed: () => [...biliKeys.all, "dynamic", "feed"] as const,
+  downloads: () => [...biliKeys.all, "downloads"] as const,
+  downloadSettings: () => [...biliKeys.all, "downloads", "settings"] as const,
+  downloadOptions: (bvid: string, cid: number) =>
+    [...biliKeys.all, "downloads", "options", bvid, cid] as const,
 };
 
 export function fetchPopularVideos(
@@ -523,6 +531,67 @@ export function fetchSpaceVideos(
 
 export function fetchDynamicFeed(offset = ""): Promise<DynamicPage> {
   return invoke<DynamicPage>("bili_dynamic_feed", { offset });
+}
+
+export function fetchDownloadOptions(
+  bvid: string,
+  cid: number
+): Promise<DownloadOptions> {
+  return invoke<DownloadOptions>("download_options", { bvid, cid });
+}
+
+export function createDownload(
+  bvid: string,
+  cid: number,
+  qualityId: number
+): Promise<DownloadTask> {
+  return invoke<DownloadTask>("download_create", {
+    bvid,
+    cid,
+    qualityId,
+  });
+}
+
+export function fetchDownloadSnapshot(): Promise<DownloadSnapshot> {
+  return invoke<DownloadSnapshot>("download_snapshot");
+}
+
+export function fetchDownloadSettings(): Promise<DownloadSettings> {
+  return invoke<DownloadSettings>("download_settings");
+}
+
+export function setDownloadRoot(path: string): Promise<DownloadSettings> {
+  return invoke<DownloadSettings>("download_set_root", { path });
+}
+
+export function setDownloadFfmpegPath(
+  path: string | null
+): Promise<DownloadSettings> {
+  return invoke<DownloadSettings>("download_set_ffmpeg_path", { path });
+}
+
+export function pauseDownload(id: string): Promise<DownloadTask> {
+  return invoke<DownloadTask>("download_pause", { id });
+}
+
+export function resumeDownload(id: string): Promise<DownloadTask> {
+  return invoke<DownloadTask>("download_resume", { id });
+}
+
+export function retryDownload(id: string): Promise<DownloadTask> {
+  return invoke<DownloadTask>("download_retry", { id });
+}
+
+export function cancelDownload(id: string): Promise<DownloadTask> {
+  return invoke<DownloadTask>("download_cancel", { id });
+}
+
+export function removeDownload(id: string): Promise<void> {
+  return invoke<void>("download_remove", { id });
+}
+
+export function revealDownload(id: string): Promise<void> {
+  return invoke<void>("download_reveal", { id });
 }
 
 export type { LibraryVideo };

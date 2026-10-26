@@ -161,7 +161,7 @@ export default function TitlebarOperations() {
         </Tooltip>
         <Tooltip content={t("Titlebar.operations.close.tooltip")}>
           <span
-            className="titlebar-op"
+            className="titlebar-op titlebar-op-close"
             onMouseUp={() => {
               handleOperation("close");
             }}

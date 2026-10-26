@@ -11,6 +11,8 @@ use reqwest::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::downloads::model::{DownloadOptions, DownloadQualityOption};
+
 use super::{
     client::{validate_bvid, ApiEnvelope, BiliClient},
     error::BiliError,
@@ -41,6 +43,15 @@ pub struct PlaybackQuality {
     pub width: u32,
     pub height: u32,
     pub bandwidth: u64,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct DownloadMediaSource {
+    pub video_url: String,
+    pub audio_url: String,
+    pub duration_seconds: u64,
+    pub cookie_header: String,
+    pub referer: String,
 }
 
 #[derive(Debug, Clone)]
@@ -189,29 +200,7 @@ impl BiliClient {
         }
         let qn = if qn == 0 { 80 } else { qn.clamp(16, 127) };
         let cookie_header = self.search_cookie_header().await?;
-        let keys = self
-            .wbi
-            .keys(&self.http, Some(&cookie_header), false)
-            .await?;
-
-        let (data, used_keys) = match self
-            .playurl_once(bvid, cid, qn, &cookie_header, &keys)
-            .await
-        {
-            Ok(data) => (data, keys),
-            Err(error) if error.retryable_wbi() => {
-                let keys = self
-                    .wbi
-                    .keys(&self.http, Some(&cookie_header), true)
-                    .await?;
-                let data = self
-                    .playurl_once(bvid, cid, qn, &cookie_header, &keys)
-                    .await?;
-                (data, keys)
-            }
-            Err(error) => return Err(error),
-        };
-        let _ = used_keys;
+        let data = self.fetch_play_data(bvid, cid, qn, &cookie_header).await?;
 
         let dash = data
             .dash
@@ -316,6 +305,115 @@ impl BiliClient {
         })
     }
 
+    pub async fn download_options(
+        &self,
+        bvid: &str,
+        cid: u64,
+    ) -> Result<DownloadOptions, BiliError> {
+        validate_bvid(bvid)?;
+        if cid == 0 {
+            return Err(BiliError::InvalidInput("cid must be positive"));
+        }
+        let cookie_header = self.search_cookie_header().await?;
+        let data = self.fetch_play_data(bvid, cid, 127, &cookie_header).await?;
+        let dash = data
+            .dash
+            .as_ref()
+            .ok_or(BiliError::PlaybackUnavailable("DASH stream is missing"))?;
+        let video = collect_download_video_tracks(dash);
+        let qualities = quality_options(&data, &video);
+        if qualities.is_empty() {
+            return Err(BiliError::PlaybackUnavailable(
+                "no downloadable video representation",
+            ));
+        }
+        let default_quality = qualities
+            .iter()
+            .find(|quality| quality.id == data.quality)
+            .or_else(|| qualities.first())
+            .map(|quality| quality.id)
+            .unwrap_or_default();
+        Ok(DownloadOptions {
+            qualities,
+            default_quality,
+        })
+    }
+
+    pub(crate) async fn resolve_download_source(
+        &self,
+        bvid: &str,
+        cid: u64,
+        quality_id: u32,
+    ) -> Result<DownloadMediaSource, BiliError> {
+        validate_bvid(bvid)?;
+        if cid == 0 {
+            return Err(BiliError::InvalidInput("cid must be positive"));
+        }
+        let cookie_header = self.search_cookie_header().await?;
+        let data = self
+            .fetch_play_data(bvid, cid, quality_id.clamp(16, 127), &cookie_header)
+            .await?;
+        let dash = data
+            .dash
+            .as_ref()
+            .ok_or(BiliError::PlaybackUnavailable("DASH stream is missing"))?;
+        let mut video = collect_download_video_tracks(dash);
+        let qualities = quality_options(&data, &video);
+        let selected_id = qualities
+            .iter()
+            .find(|quality| quality.id == quality_id)
+            .or_else(|| qualities.iter().find(|quality| quality.id == data.quality))
+            .or_else(|| qualities.first())
+            .map(|quality| quality.id)
+            .ok_or(BiliError::PlaybackUnavailable(
+                "no downloadable video representation",
+            ))?;
+        let video_track = video
+            .remove(&selected_id)
+            .ok_or(BiliError::PlaybackUnavailable(
+                "selected download quality is unavailable",
+            ))?;
+        let audio_track = dash
+            .audio
+            .iter()
+            .filter(|track| browser_playable_audio_codec(&track.codecs))
+            .filter_map(|track| map_track(track.clone()))
+            .max_by_key(|(_, track)| track.bandwidth)
+            .map(|(_, track)| track)
+            .ok_or(BiliError::PlaybackUnavailable(
+                "no downloadable audio representation",
+            ))?;
+
+        Ok(DownloadMediaSource {
+            video_url: video_track.remote_url,
+            audio_url: audio_track.remote_url,
+            duration_seconds: dash.duration_seconds,
+            cookie_header,
+            referer: format!("https://www.bilibili.com/video/{bvid}/"),
+        })
+    }
+
+    async fn fetch_play_data(
+        &self,
+        bvid: &str,
+        cid: u64,
+        qn: u32,
+        cookie_header: &str,
+    ) -> Result<RawPlayData, BiliError> {
+        let keys = self
+            .wbi
+            .keys(&self.http, Some(cookie_header), false)
+            .await?;
+        match self.playurl_once(bvid, cid, qn, cookie_header, &keys).await {
+            Ok(data) => Ok(data),
+            Err(error) if error.retryable_wbi() => {
+                let keys = self.wbi.keys(&self.http, Some(cookie_header), true).await?;
+                self.playurl_once(bvid, cid, qn, cookie_header, &keys).await
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     async fn playurl_once(
         &self,
         bvid: &str,
@@ -396,7 +494,7 @@ struct RawDash {
     audio: Vec<RawDashTrack>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct RawDashTrack {
     #[serde(default, rename = "baseUrl")]
     base_url_camel: String,
@@ -418,7 +516,7 @@ struct RawDashTrack {
     segment_base_snake: Option<RawSegmentBase>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct RawSegmentBase {
     #[serde(default)]
     initialization: String,
@@ -462,6 +560,59 @@ fn map_track(raw: RawDashTrack) -> Option<(u32, MediaTrack)> {
             index_range,
         },
     ))
+}
+
+fn collect_download_video_tracks(dash: &RawDash) -> BTreeMap<u32, MediaTrack> {
+    let mut video = BTreeMap::new();
+    for track in dash
+        .video
+        .iter()
+        .filter(|track| browser_playable_video_codec(&track.codecs))
+        .filter_map(|track| map_track(track.clone()))
+    {
+        video
+            .entry(track.0)
+            .and_modify(|existing: &mut MediaTrack| {
+                if track.1.bandwidth > existing.bandwidth {
+                    *existing = track.1.clone();
+                }
+            })
+            .or_insert(track.1);
+    }
+    video
+}
+
+fn quality_options(
+    data: &RawPlayData,
+    video: &BTreeMap<u32, MediaTrack>,
+) -> Vec<DownloadQualityOption> {
+    let mut qualities = video
+        .iter()
+        .map(|(id, track)| {
+            let label = data
+                .accept_quality
+                .iter()
+                .position(|quality| quality == id)
+                .and_then(|index| data.accept_description.get(index))
+                .filter(|label| !label.trim().is_empty())
+                .cloned()
+                .unwrap_or_else(|| format!("{id}P"));
+            DownloadQualityOption {
+                id: *id,
+                label,
+                width: track.width,
+                height: track.height,
+                bandwidth: track.bandwidth,
+            }
+        })
+        .collect::<Vec<_>>();
+    qualities.sort_by(|left, right| {
+        right
+            .height
+            .cmp(&left.height)
+            .then_with(|| right.bandwidth.cmp(&left.bandwidth))
+    });
+    qualities
 }
 
 fn normalize_media_url(value: &str) -> Option<String> {
@@ -635,5 +786,27 @@ mod tests {
 
         assert!(response.status().is_success());
         assert!(!response.bytes().await.expect("video bytes").is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires network access to Bilibili"]
+    async fn live_download_source_smoke() {
+        let client = BiliClient::new().expect("client");
+        let bvid = "BV19wnQ6sExk";
+        let cid = 43_053_026_889;
+        let options = client
+            .download_options(bvid, cid)
+            .await
+            .expect("download options");
+        let quality = options.qualities.first().expect("downloadable quality");
+        let source = client
+            .resolve_download_source(bvid, cid, quality.id)
+            .await
+            .expect("download media source");
+
+        assert!(source.video_url.starts_with("https://"));
+        assert!(source.audio_url.starts_with("https://"));
+        assert!(source.duration_seconds > 0);
+        assert!(source.referer.contains(bvid));
     }
 }

@@ -112,6 +112,11 @@ describe("VideoDetailPage", () => {
     expect(titlebarAction).toBeVisible();
     expect(titlebarAction).toHaveTextContent("");
     expect(titlebarAction).toHaveClass("titlebar-op");
+    expect(
+      within(titlebarActions).getByRole("button", {
+        name: "Download.dialog.title",
+      })
+    ).toHaveClass("titlebar-op");
     fireEvent.click(titlebarAction);
     await waitFor(() =>
       expect(openExternalUrlMock).toHaveBeenCalledWith(

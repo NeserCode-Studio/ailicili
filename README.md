@@ -25,11 +25,14 @@ phase 4 currently provide:
   episode selection, related-season navigation, and dedicated-window playback with web fallback.
 - Live area and global-recommendation catalogs, room details, dedicated-window HLS playback,
   quality switching, reconnect behavior, and text chat with an explicit risk-control fallback.
+- A persistent two-job download queue with pause, resume, retry, cancel, HTTP Range continuation,
+  optional FFmpeg muxing, cover/danmaku/subtitle attachments, progress events, tray status, and
+  completion notifications.
 - Explicit loading, error, retry, empty, and pagination states.
 - Unit, component, route, Rust mapping, and opt-in live network tests, with Playwright available
   for viewport and visual smoke checks.
 
-Downloads and offline caching remain planned.
+Offline metadata browsing and watch-later completion remain in the final phase 4 sub-phase.
 
 ## Stack
 
@@ -48,6 +51,7 @@ Prerequisites:
 - pnpm 9 or newer
 - A stable Rust toolchain
 - Tauri Windows build dependencies and the Windows SDK
+- Optional: FFmpeg on `PATH` or selected in download settings for automatic audio/video muxing
 
 ```bash
 pnpm install
@@ -69,6 +73,8 @@ cargo test --manifest-path src-tauri/Cargo.toml
 - `src-tauri/src/bili/` owns HTTP transport, WBI signing, session persistence,
   response validation, stable DTO mapping, playback sessions, media proxying, and
   command registration.
+- `src-tauri/src/downloads/` owns the SQLite queue, scoped download paths, resumable media
+  transfer, optional FFmpeg muxing, attachments, and native download events.
 - `src/app/` owns providers, query caching, the window shell, and route composition.
 - `src/features/` owns discovery, PGC, live, playback, danmaku, comments, social actions,
   personal libraries, authentication, and search UI.
@@ -89,6 +95,22 @@ credential storage inside the Rust boundary.
   through Tauri command DTOs.
 - Guest search identity cookies are held in process memory. Network failures return
   fixed error details so signed URLs are not reflected to the WebView.
+- Short-lived media URLs and request cookies are not persisted in the download database
+  or exported in offline manifests.
+
+## Downloads and Offline Files
+
+- Downloads are limited to individual UGC video parts selected from the current page; there
+  is no batch URL import or bulk scraping.
+- The queue runs at most two jobs at once. Paused and interrupted jobs resume from `.part`
+  files only after the user explicitly resumes them.
+- Without FFmpeg, completed tasks retain separate `video.m4s` and `audio.m4s` streams.
+  With a configured FFmpeg executable, the app also writes a playable `video.mp4`.
+- Each task folder may include the cover, raw danmaku, subtitles when available, and a
+  metadata manifest. A failed optional attachment is reported as a warning without discarding
+  successfully downloaded media.
+- The download folder cannot be changed while incomplete task records exist, because those
+  records retain paths needed for resume and retry.
 
 ## Delivery Phases
 
@@ -96,8 +118,8 @@ credential storage inside the Rust boundary.
 2. Complete: QR authentication, secure sessions, WBI search, and account identity.
 3. Complete: UGC playback, danmaku, comments, social actions, history, favorites,
    watch-later, user space, and dynamic feeds.
-4. In progress: PGC catalogs and live streaming are complete; downloads and offline cache
-   workflows are next.
+4. In progress: PGC catalogs, live streaming, and downloads are complete; offline metadata
+   browsing and final phase verification are next.
 5. Security, accessibility, performance, packaging, updates, and release hardening.
 
 ## Compliance

@@ -8,6 +8,7 @@ import TitlebarExternalLink from "@/components/framework/TitlebarExternalLink";
 import { Button } from "@/components/ui/button";
 import { useI18n, useToast } from "@/composables";
 import { usePageTitlebarTitle } from "@/contexts/pageTitlebar";
+import DownloadTitlebarAction from "@/features/downloads/DownloadTitlebarAction";
 import { PLAYER_WINDOW_REOPENED_EVENT } from "@/features/player/playerWindowLifecycle";
 import { readPlayerPreferences } from "@/features/player/playerPreferences";
 import { fitPlayerWindowToVideo } from "@/features/player/playerWindowSizing";
@@ -198,6 +199,11 @@ export default function PlayerWindowPage() {
       <TitlebarExternalLink
         label={t("Video.openOnBilibili")}
         onOpen={() => void openExternal()}
+      />
+      <DownloadTitlebarAction
+        bvid={bvid}
+        cid={resolvedCid}
+        partTitle={activePlaybackPart.title}
       />
       <div className="flex min-h-0 w-full flex-1 items-stretch justify-center">
         <div

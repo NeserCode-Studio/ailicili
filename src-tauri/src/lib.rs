@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use tauri::{
     image::Image,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -5,6 +7,7 @@ use tauri::{
 };
 
 mod bili;
+mod downloads;
 
 use bili::{
     client::BiliClient,
@@ -20,6 +23,11 @@ use bili::{
         bili_set_video_favorite, bili_space_profile, bili_space_videos, bili_triple_video,
         bili_video_actions, bili_video_detail, bili_watch_later,
     },
+};
+use downloads::{
+    download_cancel, download_create, download_options, download_pause, download_remove,
+    download_resume, download_retry, download_reveal, download_set_ffmpeg_path, download_set_root,
+    download_settings, download_snapshot, DownloadManager,
 };
 
 #[tauri::command]
@@ -68,10 +76,20 @@ pub fn run() {
             let bili_client = BiliClient::new()?;
             app.manage(bili_client);
 
+            let app_data_dir = app.path().app_data_dir()?;
+            std::fs::create_dir_all(&app_data_dir)?;
+            let download_root = app.path().download_dir()?.join("Ailicili");
+            let download_manager = DownloadManager::new(
+                app.handle().clone(),
+                &app_data_dir.join("downloads.sqlite3"),
+                &download_root,
+            )?;
+            app.manage(Arc::new(download_manager));
+
             let icon = Image::from_bytes(include_bytes!("../icons/32x32.png"))
                 .expect("Failed to load tray icon");
 
-            TrayIconBuilder::new()
+            TrayIconBuilder::with_id("main")
                 .icon(icon)
                 .tooltip("Ailicili")
                 .on_tray_icon_event(|tray, event| {
@@ -115,6 +133,8 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .register_asynchronous_uri_scheme_protocol("bilistream", |context, request, responder| {
             bili::stream::handle(context.app_handle().clone(), context, request, responder);
         })
@@ -162,7 +182,19 @@ pub fn run() {
             bili_resume_point,
             bili_heartbeat,
             bili_space_profile,
-            bili_space_videos
+            bili_space_videos,
+            download_options,
+            download_create,
+            download_snapshot,
+            download_settings,
+            download_set_root,
+            download_set_ffmpeg_path,
+            download_pause,
+            download_resume,
+            download_retry,
+            download_cancel,
+            download_remove,
+            download_reveal
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

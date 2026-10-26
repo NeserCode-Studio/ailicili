@@ -14,6 +14,7 @@ import TitlebarExternalLink from "@/components/framework/TitlebarExternalLink";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useI18n, useToast } from "@/composables";
 import CommentSection from "@/features/comments/CommentSection";
+import DownloadTitlebarAction from "@/features/downloads/DownloadTitlebarAction";
 import VideoActions from "@/features/social/VideoActions";
 import CoverImage from "@/features/video/CoverImage";
 import {
@@ -182,6 +183,11 @@ export default function VideoDetailPage() {
         <TitlebarExternalLink
           label={t("Video.openOnBilibili")}
           onOpen={() => void openExternalVideo(activePart)}
+        />
+        <DownloadTitlebarAction
+          bvid={bvid ?? ""}
+          cid={activePart?.cid ?? 0}
+          partTitle={activePart?.title ?? ""}
         />
 
         <div className="mb-4 flex items-center justify-between">

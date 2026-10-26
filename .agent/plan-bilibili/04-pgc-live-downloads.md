@@ -1,6 +1,6 @@
 ---
 goal: Add PGC catalogs, live streaming, downloads, offline cache, and watch-later workflows
-version: 1.1
+version: 1.2
 date_created: 2026-10-26
 last_updated: 2026-10-26
 owner: Root
@@ -98,12 +98,24 @@ Verification for 4B:
 
 ### 4C: Downloads and offline cache
 
+Detailed execution plan: [04c-downloads.md](04c-downloads.md)
+
 | Task | Description | Status | Date |
 |------|-------------|--------|------|
-| DL-001 | Define the persistent download task schema and scoped path validation | Planned | |
-| DL-002 | Implement a bounded, resumable HTTP downloader with pause, retry, cancel, and integrity checks | Planned | |
-| DL-003 | Add optional user-provided FFmpeg detection, muxing, subtitle, cover, and danmaku outputs | Planned | |
-| DL-004 | Add the download center, progress events, tray integration, notifications, and offline metadata | Planned | |
+| DL-001 | Define the persistent download task schema and scoped path validation | Complete | 2026-10-26 |
+| DL-002 | Implement a bounded, resumable HTTP downloader with pause, retry, cancel, and integrity checks | Complete | 2026-10-26 |
+| DL-003 | Add optional user-provided FFmpeg detection, muxing, subtitle, cover, and danmaku outputs | Complete | 2026-10-26 |
+| DL-004 | Add the download center, progress events, tray integration, notifications, and offline metadata | Complete | 2026-10-26 |
+
+Verification for 4C:
+
+- `pnpm test`: 30 files and 123 tests passed.
+- `cargo test --manifest-path src-tauri/Cargo.toml`: 63 passed and 9 opt-in live tests ignored;
+  the full Rust suite passed five consecutive runs after test-directory isolation was fixed.
+- `live_download_source_smoke`: passed against public playurl and DASH source resolution.
+- Playwright download, settings, and download-dialog checks passed at 1440x900 and 900x720 with no
+  console errors or horizontal overflow.
+- `pnpm exec tsc --noEmit`, `pnpm lint`, `pnpm build`, `cargo fmt`, and `cargo check` passed.
 
 ### 4D: Watch later and completion
 

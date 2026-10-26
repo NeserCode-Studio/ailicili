@@ -82,3 +82,26 @@ export function formatClock(timestamp: number, lang: string): string {
     minute: "2-digit",
   }).format(new Date(timestamp));
 }
+
+export function formatByteSize(value: number, lang = "en-US"): string {
+  const bytes = Number.isFinite(value) ? Math.max(0, value) : 0;
+  if (bytes < 1024) {
+    return `${new Intl.NumberFormat(lang.startsWith("zh") ? "zh-CN" : lang, {
+      maximumFractionDigits: 0,
+    }).format(bytes)} B`;
+  }
+
+  const units = ["KB", "MB", "GB", "TB"];
+  let scaled = bytes;
+  let unitIndex = -1;
+  do {
+    scaled /= 1024;
+    unitIndex += 1;
+  } while (scaled >= 1024 && unitIndex < units.length - 1);
+
+  const formatted = new Intl.NumberFormat(
+    lang.startsWith("zh") ? "zh-CN" : lang,
+    { maximumFractionDigits: scaled < 10 ? 1 : 0 }
+  ).format(scaled);
+  return `${formatted} ${units[unitIndex]}`;
+}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  formatByteSize,
   formatCompactCount,
   formatDuration,
   formatPublishedAt,
@@ -26,6 +27,14 @@ describe("formatCompactCount", () => {
   it("uses English compact units", () => {
     expect(formatCompactCount(1_500, "en-US")).toBe("1.5K");
     expect(formatCompactCount(2_400_000, "en-US")).toBe("2.4M");
+  });
+});
+
+describe("formatByteSize", () => {
+  it("formats byte values with stable binary units", () => {
+    expect(formatByteSize(0, "en-US")).toBe("0 B");
+    expect(formatByteSize(1024, "en-US")).toBe("1 KB");
+    expect(formatByteSize(1_572_864, "en-US")).toBe("1.5 MB");
   });
 });
 

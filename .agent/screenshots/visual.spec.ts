@@ -56,13 +56,201 @@ const liveRoomDetail = {
   webUrl: "https://live.bilibili.com/123",
 };
 
+const downloadTasks = [
+  {
+    id: "download-active",
+    bvid: "BV1xx411c7mD",
+    cid: 2001,
+    aid: 1001,
+    title: "从零实现一个稳定、可维护的桌面客户端",
+    partTitle: "完整实现",
+    coverUrl: "https://i0.hdslb.com/bfs/archive/cover.jpg",
+    durationSeconds: 1254,
+    qualityId: 80,
+    qualityLabel: "1080P",
+    width: 1920,
+    height: 1080,
+    status: "downloading",
+    phase: "video",
+    progressPercent: 48,
+    downloadedBytes: 48_000_000,
+    totalBytes: 100_000_000,
+    speedBytesPerSecond: 4_800_000,
+    etaSeconds: 11,
+    directoryPath: "C:\\Users\\Visual\\Downloads\\Ailicili\\active",
+    outputPath: null,
+    videoPath: "C:\\Users\\Visual\\Downloads\\Ailicili\\active\\video.m4s",
+    audioPath: "C:\\Users\\Visual\\Downloads\\Ailicili\\active\\audio.m4s",
+    coverPath: null,
+    danmakuPath: null,
+    subtitlePath: null,
+    metadataPath: null,
+    errorCode: null,
+    errorMessage: null,
+    warnings: [],
+    createdAt: 1_792_940_000_000,
+    updatedAt: 1_792_940_200_000,
+    completedAt: null,
+  },
+  {
+    id: "download-queued",
+    bvid: "BV1xx411c7mE",
+    cid: 2002,
+    aid: 1002,
+    title: "用真实项目理解视频客户端的数据流",
+    partTitle: "第二讲：接口适配",
+    coverUrl: "https://i0.hdslb.com/bfs/archive/cover.jpg",
+    durationSeconds: 986,
+    qualityId: 64,
+    qualityLabel: "720P",
+    width: 1280,
+    height: 720,
+    status: "queued",
+    phase: "preparing",
+    progressPercent: 0,
+    downloadedBytes: 0,
+    totalBytes: 0,
+    speedBytesPerSecond: 0,
+    etaSeconds: null,
+    directoryPath: "C:\\Users\\Visual\\Downloads\\Ailicili\\queued",
+    outputPath: null,
+    videoPath: null,
+    audioPath: null,
+    coverPath: null,
+    danmakuPath: null,
+    subtitlePath: null,
+    metadataPath: null,
+    errorCode: null,
+    errorMessage: null,
+    warnings: [],
+    createdAt: 1_792_940_100_000,
+    updatedAt: 1_792_940_100_000,
+    completedAt: null,
+  },
+  {
+    id: "download-paused",
+    bvid: "BV1xx411c7mF",
+    cid: 2003,
+    aid: 1003,
+    title: "播放器窗口尺寸与多显示器适配",
+    partTitle: "",
+    coverUrl: "https://i0.hdslb.com/bfs/archive/cover.jpg",
+    durationSeconds: 763,
+    qualityId: 80,
+    qualityLabel: "1080P",
+    width: 1920,
+    height: 1080,
+    status: "paused",
+    phase: "audio",
+    progressPercent: 72,
+    downloadedBytes: 72_000_000,
+    totalBytes: 100_000_000,
+    speedBytesPerSecond: 0,
+    etaSeconds: null,
+    directoryPath: "C:\\Users\\Visual\\Downloads\\Ailicili\\paused",
+    outputPath: null,
+    videoPath: "C:\\Users\\Visual\\Downloads\\Ailicili\\paused\\video.m4s",
+    audioPath: "C:\\Users\\Visual\\Downloads\\Ailicili\\paused\\audio.m4s",
+    coverPath: null,
+    danmakuPath: null,
+    subtitlePath: null,
+    metadataPath: null,
+    errorCode: null,
+    errorMessage: null,
+    warnings: [],
+    createdAt: 1_792_930_000_000,
+    updatedAt: 1_792_935_000_000,
+    completedAt: null,
+  },
+  {
+    id: "download-failed",
+    bvid: "BV1xx411c7mG",
+    cid: 2004,
+    aid: 1004,
+    title: "弹幕轨道布局与碰撞检测",
+    partTitle: "补充片段",
+    coverUrl: "https://i0.hdslb.com/bfs/archive/cover.jpg",
+    durationSeconds: 421,
+    qualityId: 32,
+    qualityLabel: "480P",
+    width: 854,
+    height: 480,
+    status: "failed",
+    phase: "video",
+    progressPercent: 16,
+    downloadedBytes: 8_000_000,
+    totalBytes: 50_000_000,
+    speedBytesPerSecond: 0,
+    etaSeconds: null,
+    directoryPath: "C:\\Users\\Visual\\Downloads\\Ailicili\\failed",
+    outputPath: null,
+    videoPath: "C:\\Users\\Visual\\Downloads\\Ailicili\\failed\\video.m4s",
+    audioPath: "C:\\Users\\Visual\\Downloads\\Ailicili\\failed\\audio.m4s",
+    coverPath: null,
+    danmakuPath: null,
+    subtitlePath: null,
+    metadataPath: null,
+    errorCode: "network_error",
+    errorMessage: "download network request failed",
+    warnings: [],
+    createdAt: 1_792_920_000_000,
+    updatedAt: 1_792_925_000_000,
+    completedAt: null,
+  },
+  {
+    id: "download-completed",
+    bvid: "BV1xx411c7mH",
+    cid: 2005,
+    aid: 1005,
+    title: "离线缓存与媒体元数据整理",
+    partTitle: "",
+    coverUrl: "https://i0.hdslb.com/bfs/archive/cover.jpg",
+    durationSeconds: 638,
+    qualityId: 80,
+    qualityLabel: "1080P",
+    width: 1920,
+    height: 1080,
+    status: "completed",
+    phase: "complete",
+    progressPercent: 100,
+    downloadedBytes: 96_000_000,
+    totalBytes: 96_000_000,
+    speedBytesPerSecond: 0,
+    etaSeconds: null,
+    directoryPath: "C:\\Users\\Visual\\Downloads\\Ailicili\\completed",
+    outputPath:
+      "C:\\Users\\Visual\\Downloads\\Ailicili\\completed\\video.mp4",
+    videoPath: "C:\\Users\\Visual\\Downloads\\Ailicili\\completed\\video.m4s",
+    audioPath: "C:\\Users\\Visual\\Downloads\\Ailicili\\completed\\audio.m4s",
+    coverPath: "C:\\Users\\Visual\\Downloads\\Ailicili\\completed\\cover.jpg",
+    danmakuPath:
+      "C:\\Users\\Visual\\Downloads\\Ailicili\\completed\\danmaku.json",
+    subtitlePath: null,
+    metadataPath:
+      "C:\\Users\\Visual\\Downloads\\Ailicili\\completed\\metadata.json",
+    errorCode: null,
+    errorMessage: null,
+    warnings: [],
+    createdAt: 1_792_900_000_000,
+    updatedAt: 1_792_910_000_000,
+    completedAt: 1_792_910_000_000,
+  },
+];
+
 test.beforeEach(async ({ page }, testInfo) => {
   const windowLabel = testInfo.title.includes("dedicated player window")
     ? "player"
     : "main";
   await page.addInitScript(() => localStorage.clear());
   await page.addInitScript(
-    ({ auth, video, liveRoom, liveRoomDetail, windowLabel }) => {
+    ({
+      auth,
+      video,
+      liveRoom,
+      liveRoomDetail,
+      windowLabel,
+      downloadTasks,
+    }) => {
       const callbacks: Record<number, (payload: unknown) => void> = {};
       let callbackId = 0;
       const invocations: string[] = [];
@@ -330,6 +518,45 @@ test.beforeEach(async ({ page }, testInfo) => {
         },
         bili_live_chat_stop: null,
         bili_heartbeat: null,
+        download_snapshot: {
+          tasks: downloadTasks,
+          activeCount: 1,
+          queuedCount: 1,
+          completedCount: 1,
+        },
+        download_settings: {
+          rootPath: "C:\\Users\\Visual\\Downloads\\Ailicili",
+          ffmpegPath: null,
+          ffmpegAvailable: false,
+          ffmpegVersion: null,
+          maxConcurrent: 2,
+        },
+        download_options: {
+          qualities: [
+            {
+              id: 80,
+              label: "1080P",
+              width: 1920,
+              height: 1080,
+              bandwidth: 2_400_000,
+            },
+            {
+              id: 64,
+              label: "720P",
+              width: 1280,
+              height: 720,
+              bandwidth: 1_200_000,
+            },
+            {
+              id: 32,
+              label: "480P",
+              width: 854,
+              height: 480,
+              bandwidth: 500_000,
+            },
+          ],
+          defaultQuality: 80,
+        },
       };
       const internals = {
         metadata: {
@@ -431,6 +658,7 @@ test.beforeEach(async ({ page }, testInfo) => {
       liveRoom,
       liveRoomDetail,
       windowLabel,
+      downloadTasks,
     }
   );
   await page.route(/dashjs|dash\.all/, async (route) => {
@@ -774,6 +1002,83 @@ test("renders the dedicated player window at desktop and compact sizes", async (
     await page.screenshot({
       path: `.agent/screenshots/phase3-danmaku-composer-${viewport.name}.png`,
     });
+  }
+
+  expect(errors).toEqual([]);
+});
+
+test("renders downloads and settings at desktop and compact sizes", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.stack ?? error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(message.text());
+  });
+
+  for (const viewport of [
+    { name: "desktop", width: 1440, height: 900 },
+    { name: "compact", width: 900, height: 720 },
+  ] as const) {
+    await page.setViewportSize(viewport);
+    await page.goto("/downloads", { waitUntil: "networkidle" });
+    await expect(
+      page.getByRole("heading", { name: "下载中心", exact: true })
+    ).toBeVisible();
+    await expect(
+      page.getByText("从零实现一个稳定、可维护的桌面客户端", {
+        exact: true,
+      })
+    ).toBeVisible();
+
+    const metrics = await page.evaluate(() => ({
+      clientWidth: document.documentElement.clientWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+    }));
+    expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
+    await page.screenshot({
+      path: `.agent/screenshots/downloads-${viewport.name}.png`,
+      fullPage: true,
+    });
+
+    await page
+      .getByTestId("titlebar-page-actions")
+      .getByRole("button", { name: "下载设置" })
+      .click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    await expect(
+      dialog.getByRole("heading", { name: "下载设置", exact: true })
+    ).toBeVisible();
+    await expect(dialog.getByText("FFmpeg 可执行文件")).toBeVisible();
+    await expect(dialog.getByText("并发下载数")).toBeVisible();
+    await page.waitForTimeout(250);
+    await page.screenshot({
+      path: `.agent/screenshots/download-settings-${viewport.name}.png`,
+    });
+    await dialog.getByRole("button", { name: "关闭" }).click();
+
+    await page.goto("/video/BV1xx411c7mD", { waitUntil: "networkidle" });
+    await page
+      .getByTestId("titlebar-page-actions")
+      .getByRole("button", { name: "下载视频" })
+      .click();
+    const downloadDialog = page.getByRole("dialog");
+    await expect(downloadDialog).toBeVisible();
+    await expect(
+      downloadDialog.getByRole("heading", { name: "下载视频", exact: true })
+    ).toBeVisible();
+    await expect(
+      downloadDialog.getByRole("button", { name: /1080P/ })
+    ).toBeVisible();
+    await expect(
+      downloadDialog.getByRole("button", { name: /720P/ })
+    ).toBeVisible();
+    await page.waitForTimeout(250);
+    await page.screenshot({
+      path: `.agent/screenshots/download-dialog-${viewport.name}.png`,
+    });
+    await downloadDialog.getByRole("button", { name: "取消" }).click();
   }
 
   expect(errors).toEqual([]);

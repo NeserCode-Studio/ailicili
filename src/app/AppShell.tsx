@@ -4,6 +4,7 @@ import {
   Activity,
   Clapperboard,
   Compass,
+  Download,
   Frame,
   Library,
   MonitorPlay,
@@ -20,14 +21,19 @@ import { useSettingsDialog } from "@/contexts/settings";
 import AccountMenu from "@/features/auth/AccountMenu";
 import { openLastPlayerWindow } from "@/lib/bili";
 import { cn } from "@/lib/utils";
+import {
+  useDownloadProgressEvents,
+  useDownloadSnapshot,
+} from "@/features/downloads/useDownloads";
 
 interface SidebarItemProps {
   to: string;
   icon: typeof Compass;
   label: string;
+  badge?: number;
 }
 
-function SidebarItem({ to, icon: Icon, label }: SidebarItemProps) {
+function SidebarItem({ to, icon: Icon, label, badge = 0 }: SidebarItemProps) {
   return (
     <NavLink
       to={to}
@@ -51,6 +57,11 @@ function SidebarItem({ to, icon: Icon, label }: SidebarItemProps) {
           />
           <Icon className="size-4 shrink-0" />
           <span className="app-sidebar-label truncate">{label}</span>
+          {badge > 0 && (
+            <span className="bg-primary/10 text-primary ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums">
+              {badge > 99 ? "99+" : badge}
+            </span>
+          )}
         </>
       )}
     </NavLink>
@@ -61,6 +72,11 @@ export default function AppShell({ children }: PropsWithChildren) {
   const { t } = useI18n();
   const { error: toastError } = useToast();
   const { openSettings } = useSettingsDialog();
+  const downloadsQuery = useDownloadSnapshot();
+  useDownloadProgressEvents();
+  const pendingDownloads =
+    (downloadsQuery.data?.activeCount ?? 0) +
+    (downloadsQuery.data?.queuedCount ?? 0);
 
   const openPlayer = async () => {
     try {
@@ -92,6 +108,12 @@ export default function AppShell({ children }: PropsWithChildren) {
             <SidebarItem to="/search" icon={Search} label={t("Nav.search")} />
             <SidebarItem to="/pgc" icon={Clapperboard} label={t("Nav.pgc")} />
             <SidebarItem to="/live" icon={RadioTower} label={t("Nav.live")} />
+            <SidebarItem
+              to="/downloads"
+              icon={Download}
+              label={t("Nav.downloads")}
+              badge={pendingDownloads}
+            />
             <SidebarItem
               to="/dynamics"
               icon={Activity}

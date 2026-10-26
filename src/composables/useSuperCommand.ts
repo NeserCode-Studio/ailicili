@@ -57,6 +57,14 @@ export function createBuiltinCommands(ctx: {
       },
     },
     {
+      id: "navigate.downloads",
+      keywords: ["下载", "downloads", "离线", "offline"],
+      action: () => {
+        navigate("/downloads");
+        return { success: true, message: "Navigated to downloads" };
+      },
+    },
+    {
       id: "navigate.software",
       keywords: ["软件", "software"],
       action: () => {

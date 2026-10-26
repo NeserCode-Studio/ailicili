@@ -38,6 +38,9 @@ vi.mock("@/features/library/LibraryPage", () => ({
 vi.mock("@/features/dynamics/DynamicFeedPage", () => ({
   default: () => <div>dynamics-route</div>,
 }));
+vi.mock("@/features/downloads/DownloadsPage", () => ({
+  default: () => <div>downloads-route</div>,
+}));
 vi.mock("@/features/space/SpacePage", () => ({
   default: () => <div>space-route</div>,
 }));
@@ -73,6 +76,7 @@ describe("AppRoutes", () => {
     ["/search?q=rust&type=video", "search-route"],
     ["/library", "library-route"],
     ["/dynamics", "dynamics-route"],
+    ["/downloads", "downloads-route"],
     ["/space/42", "space-route"],
     ["/login", "login-route"],
     ["/framework", "framework-route"],

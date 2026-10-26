@@ -282,6 +282,91 @@ export interface PlaybackSession {
   qualities: PlaybackQuality[];
 }
 
+export type DownloadStatus =
+  | "queued"
+  | "downloading"
+  | "paused"
+  | "muxing"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type DownloadPhase =
+  | "preparing"
+  | "video"
+  | "audio"
+  | "attachments"
+  | "muxing"
+  | "complete";
+
+export interface DownloadTask {
+  id: string;
+  bvid: string;
+  cid: number;
+  aid: number;
+  title: string;
+  partTitle: string;
+  coverUrl: string;
+  durationSeconds: number;
+  qualityId: number;
+  qualityLabel: string;
+  width: number;
+  height: number;
+  status: DownloadStatus;
+  phase: DownloadPhase;
+  progressPercent: number;
+  downloadedBytes: number;
+  totalBytes: number;
+  speedBytesPerSecond: number;
+  etaSeconds: number | null;
+  directoryPath: string;
+  outputPath: string | null;
+  videoPath: string | null;
+  audioPath: string | null;
+  coverPath: string | null;
+  danmakuPath: string | null;
+  subtitlePath: string | null;
+  metadataPath: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  warnings: string[];
+  createdAt: number;
+  updatedAt: number;
+  completedAt: number | null;
+}
+
+export interface DownloadQualityOption {
+  id: number;
+  label: string;
+  width: number;
+  height: number;
+  bandwidth: number;
+}
+
+export interface DownloadOptions {
+  qualities: DownloadQualityOption[];
+  defaultQuality: number;
+}
+
+export interface DownloadSettings {
+  rootPath: string;
+  ffmpegPath: string | null;
+  ffmpegAvailable: boolean;
+  ffmpegVersion: string | null;
+  maxConcurrent: number;
+}
+
+export interface DownloadSnapshot {
+  tasks: DownloadTask[];
+  activeCount: number;
+  queuedCount: number;
+  completedCount: number;
+}
+
+export interface DownloadProgressEvent {
+  task: DownloadTask;
+}
+
 export interface LiveSubArea {
   id: string;
   parentId: string;

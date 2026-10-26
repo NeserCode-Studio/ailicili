@@ -10,6 +10,7 @@ const PgcCatalogPage = lazy(() => import("@/features/pgc/PgcCatalogPage"));
 const PgcSeasonPage = lazy(() => import("@/features/pgc/PgcSeasonPage"));
 const LiveCatalogPage = lazy(() => import("@/features/live/LiveCatalogPage"));
 const LivePlayerPage = lazy(() => import("@/features/live/LivePlayerPage"));
+const DownloadsPage = lazy(() => import("@/features/downloads/DownloadsPage"));
 const PlayerWindowPage = lazy(
   () => import("@/features/player/PlayerWindowPage")
 );
@@ -61,6 +62,7 @@ export default function AppRoutes() {
         <Route path="/pgc" element={<PgcCatalogPage />} />
         <Route path="/pgc/:seasonId" element={<PgcSeasonPage />} />
         <Route path="/live" element={<LiveCatalogPage />} />
+        <Route path="/downloads" element={<DownloadsPage />} />
         <Route path="/player/live/:roomId" element={<LivePlayerPage />} />
         <Route path="/player/:bvid/:cid" element={<PlayerWindowPage />} />
         <Route path="/search" element={<SearchPage />} />
