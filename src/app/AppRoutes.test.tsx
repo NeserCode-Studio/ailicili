@@ -11,6 +11,12 @@ vi.mock("@/features/discovery/DiscoveryPage", () => ({
 vi.mock("@/features/video/VideoDetailPage", () => ({
   default: () => <div>video-route</div>,
 }));
+vi.mock("@/features/pgc/PgcCatalogPage", () => ({
+  default: () => <div>pgc-catalog-route</div>,
+}));
+vi.mock("@/features/pgc/PgcSeasonPage", () => ({
+  default: () => <div>pgc-season-route</div>,
+}));
 vi.mock("@/features/player/PlayerWindowPage", () => ({
   default: () => <div>player-route</div>,
 }));
@@ -53,6 +59,8 @@ describe("AppRoutes", () => {
   it.each([
     ["/", "discover-route"],
     ["/video/BV1xx411c7mD", "video-route"],
+    ["/pgc", "pgc-catalog-route"],
+    ["/pgc/47836?ep=826497", "pgc-season-route"],
     ["/player/BV1xx411c7mD/2001", "player-route"],
     ["/search?q=rust&type=video", "search-route"],
     ["/library", "library-route"],

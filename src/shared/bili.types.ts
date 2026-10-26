@@ -32,6 +32,120 @@ export interface PopularPage {
   hasMore: boolean;
 }
 
+export type PgcSeasonType = 1 | 2 | 3 | 4;
+
+export interface PgcMediaSummary {
+  seasonId: string;
+  mediaId: string;
+  title: string;
+  coverUrl: string;
+  subtitle: string;
+  indexShow: string;
+  orderLabel: string;
+  score: number | null;
+  finished: boolean;
+  seasonType: PgcSeasonType;
+  badge: string | null;
+}
+
+export interface PgcIndexPage {
+  seasonType: PgcSeasonType;
+  page: number;
+  pageSize: number;
+  total: number;
+  hasMore: boolean;
+  items: PgcMediaSummary[];
+}
+
+export interface PgcTimelineEpisode {
+  episodeId: string;
+  seasonId: string;
+  title: string;
+  episodeTitle: string;
+  coverUrl: string;
+  publishedAt: number;
+  isPublished: boolean;
+  isDelayed: boolean;
+  delayReason: string | null;
+  targetUrl: string;
+}
+
+export interface PgcTimelineDay {
+  date: string;
+  dateTimestamp: number;
+  dayOfWeek: number;
+  isToday: boolean;
+  episodes: PgcTimelineEpisode[];
+}
+
+export interface PgcTimeline {
+  latest: PgcTimelineEpisode[];
+  days: PgcTimelineDay[];
+}
+
+export interface PgcEpisode {
+  epId: string;
+  aid: number;
+  bvid: string;
+  cid: number;
+  title: string;
+  longTitle: string;
+  coverUrl: string;
+  durationSeconds: number;
+  publishedAt: number;
+  badge: string | null;
+  sectionType: number;
+  playbackAvailable: boolean;
+  requiresMembership: boolean;
+  targetUrl: string;
+}
+
+export interface PgcEpisodeSection {
+  id: string;
+  title: string;
+  episodes: PgcEpisode[];
+}
+
+export interface PgcRating {
+  score: number;
+  count: number;
+}
+
+export interface PgcSeasonStats {
+  views: number;
+  favorites: number;
+  likes: number;
+  danmaku: number;
+}
+
+export interface PgcSeasonSummary {
+  seasonId: string;
+  title: string;
+  coverUrl: string;
+  badge: string | null;
+}
+
+export interface PgcSeasonDetail {
+  seasonId: string;
+  mediaId: string;
+  title: string;
+  originalTitle: string;
+  coverUrl: string;
+  description: string;
+  subtitle: string;
+  newEpisode: string;
+  publishDate: string | null;
+  finished: boolean;
+  rating: PgcRating | null;
+  stats: PgcSeasonStats;
+  styles: string[];
+  areas: string[];
+  episodes: PgcEpisode[];
+  sections: PgcEpisodeSection[];
+  relatedSeasons: PgcSeasonSummary[];
+  webUrl: string;
+}
+
 export interface VideoPart {
   cid: number;
   page: number;

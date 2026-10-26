@@ -6,6 +6,8 @@ import { useI18n } from "@/composables";
 
 const DiscoveryPage = lazy(() => import("@/features/discovery/DiscoveryPage"));
 const VideoDetailPage = lazy(() => import("@/features/video/VideoDetailPage"));
+const PgcCatalogPage = lazy(() => import("@/features/pgc/PgcCatalogPage"));
+const PgcSeasonPage = lazy(() => import("@/features/pgc/PgcSeasonPage"));
 const PlayerWindowPage = lazy(
   () => import("@/features/player/PlayerWindowPage")
 );
@@ -54,6 +56,8 @@ export default function AppRoutes() {
       <Routes>
         <Route path="/" element={<DiscoveryPage />} />
         <Route path="/video/:bvid" element={<VideoDetailPage />} />
+        <Route path="/pgc" element={<PgcCatalogPage />} />
+        <Route path="/pgc/:seasonId" element={<PgcSeasonPage />} />
         <Route path="/player/:bvid/:cid" element={<PlayerWindowPage />} />
         <Route path="/search" element={<SearchPage />} />
         <Route path="/library" element={<LibraryPage />} />

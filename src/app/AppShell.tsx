@@ -1,6 +1,7 @@
 import type { PropsWithChildren } from "react";
 import { NavLink } from "react-router";
 import {
+  Clapperboard,
   Compass,
   Frame,
   Library,
@@ -88,6 +89,7 @@ export default function AppShell({ children }: PropsWithChildren) {
           <nav className="flex flex-1 flex-col gap-1 px-2 pt-2">
             <SidebarItem to="/" icon={Compass} label={t("Nav.discover")} />
             <SidebarItem to="/search" icon={Search} label={t("Nav.search")} />
+            <SidebarItem to="/pgc" icon={Clapperboard} label={t("Nav.pgc")} />
             <SidebarItem
               to="/dynamics"
               icon={Radio}

@@ -6,6 +6,7 @@ pub mod danmaku;
 pub mod dynamic;
 pub mod error;
 pub mod library;
+pub mod pgc;
 pub mod playurl;
 pub mod search;
 pub mod session;

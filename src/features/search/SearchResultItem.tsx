@@ -125,12 +125,8 @@ export default function SearchResultItem({ item }: SearchResultItemProps) {
   }
 
   if (item.kind === "pgc") {
-    return (
-      <button
-        type="button"
-        onClick={() => void openTarget(item.targetUrl)}
-        className="group hover:bg-muted/55 grid w-full gap-4 rounded-md p-3 text-left transition-colors sm:grid-cols-[7.5rem_1fr_auto]"
-      >
+    const target = (
+      <>
         <div className="aspect-[3/4] overflow-hidden rounded-md">
           <CoverImage src={item.coverUrl} alt="" className="size-full" />
         </div>
@@ -146,8 +142,34 @@ export default function SearchResultItem({ item }: SearchResultItemProps) {
           </p>
         </div>
         <span className="self-center">
-          <OpenAction label={t("Search.openOnBilibili")} />
+          {item.seasonId !== "0" ? (
+            <span className="text-muted-foreground group-hover:text-foreground inline-flex items-center gap-1 text-xs transition-colors">
+              {t("Discover.details")}
+            </span>
+          ) : (
+            <OpenAction label={t("Search.openOnBilibili")} />
+          )}
         </span>
+      </>
+    );
+    const className =
+      "group hover:bg-muted/55 grid w-full gap-4 rounded-md p-3 text-left transition-colors sm:grid-cols-[7.5rem_1fr_auto]";
+
+    if (item.seasonId !== "0") {
+      return (
+        <Link to={`/pgc/${item.seasonId}`} className={className}>
+          {target}
+        </Link>
+      );
+    }
+
+    return (
+      <button
+        type="button"
+        onClick={() => void openTarget(item.targetUrl)}
+        className={className}
+      >
+        {target}
       </button>
     );
   }

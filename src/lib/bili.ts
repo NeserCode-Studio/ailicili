@@ -13,6 +13,10 @@ import type {
   LibraryVideo,
   PopularPage,
   PlaybackSession,
+  PgcIndexPage,
+  PgcSeasonDetail,
+  PgcSeasonType,
+  PgcTimeline,
   QrLoginPoll,
   QrLoginStart,
   ResumePoint,
@@ -69,6 +73,27 @@ export const biliKeys = {
   all: ["bili"] as const,
   popular: (page: number, pageSize = DEFAULT_PAGE_SIZE) =>
     [...biliKeys.all, "popular", page, pageSize] as const,
+  pgcIndex: (
+    seasonType: PgcSeasonType,
+    page: number,
+    pageSize: number,
+    year: number | null,
+    finished: boolean | null
+  ) =>
+    [
+      ...biliKeys.all,
+      "pgc",
+      "index",
+      seasonType,
+      page,
+      pageSize,
+      year,
+      finished,
+    ] as const,
+  pgcTimeline: (seasonType: PgcSeasonType) =>
+    [...biliKeys.all, "pgc", "timeline", seasonType] as const,
+  pgcSeason: (seasonId: string) =>
+    [...biliKeys.all, "pgc", "season", seasonId] as const,
   video: (bvid: string) => [...biliKeys.all, "video", bvid] as const,
   auth: () => [...biliKeys.all, "auth", "status"] as const,
   qrLogin: (generation: number) =>
@@ -104,6 +129,32 @@ export function fetchPopularVideos(
   pageSize = DEFAULT_PAGE_SIZE
 ): Promise<PopularPage> {
   return invoke<PopularPage>("bili_popular_videos", { page, pageSize });
+}
+
+export function fetchPgcIndex(
+  seasonType: PgcSeasonType,
+  page = 1,
+  pageSize = 18,
+  year: number | null = null,
+  finished: boolean | null = null
+): Promise<PgcIndexPage> {
+  return invoke<PgcIndexPage>("bili_pgc_index", {
+    seasonType,
+    page,
+    pageSize,
+    year,
+    isFinished: finished,
+  });
+}
+
+export function fetchPgcTimeline(
+  seasonType: PgcSeasonType
+): Promise<PgcTimeline> {
+  return invoke<PgcTimeline>("bili_pgc_timeline", { seasonType });
+}
+
+export function fetchPgcSeason(seasonId: string): Promise<PgcSeasonDetail> {
+  return invoke<PgcSeasonDetail>("bili_pgc_season", { seasonId });
 }
 
 export function fetchVideoDetail(bvid: string): Promise<VideoDetail> {

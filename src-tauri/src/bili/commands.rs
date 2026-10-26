@@ -11,6 +11,7 @@ use super::{
         FavoriteResourcePage, HistoryPage, ResumePoint, SpaceProfile, SpaceVideoPage,
         WatchLaterPage,
     },
+    pgc::{PgcIndexPage, PgcSeasonDetail, PgcTimeline},
     playurl::PlaybackSession,
     search::{SearchKind, SearchPage, SearchSuggestion},
     social::{FavoriteFolder, TripleResult, VideoActionState},
@@ -35,6 +36,46 @@ pub async fn bili_video_detail(
     bvid: String,
 ) -> Result<VideoDetail, BiliCommandError> {
     client.video_detail(&bvid).await.map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn bili_pgc_timeline(
+    client: State<'_, BiliClient>,
+    season_type: Option<u8>,
+) -> Result<PgcTimeline, BiliCommandError> {
+    client
+        .pgc_timeline(season_type.unwrap_or(1))
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn bili_pgc_index(
+    client: State<'_, BiliClient>,
+    season_type: Option<u8>,
+    page: Option<u32>,
+    page_size: Option<u32>,
+    year: Option<u32>,
+    is_finished: Option<bool>,
+) -> Result<PgcIndexPage, BiliCommandError> {
+    client
+        .pgc_index(
+            season_type.unwrap_or(1),
+            page.unwrap_or(1),
+            page_size.unwrap_or(18),
+            year,
+            is_finished,
+        )
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn bili_pgc_season(
+    client: State<'_, BiliClient>,
+    season_id: u64,
+) -> Result<PgcSeasonDetail, BiliCommandError> {
+    client.pgc_season(season_id).await.map_err(Into::into)
 }
 
 #[tauri::command]
