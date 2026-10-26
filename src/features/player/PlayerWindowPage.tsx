@@ -165,24 +165,24 @@ export default function PlayerWindowPage() {
   return (
     <div
       data-testid="player-window-page"
-      className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-[#09090b] text-white"
+      className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#09090b] text-white"
     >
       <div
         className={cn(
-          "flex w-full flex-1 flex-col justify-center p-3 sm:p-4",
+          "flex min-h-0 w-full flex-1 items-stretch justify-center p-3 sm:p-4",
           theater && "p-0"
         )}
       >
-        <div className="mx-auto w-full max-w-[1440px]">
+        <div className="relative mx-auto flex h-full min-h-0 w-full max-w-[1440px]">
           {playbackQuery.isPending ? (
-            <div className="flex aspect-video w-full items-center justify-center rounded-lg bg-black">
+            <div className="flex size-full items-center justify-center rounded-lg bg-black">
               <LoaderCircle
                 className="size-8 animate-spin text-white/75"
                 aria-label={t("Player.loading")}
               />
             </div>
           ) : playbackQuery.error ? (
-            <div className="flex aspect-video w-full flex-col items-center justify-center gap-3 rounded-lg bg-black px-6 text-center">
+            <div className="flex size-full flex-col items-center justify-center gap-3 rounded-lg bg-black px-6 text-center">
               <p className="text-sm text-white/80">{t("Player.unavailable")}</p>
               <div className="flex gap-2">
                 <Button
@@ -225,7 +225,7 @@ export default function PlayerWindowPage() {
             />
           ) : null}
           {danmakuQuery.isError && (
-            <p className="mt-2 text-[11px] text-white/55">
+            <p className="pointer-events-none absolute top-2 left-2 z-40 rounded-sm bg-black/70 px-2 py-1 text-[11px] text-white/70">
               {t("Danmaku.unavailable")}
             </p>
           )}

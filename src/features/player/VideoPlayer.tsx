@@ -370,7 +370,7 @@ export default function VideoPlayer({
       onMouseMove={showControls}
       onMouseLeave={() => playing && setControlsVisible(false)}
       className={cn(
-        "group relative isolate aspect-video w-full overflow-hidden rounded-lg bg-black text-white outline-none",
+        "group relative isolate size-full min-h-0 overflow-hidden rounded-lg bg-black text-white outline-none",
         fullscreen && "rounded-none",
         theater && "shadow-lg"
       )}

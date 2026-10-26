@@ -110,6 +110,9 @@ describe("PlayerWindowPage", () => {
     renderPlayer();
 
     expect(await screen.findByTestId("video-player")).toBeVisible();
+    expect(screen.getByTestId("player-window-page")).toHaveClass(
+      "overflow-hidden"
+    );
     expect(screen.getByText("测试视频")).toBeVisible();
     expect(createPlaybackSessionMock).toHaveBeenCalledWith(
       "BV1xx411c7mD",
