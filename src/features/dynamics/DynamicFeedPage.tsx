@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import {
   ExternalLink,
@@ -13,6 +14,7 @@ import {
 import { Link } from "react-router";
 
 import AsyncErrorState from "@/components/feedback/AsyncErrorState";
+import ImagePreviewDialog from "@/components/media/ImagePreviewDialog";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useI18n, useToast } from "@/composables";
@@ -52,6 +54,7 @@ function DynamicSkeleton() {
 function DynamicCard({ item }: { item: DynamicItem }) {
   const { lang, t } = useI18n();
   const { error } = useToast();
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
 
   async function openTarget() {
     try {
@@ -94,32 +97,50 @@ function DynamicCard({ item }: { item: DynamicItem }) {
         </div>
       </Link>
     ) : item.images.length > 0 ? (
-      <button
-        type="button"
-        onClick={() => void openTarget()}
-        className={cn(
-          "mt-3 grid max-w-xl gap-1.5 overflow-hidden rounded-md text-left",
-          item.images.length === 1
-            ? "grid-cols-1"
-            : item.images.length === 2
-              ? "grid-cols-2"
-              : "grid-cols-3"
-        )}
-      >
-        {item.images.map((image, index) => (
-          <CoverImage
-            key={image.url}
-            src={image.url}
-            alt={`${item.author.name} ${index + 1}`}
-            className={cn(
-              "bg-muted w-full",
-              item.images.length === 1
-                ? "aspect-video max-h-96"
-                : "aspect-square"
-            )}
-          />
-        ))}
-      </button>
+      <>
+        <div
+          className={cn(
+            "mt-3 grid max-w-xl gap-1.5 overflow-hidden rounded-md",
+            item.images.length === 1
+              ? "grid-cols-1"
+              : item.images.length === 2
+                ? "grid-cols-2"
+                : "grid-cols-3"
+          )}
+        >
+          {item.images.map((image, index) => (
+            <button
+              key={image.url}
+              type="button"
+              aria-label={t("ImagePreview.open", {
+                current: index + 1,
+                total: item.images.length,
+              })}
+              onClick={() => setPreviewIndex(index)}
+              className={cn(
+                "group bg-muted focus-visible:ring-ring relative overflow-hidden text-left focus-visible:ring-2 focus-visible:outline-none",
+                item.images.length === 1
+                  ? "aspect-video max-h-96 w-full"
+                  : "aspect-square"
+              )}
+            >
+              <CoverImage
+                src={image.url}
+                alt={`${item.author.name} ${index + 1}`}
+                className="size-full transition-transform duration-300 group-hover:scale-[1.02]"
+              />
+            </button>
+          ))}
+        </div>
+        <ImagePreviewDialog
+          images={item.images.map((image, index) => ({
+            ...image,
+            alt: `${item.author.name} ${index + 1}`,
+          }))}
+          activeIndex={previewIndex}
+          onIndexChange={setPreviewIndex}
+        />
+      </>
     ) : null;
 
   return (
