@@ -2,12 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Check,
-  Gauge,
   Maximize,
   Minimize,
   Pause,
+  PictureInPicture2,
   Play,
-  RotateCcw,
   Volume2,
   VolumeX,
 } from "lucide-react";
@@ -22,7 +21,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { useNavigatorContext } from "@/contexts/navigator";
-import { formatCount, formatDuration } from "@/lib/format";
+import { formatCount } from "@/lib/format";
 import { createLogger } from "@/lib/logger";
 
 import { useParams } from "react-router";
@@ -30,10 +29,33 @@ import { useParams } from "react-router";
 const log = createLogger("Media/Video");
 const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
 const CONTROL_BUTTON_CLASS =
-  "size-8 rounded-md text-white hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:ring-white/80";
+  "size-8 rounded-sm text-white hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-white/80";
+const QUALITY_LABELS: Record<number, string> = {
+  16: "360P",
+  32: "480P",
+  64: "720P",
+  74: "720P60",
+  80: "1080P",
+  112: "1080P+",
+  116: "1080P60",
+  120: "4K",
+  125: "HDR",
+  126: "杜比视界",
+  127: "8K",
+};
 
 function formatPlaybackRate(rate: number) {
-  return `${Number.isInteger(rate) ? rate.toFixed(1) : rate}x`;
+  return `${Number.isInteger(rate) ? rate.toFixed(1) : rate}X`;
+}
+
+function formatPlayerTime(seconds?: number) {
+  if (!Number.isFinite(seconds) || (seconds ?? 0) < 0) return "--:--";
+  const total = Math.floor(seconds ?? 0);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const remainingSeconds = total % 60;
+  const clock = `${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
+  return hours > 0 ? `${hours}:${clock}` : clock;
 }
 
 export default function VideoView() {
@@ -50,6 +72,9 @@ export default function VideoView() {
   const [playbackRate, setPlaybackRate] = useState(1);
   const [volume, setVolume] = useState(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isPictureInPicture, setIsPictureInPicture] = useState(false);
+  const [pictureInPictureSupported, setPictureInPictureSupported] =
+    useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [speedMenuOpen, setSpeedMenuOpen] = useState(false);
   const hideTimer = useRef<number | null>(null);
@@ -135,6 +160,45 @@ export default function VideoView() {
       document.removeEventListener("fullscreenchange", handleFullscreenChange);
   }, []);
 
+  useEffect(() => {
+    const video = videoRef.current;
+    setPictureInPictureSupported(
+      Boolean(
+        document.pictureInPictureEnabled &&
+        video &&
+        typeof video.requestPictureInPicture === "function"
+      )
+    );
+    if (!video) return;
+
+    const handleEnterPictureInPicture = () => {
+      setIsPictureInPicture(true);
+      log.debug("picture-in-picture entered");
+    };
+    const handleLeavePictureInPicture = () => {
+      setIsPictureInPicture(false);
+      log.debug("picture-in-picture left");
+    };
+    video.addEventListener(
+      "enterpictureinpicture",
+      handleEnterPictureInPicture
+    );
+    video.addEventListener(
+      "leavepictureinpicture",
+      handleLeavePictureInPicture
+    );
+    return () => {
+      video.removeEventListener(
+        "enterpictureinpicture",
+        handleEnterPictureInPicture
+      );
+      video.removeEventListener(
+        "leavepictureinpicture",
+        handleLeavePictureInPicture
+      );
+    };
+  }, []);
+
   const scheduleHideControls = useCallback(() => {
     if (hideTimer.current) {
       window.clearTimeout(hideTimer.current);
@@ -184,6 +248,12 @@ export default function VideoView() {
     return fromResponse || fromElement;
   }, [playback]);
 
+  const qualityLabel = useMemo(() => {
+    const stream = playback?.streams[0];
+    if (!stream) return "";
+    return QUALITY_LABELS[stream.qualityId] ?? stream.qualityLabel;
+  }, [playback]);
+
   const togglePlay = () => {
     const video = videoRef.current;
     if (!video) return;
@@ -210,16 +280,25 @@ export default function VideoView() {
     }
   };
 
-  const step = (seconds: number) => {
+  const togglePictureInPicture = async () => {
     const video = videoRef.current;
-    if (!video) return;
-    const videoDuration = Number.isFinite(video.duration)
-      ? video.duration
-      : duration;
-    video.currentTime = Math.max(
-      0,
-      Math.min(videoDuration, video.currentTime + seconds)
-    );
+    if (
+      !video ||
+      !document.pictureInPictureEnabled ||
+      typeof video.requestPictureInPicture !== "function"
+    ) {
+      log.warn("picture-in-picture unsupported");
+      return;
+    }
+    try {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+      } else {
+        await video.requestPictureInPicture();
+      }
+    } catch (err) {
+      log.warn("picture-in-picture toggle failed", { err });
+    }
   };
 
   const changePlaybackRate = (rate: number) => {
@@ -316,7 +395,7 @@ export default function VideoView() {
             ) : null}
 
             <div
-              className={`absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/90 via-black/65 to-transparent transition-[transform,opacity] duration-200 ${
+              className={`absolute inset-x-0 bottom-0 z-20 transition-[transform,opacity] duration-200 ${
                 controlsVisible
                   ? "translate-y-0 opacity-100"
                   : "pointer-events-none translate-y-2 opacity-0"
@@ -324,10 +403,11 @@ export default function VideoView() {
               onClick={(event) => event.stopPropagation()}
               onDoubleClick={(event) => event.stopPropagation()}
             >
-              <div className="px-2 pt-1 sm:px-3">
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-black/35 to-transparent" />
+              <div className="relative">
                 <Slider
                   aria-label="播放进度"
-                  className="h-6 [&_[data-slot=slider-range]]:bg-[var(--player-accent)] [&_[data-slot=slider-thumb]]:border-[var(--player-accent)] [&_[data-slot=slider-thumb]]:bg-white [&_[data-slot=slider-track]]:bg-white/25"
+                  className="h-4 w-full [&_[data-slot=slider-range]]:bg-[var(--player-accent)] [&_[data-slot=slider-thumb]]:size-2 [&_[data-slot=slider-thumb]]:border-[var(--player-accent)] [&_[data-slot=slider-thumb]]:bg-white [&_[data-slot=slider-track]]:h-[3px] [&_[data-slot=slider-track]]:rounded-none [&_[data-slot=slider-track]]:bg-white/25"
                   value={[Math.min(currentTime, duration)]}
                   max={duration || 1}
                   step={1}
@@ -336,118 +416,134 @@ export default function VideoView() {
                     if (video) video.currentTime = value;
                   }}
                 />
-              </div>
 
-              <div className="flex h-11 items-center gap-1 px-2 pb-1 sm:px-3">
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  className={CONTROL_BUTTON_CLASS}
-                  aria-label={playing ? "暂停" : "播放"}
-                  title={playing ? "暂停" : "播放"}
-                  onClick={togglePlay}
-                >
-                  {playing ? (
-                    <Pause className="fill-current" />
-                  ) : (
-                    <Play className="fill-current" />
-                  )}
-                </Button>
-                <span className="min-w-[88px] px-1 text-[11px] text-white/90 tabular-nums sm:text-xs">
-                  {formatDuration(currentTime)} / {formatDuration(duration)}
-                </span>
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  className={CONTROL_BUTTON_CLASS}
-                  aria-label="后退 10 秒"
-                  title="后退 10 秒"
-                  onClick={() => step(-10)}
-                >
-                  <RotateCcw />
-                </Button>
-
-                <div className="ml-auto flex items-center gap-0.5 sm:gap-1">
+                <div className="flex h-9 items-center gap-2 bg-black/20 px-3 sm:h-10 sm:gap-3 sm:px-4">
                   <Button
                     type="button"
                     size="icon"
                     variant="ghost"
-                    className={CONTROL_BUTTON_CLASS}
-                    aria-label={muted || volume === 0 ? "取消静音" : "静音"}
-                    title={muted || volume === 0 ? "取消静音" : "静音"}
-                    onClick={toggleMute}
+                    className={`${CONTROL_BUTTON_CLASS} -ml-1`}
+                    aria-label={playing ? "暂停" : "播放"}
+                    title={playing ? "暂停" : "播放"}
+                    onClick={togglePlay}
                   >
-                    {muted || volume === 0 ? <VolumeX /> : <Volume2 />}
+                    {playing ? (
+                      <Pause className="fill-current" />
+                    ) : (
+                      <Play className="fill-current" />
+                    )}
                   </Button>
-                  <Slider
-                    aria-label="音量"
-                    className="hidden w-16 sm:flex [&_[data-slot=slider-range]]:bg-white [&_[data-slot=slider-thumb]]:size-3 [&_[data-slot=slider-thumb]]:border-white [&_[data-slot=slider-thumb]]:bg-white [&_[data-slot=slider-track]]:bg-white/25"
-                    value={[muted ? 0 : volume]}
-                    max={1}
-                    step={0.05}
-                    onValueChange={([value]) => changeVolume(value)}
-                  />
+                  <span className="text-xs font-medium whitespace-nowrap text-white/90 tabular-nums">
+                    {formatPlayerTime(currentTime)} /{" "}
+                    {formatPlayerTime(duration)}
+                  </span>
 
-                  <div className="relative">
+                  <div className="ml-auto flex items-center gap-2 sm:gap-3">
+                    {qualityLabel ? (
+                      <span
+                        className="hidden text-xs text-white/90 sm:inline"
+                        title="当前清晰度"
+                      >
+                        {qualityLabel}
+                      </span>
+                    ) : null}
+
+                    <div className="relative">
+                      <button
+                        type="button"
+                        className="h-8 rounded-sm px-0.5 text-xs font-medium text-white/90 tabular-nums hover:text-white focus-visible:ring-2 focus-visible:ring-white/80 focus-visible:outline-none"
+                        aria-label={`播放速度 ${formatPlaybackRate(playbackRate)}`}
+                        aria-haspopup="menu"
+                        aria-expanded={speedMenuOpen}
+                        title="播放速度"
+                        onClick={() => setSpeedMenuOpen((open) => !open)}
+                      >
+                        {playbackRate === 1
+                          ? "倍速"
+                          : formatPlaybackRate(playbackRate)}
+                      </button>
+                      {speedMenuOpen ? (
+                        <div
+                          role="menu"
+                          aria-label="播放速度"
+                          className="absolute right-0 bottom-full z-30 mb-2 w-40 rounded-md border border-white/10 bg-black/95 p-1.5 text-white shadow-2xl backdrop-blur-md"
+                        >
+                          <div className="px-2 py-1 text-xs text-white/60">
+                            播放速度
+                          </div>
+                          <div className="grid grid-cols-2 gap-1">
+                            {PLAYBACK_RATES.map((rate) => (
+                              <button
+                                key={rate}
+                                type="button"
+                                role="menuitemradio"
+                                aria-checked={rate === playbackRate}
+                                className="flex h-8 items-center justify-between rounded-md px-2 text-xs text-white/85 tabular-nums hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-white/80 focus-visible:outline-none"
+                                onClick={() => changePlaybackRate(rate)}
+                              >
+                                <span>{formatPlaybackRate(rate)}</span>
+                                {rate === playbackRate ? (
+                                  <Check className="size-3.5 text-[var(--player-accent)]" />
+                                ) : null}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="group/volume relative flex h-8 items-center">
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        className={`${CONTROL_BUTTON_CLASS} -mr-1`}
+                        aria-label={muted || volume === 0 ? "取消静音" : "静音"}
+                        title={muted || volume === 0 ? "取消静音" : "静音"}
+                        onClick={toggleMute}
+                      >
+                        {muted || volume === 0 ? <VolumeX /> : <Volume2 />}
+                      </Button>
+                      <div className="absolute right-0 bottom-full z-30 mb-2 hidden items-center rounded-md border border-white/10 bg-black/90 p-2 shadow-xl group-focus-within/volume:flex group-hover/volume:flex">
+                        <Slider
+                          aria-label="音量"
+                          className="flex w-24 [&_[data-slot=slider-range]]:bg-white [&_[data-slot=slider-thumb]]:size-3 [&_[data-slot=slider-thumb]]:border-white [&_[data-slot=slider-thumb]]:bg-white [&_[data-slot=slider-track]]:bg-white/25"
+                          value={[muted ? 0 : volume]}
+                          max={1}
+                          step={0.05}
+                          onValueChange={([value]) => changeVolume(value)}
+                        />
+                      </div>
+                    </div>
+
+                    {pictureInPictureSupported ? (
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        className={`${CONTROL_BUTTON_CLASS} hidden sm:inline-flex`}
+                        aria-label={
+                          isPictureInPicture ? "退出画中画" : "画中画"
+                        }
+                        title={isPictureInPicture ? "退出画中画" : "画中画"}
+                        onClick={() => void togglePictureInPicture()}
+                      >
+                        <PictureInPicture2 />
+                      </Button>
+                    ) : null}
+
                     <Button
                       type="button"
-                      size="sm"
+                      size="icon"
                       variant="ghost"
-                      className="h-8 gap-1 rounded-md px-2 text-xs font-semibold text-white hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:ring-white/80"
-                      aria-label={`播放速度 ${formatPlaybackRate(playbackRate)}`}
-                      aria-haspopup="menu"
-                      aria-expanded={speedMenuOpen}
-                      title="播放速度"
-                      onClick={() => setSpeedMenuOpen((open) => !open)}
+                      className={CONTROL_BUTTON_CLASS}
+                      aria-label={isFullscreen ? "退出全屏" : "全屏"}
+                      title={isFullscreen ? "退出全屏" : "全屏"}
+                      onClick={() => void toggleFullscreen()}
                     >
-                      <Gauge className="size-4" />
-                      <span className="tabular-nums">
-                        {formatPlaybackRate(playbackRate)}
-                      </span>
+                      {isFullscreen ? <Minimize /> : <Maximize />}
                     </Button>
-                    {speedMenuOpen ? (
-                      <div
-                        role="menu"
-                        aria-label="播放速度"
-                        className="absolute right-0 bottom-full z-30 mb-2 w-40 rounded-md border border-white/10 bg-black/95 p-1.5 text-white shadow-2xl backdrop-blur-md"
-                      >
-                        <div className="px-2 py-1 text-xs text-white/60">
-                          播放速度
-                        </div>
-                        <div className="grid grid-cols-2 gap-1">
-                          {PLAYBACK_RATES.map((rate) => (
-                            <button
-                              key={rate}
-                              type="button"
-                              role="menuitemradio"
-                              aria-checked={rate === playbackRate}
-                              className="flex h-8 items-center justify-between rounded-md px-2 text-xs text-white/85 tabular-nums hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-white/80 focus-visible:outline-none"
-                              onClick={() => changePlaybackRate(rate)}
-                            >
-                              <span>{formatPlaybackRate(rate)}</span>
-                              {rate === playbackRate ? (
-                                <Check className="size-3.5 text-[var(--player-accent)]" />
-                              ) : null}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
                   </div>
-
-                  <Button
-                    type="button"
-                    size="icon"
-                    variant="ghost"
-                    className={CONTROL_BUTTON_CLASS}
-                    aria-label={isFullscreen ? "退出全屏" : "全屏"}
-                    title={isFullscreen ? "退出全屏" : "全屏"}
-                    onClick={() => void toggleFullscreen()}
-                  >
-                    {isFullscreen ? <Minimize /> : <Maximize />}
-                  </Button>
                 </div>
               </div>
             </div>
