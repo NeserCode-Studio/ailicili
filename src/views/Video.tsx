@@ -77,7 +77,9 @@ export default function VideoView() {
     useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [speedMenuOpen, setSpeedMenuOpen] = useState(false);
+  const [volumePanelOpen, setVolumePanelOpen] = useState(false);
   const hideTimer = useRef<number | null>(null);
+  const surfaceClickTimer = useRef<number | null>(null);
   const playerRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
@@ -204,12 +206,12 @@ export default function VideoView() {
       window.clearTimeout(hideTimer.current);
       hideTimer.current = null;
     }
-    if (speedMenuOpen) return;
+    if (speedMenuOpen || volumePanelOpen) return;
     hideTimer.current = window.setTimeout(() => {
       hideTimer.current = null;
       setControlsVisible(false);
     }, 2400);
-  }, [speedMenuOpen]);
+  }, [speedMenuOpen, volumePanelOpen]);
 
   const revealControls = useCallback(() => {
     setControlsVisible(true);
@@ -217,7 +219,7 @@ export default function VideoView() {
   }, [scheduleHideControls]);
 
   useEffect(() => {
-    if (!speedMenuOpen) return;
+    if (!speedMenuOpen && !volumePanelOpen) return;
     setControlsVisible(true);
     if (hideTimer.current) {
       window.clearTimeout(hideTimer.current);
@@ -228,16 +230,20 @@ export default function VideoView() {
       if (event.key !== "Escape") return;
       event.preventDefault();
       setSpeedMenuOpen(false);
+      setVolumePanelOpen(false);
       revealControls();
     };
     document.addEventListener("keydown", closeOnEscape);
     return () => document.removeEventListener("keydown", closeOnEscape);
-  }, [revealControls, speedMenuOpen]);
+  }, [revealControls, speedMenuOpen, volumePanelOpen]);
 
   useEffect(() => {
     return () => {
       if (hideTimer.current) {
         window.clearTimeout(hideTimer.current);
+      }
+      if (surfaceClickTimer.current !== null) {
+        window.clearTimeout(surfaceClickTimer.current);
       }
     };
   }, []);
@@ -307,13 +313,35 @@ export default function VideoView() {
     log.info("playback rate changed", { rate });
   };
 
+  const cancelPendingSurfaceClick = () => {
+    if (surfaceClickTimer.current === null) return;
+    window.clearTimeout(surfaceClickTimer.current);
+    surfaceClickTimer.current = null;
+  };
+
   const handleSurfaceClick = () => {
     revealControls();
     if (speedMenuOpen) {
       setSpeedMenuOpen(false);
       return;
     }
-    togglePlay();
+    if (volumePanelOpen) {
+      setVolumePanelOpen(false);
+      return;
+    }
+    if (surfaceClickTimer.current !== null) {
+      cancelPendingSurfaceClick();
+      return;
+    }
+    surfaceClickTimer.current = window.setTimeout(() => {
+      surfaceClickTimer.current = null;
+      togglePlay();
+    }, 280);
+  };
+
+  const handleSurfaceDoubleClick = () => {
+    cancelPendingSurfaceClick();
+    void toggleFullscreen();
   };
 
   const toggleMute = () => {
@@ -376,7 +404,7 @@ export default function VideoView() {
               className="absolute inset-0 cursor-pointer"
               aria-hidden="true"
               onClick={handleSurfaceClick}
-              onDoubleClick={toggleFullscreen}
+              onDoubleClick={handleSurfaceDoubleClick}
             />
 
             {!playing ? (
@@ -492,7 +520,21 @@ export default function VideoView() {
                       ) : null}
                     </div>
 
-                    <div className="group/volume relative flex h-8 items-center">
+                    <div
+                      className="relative flex h-8 items-center"
+                      onMouseEnter={() => setVolumePanelOpen(true)}
+                      onMouseLeave={() => setVolumePanelOpen(false)}
+                      onFocus={() => setVolumePanelOpen(true)}
+                      onBlur={(event) => {
+                        if (
+                          !event.currentTarget.contains(
+                            event.relatedTarget as Node | null
+                          )
+                        ) {
+                          setVolumePanelOpen(false);
+                        }
+                      }}
+                    >
                       <Button
                         type="button"
                         size="icon"
@@ -504,16 +546,20 @@ export default function VideoView() {
                       >
                         {muted || volume === 0 ? <VolumeX /> : <Volume2 />}
                       </Button>
-                      <div className="absolute right-0 bottom-full z-30 mb-2 hidden items-center rounded-md border border-white/10 bg-black/90 p-2 shadow-xl group-focus-within/volume:flex group-hover/volume:flex">
-                        <Slider
-                          aria-label="音量"
-                          className="flex w-24 [&_[data-slot=slider-range]]:bg-white [&_[data-slot=slider-thumb]]:size-3 [&_[data-slot=slider-thumb]]:border-white [&_[data-slot=slider-thumb]]:bg-white [&_[data-slot=slider-track]]:bg-white/25"
-                          value={[muted ? 0 : volume]}
-                          max={1}
-                          step={0.05}
-                          onValueChange={([value]) => changeVolume(value)}
-                        />
-                      </div>
+                      {volumePanelOpen ? (
+                        <div className="absolute right-0 bottom-full z-30 pb-2">
+                          <div className="flex items-center rounded-md border border-white/10 bg-black/90 p-2 shadow-xl">
+                            <Slider
+                              aria-label="音量"
+                              className="flex w-24 [&_[data-slot=slider-range]]:bg-white [&_[data-slot=slider-thumb]]:size-3 [&_[data-slot=slider-thumb]]:border-white [&_[data-slot=slider-thumb]]:bg-white [&_[data-slot=slider-track]]:bg-white/25"
+                              value={[muted ? 0 : volume]}
+                              max={1}
+                              step={0.05}
+                              onValueChange={([value]) => changeVolume(value)}
+                            />
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
 
                     {pictureInPictureSupported ? (
