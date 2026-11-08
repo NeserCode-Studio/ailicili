@@ -26,6 +26,7 @@ import { createLogger } from "@/lib/logger";
 const log = createLogger("App");
 
 const Home = lazy(() => import("@/views/Home"));
+const VideoView = lazy(() => import("@/views/Video"));
 const Software = lazy(() => import("@/views/Software"));
 const Framework = lazy(() => import("@/views/Framework"));
 const TrayMenu = lazy(() => import("@/views/TrayMenu"));
@@ -168,6 +169,10 @@ function App() {
                       <Suspense fallback={null}>
                         <Routes>
                           <Route path="/" index element={<Home />} />
+                          <Route
+                            path="/video/:videoId"
+                            element={<VideoView />}
+                          />
                           <Route path="/software" element={<Software />} />
                           <Route path="/framework" element={<Framework />} />
                         </Routes>

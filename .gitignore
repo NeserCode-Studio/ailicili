@@ -28,7 +28,11 @@ dist-ssr
 
 # Agent workspace data
 .agents/
+.agent/
 .omo/
+
+# Backend API evidence (not for version control)
+docs/
 
 # TypeScript incremental build cache
 *.tsbuildinfo

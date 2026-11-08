@@ -5,6 +5,10 @@ use tauri::{
     Emitter, Position, Size,
 };
 
+mod bilibili;
+mod domain;
+mod storage;
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
@@ -16,6 +20,74 @@ fn open_devtools(app: tauri::AppHandle) -> Result<(), String> {
         .ok_or_else(|| "Main window not found".to_string())?
         .open_devtools();
     Ok(())
+}
+
+#[tauri::command]
+async fn get_popular_videos(page: u32) -> Result<domain::PagedVideos, String> {
+    bilibili::BilibiliClient::new()
+        .map_err(|err| err.to_string())?
+        .popular(page)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn get_video_playback(
+    video_id: String,
+    cid: i64,
+    quality: i64,
+) -> Result<domain::PlaybackInfo, String> {
+    bilibili::BilibiliClient::new()
+        .map_err(|err| err.to_string())?
+        .video_playback(&video_id, cid, quality)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn get_video_detail(video_id: String) -> Result<domain::VideoDetail, String> {
+    bilibili::BilibiliClient::new()
+        .map_err(|err| err.to_string())?
+        .video_detail(&video_id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn get_search_videos(keyword: String, page: u32) -> Result<domain::PagedVideos, String> {
+    bilibili::BilibiliClient::new()
+        .map_err(|err| err.to_string())?
+        .search(&keyword, page)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn list_local_history() -> Result<Vec<domain::HistoryEntry>, String> {
+    tauri::async_runtime::spawn_blocking(storage::list_history)
+        .await
+        .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+async fn save_local_history(
+    detail: domain::VideoDetail,
+    page_cid: i64,
+    page_title: String,
+    progress_seconds: i64,
+    duration_seconds: i64,
+) -> Result<Vec<domain::HistoryEntry>, String> {
+    let entry = domain::HistoryEntry {
+        card: detail.card,
+        page_cid,
+        page_title,
+        progress_seconds,
+        duration_seconds,
+        updated_at: chrono::Utc::now().timestamp(),
+    };
+    tauri::async_runtime::spawn_blocking(move || storage::save_history_entry(entry))
+        .await
+        .map_err(|err| err.to_string())?
 }
 
 /// 左键点击托盘图标：显隐主窗口。
@@ -92,7 +164,16 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet, open_devtools])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            open_devtools,
+            get_popular_videos,
+            get_video_playback,
+            get_video_detail,
+            get_search_videos,
+            list_local_history,
+            save_local_history
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

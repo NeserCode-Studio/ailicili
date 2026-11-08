@@ -1,16 +1,18 @@
 <div align="center">
 
-# app-template
+# ailicili
 
-**Tauri 2 + React 19 桌面应用开发模板**
+**Tauri 2 + React 19 多端视频与直播观看应用**
 
-开箱即用的桌面应用骨架 —— 窗口管理、系统托盘、命令面板、设置中心、多语言、主题切换，一次配好，直接写业务。
+以 Bilibili UGC 视频为主的个人学习与研究项目，后续扩展直播源与多端播放能力。当前阶段包含匿名热门视频首页与基础 MP4 播放。
 
 [![Tauri](https://img.shields.io/badge/Tauri-2-blue?style=flat-round&logo=tauri&logoColor=white)](https://tauri.app)
 [![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-round&logo=react&logoColor=black)](https://react.dev)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-round&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-4-06B6D4?style=flat-round&logo=tailwindcss&logoColor=white)](https://tailwindcss.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=flat-round)](LICENSE)
+
+> 本项目仅用于个人学习与研究：不用于商业分发，不提供内容源，不绕过付费或区域限制。使用公开接口时可能遇到平台风控或接口变更，本项目不承诺内容可用性。
 
 </div>
 

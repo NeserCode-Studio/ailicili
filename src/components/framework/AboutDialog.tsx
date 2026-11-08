@@ -94,6 +94,9 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
         <p className="text-center text-muted-xs">
           {t("About.copyright")}
         </p>
+        <p className="text-center text-muted-xs">
+          {t("About.notice")}
+        </p>
 
         <div className="flex items-center justify-between gap-2">
           <Button

@@ -195,7 +195,16 @@
     @apply relative z-0 h-full w-full transition-colors duration-100 ease-in-out;
   }
   .view-home {
-    @apply flex h-full min-h-screen w-full flex-col items-center justify-center;
+    @apply flex h-full w-full flex-col;
+  }
+  .video-grid {
+    @apply grid grid-cols-1 gap-4 p-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4;
+  }
+  .video-card-cover {
+    @apply relative aspect-video w-full overflow-hidden rounded-lg bg-muted;
+  }
+  .video-card-title {
+    @apply line-clamp-2 text-sm font-medium text-card-foreground;
   }
   .view-title {
     @apply h-full w-fit text-2xl font-semibold;
