@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Pause, Play, RotateCcw, Volume2, VolumeX } from "lucide-react";
+import {
+  ArrowLeft,
+  Gauge,
+  Maximize,
+  Minimize,
+  Pause,
+  Play,
+  RotateCcw,
+  Volume2,
+  VolumeX,
+} from "lucide-react";
 
 import {
   getVideoDetail,
@@ -29,6 +39,12 @@ export default function VideoView() {
   const [muted, setMuted] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [durationSeconds, setDurationSeconds] = useState(0);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const [volume, setVolume] = useState(1);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const hideTimer = useRef<number | null>(null);
+  const playerRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -85,6 +101,43 @@ export default function VideoView() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    const video = videoRef.current;
+    if (video) {
+      video.playbackRate = playbackRate;
+      video.volume = volume;
+      video.muted = muted;
+    }
+  }, [muted, playbackRate, volume]);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, []);
+
+  const scheduleHideControls = useCallback(() => {
+    if (hideTimer.current) {
+      window.clearTimeout(hideTimer.current);
+    }
+    hideTimer.current = window.setTimeout(() => setControlsVisible(false), 2400);
+  }, []);
+
+  const revealControls = useCallback(() => {
+    setControlsVisible(true);
+    scheduleHideControls();
+  }, [scheduleHideControls]);
+
+  useEffect(() => {
+    return () => {
+      if (hideTimer.current) {
+        window.clearTimeout(hideTimer.current);
+      }
+    };
+  }, []);
+
   const duration = useMemo(() => {
     const fromResponse = playback?.durationMs ? playback.durationMs / 1000 : 0;
     const fromElement = videoRef.current?.duration ?? 0;
@@ -98,6 +151,36 @@ export default function VideoView() {
     else video.pause();
   };
 
+  const toggleFullscreen = async () => {
+    if (!playerRef.current) return;
+    if (document.fullscreenElement) {
+      await document.exitFullscreen().catch(() => {});
+    } else {
+      await playerRef.current.requestFullscreen().catch(() => {});
+    }
+  };
+
+  const step = (seconds: number) => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + seconds));
+  };
+
+  const cycleRate = () => {
+    const rates = [0.5, 0.75, 1, 1.25, 1.5, 2];
+    const index = rates.indexOf(playbackRate);
+    setPlaybackRate(rates[(index + 1) % rates.length]);
+  };
+
+  const toggleMute = () => {
+    setMuted((value) => !value);
+  };
+
+  const changeVolume = (value: number) => {
+    setVolume(value);
+    setMuted(value === 0);
+  };
+
   return (
     <div className="stack-3 h-full p-4">
       <div className="flex items-center gap-3">
@@ -108,7 +191,10 @@ export default function VideoView() {
           {detail?.card.title ?? "Bilibili UGC"}
         </span>
       </div>
-      <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-black">
+      <div
+        ref={playerRef}
+        className="relative aspect-video w-full overflow-hidden rounded-lg bg-black"
+      >
         <video
           ref={videoRef}
           className="h-full w-full"
@@ -118,46 +204,84 @@ export default function VideoView() {
           onPause={() => setPlaying(false)}
           onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
         />
+
         {playback ? (
-          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-3">
-            <Slider
-              className="mb-2"
-              value={[Math.min(currentTime, duration)]}
-              max={duration || 1}
-              step={1}
-              onValueChange={([value]) => {
-                const video = videoRef.current;
-                if (video) video.currentTime = value;
-              }}
-            />
-            <div className="flex items-center gap-3">
-              <Button
-                size="icon"
-                variant="ghost"
-                className="text-white hover:bg-white/20"
-                onClick={togglePlay}
-              >
-                {playing ? <Pause /> : <Play />}
-              </Button>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="text-white hover:bg-white/20"
-                onClick={() => void load()}
-              >
-                <RotateCcw />
-              </Button>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="text-white hover:bg-white/20"
-                onClick={() => setMuted((value) => !value)}
-              >
-                {muted ? <VolumeX /> : <Volume2 />}
-              </Button>
-              <span className="text-xs text-white">
-                {formatDuration(currentTime)} / {formatDuration(duration)}
-              </span>
+          <div
+            className="absolute inset-0"
+            onMouseMove={revealControls}
+            onDoubleClick={toggleFullscreen}
+            onClick={togglePlay}
+          >
+            <div
+              className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-3 transition-opacity duration-150 ${
+                controlsVisible ? "opacity-100" : "pointer-events-none opacity-0"
+              }`}
+            >
+              <Slider
+                className="mb-2"
+                value={[Math.min(currentTime, duration)]}
+                max={duration || 1}
+                step={1}
+                onValueChange={([value]) => {
+                  const video = videoRef.current;
+                  if (video) video.currentTime = value;
+                }}
+              />
+              <div className="flex items-center gap-3">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="text-white hover:bg-white/20"
+                  onClick={togglePlay}
+                >
+                  {playing ? <Pause /> : <Play />}
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="text-white hover:bg-white/20"
+                  onClick={() => step(-10)}
+                >
+                  <RotateCcw />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="text-white hover:bg-white/20"
+                  onClick={toggleMute}
+                >
+                  {muted || volume === 0 ? <VolumeX /> : <Volume2 />}
+                </Button>
+                <Slider
+                  className="w-24"
+                  value={[muted ? 0 : volume]}
+                  max={1}
+                  step={0.05}
+                  onValueChange={([value]) => changeVolume(value)}
+                />
+                <span className="text-xs text-white">
+                  {formatDuration(currentTime)} / {formatDuration(duration)}
+                </span>
+                <div className="ml-auto flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="gap-1 text-white hover:bg-white/20"
+                    onClick={cycleRate}
+                  >
+                    <Gauge className="icon-md" />
+                    {playbackRate}x
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="text-white hover:bg-white/20"
+                    onClick={() => void toggleFullscreen()}
+                  >
+                    {isFullscreen ? <Minimize /> : <Maximize />}
+                  </Button>
+                </div>
+              </div>
             </div>
           </div>
         ) : null}
