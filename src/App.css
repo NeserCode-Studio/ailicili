@@ -200,11 +200,18 @@
   .video-grid {
     @apply grid grid-cols-1 gap-4 p-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4;
   }
+  .video-card {
+    @apply flex h-52 w-full flex-col overflow-hidden rounded-lg border border-border/60 bg-card
+      text-left transition-colors hover:border-primary/40 hover:bg-accent/30;
+  }
   .video-card-cover {
-    @apply relative aspect-video w-[80%] overflow-hidden rounded-lg bg-muted;
+    @apply relative h-[55%] min-h-[7.5rem] w-full shrink-0 overflow-hidden bg-muted;
+  }
+  .video-card-info {
+    @apply flex flex-1 flex-col gap-1 overflow-hidden p-3;
   }
   .video-card-title {
-    @apply line-clamp-2 text-sm font-medium text-card-foreground;
+    @apply line-clamp-2 text-sm leading-5 font-medium text-card-foreground;
   }
   .view-title {
     @apply h-full w-fit text-2xl font-semibold;

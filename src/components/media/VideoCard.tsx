@@ -17,7 +17,7 @@ export default function VideoCard({ video }: VideoCardProps) {
   return (
     <button
       type="button"
-      className="group stack-2 rounded-lg border border-border/60 bg-card p-3 text-left transition-colors hover:border-primary/40 hover:bg-accent/30"
+      className="video-card group"
       onClick={() => navigator(`/video/${video.videoId}`)}
     >
       <div className="video-card-cover">
@@ -45,7 +45,7 @@ export default function VideoCard({ video }: VideoCardProps) {
           {formatDuration(video.duration)}
         </span>
       </div>
-      <div className="stack-1">
+      <div className="video-card-info">
         <span className="video-card-title">{video.title}</span>
         <span className="flex items-center gap-1 truncate text-xs text-muted-foreground">
           <User className="h-3 w-3" />
