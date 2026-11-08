@@ -118,34 +118,50 @@ export default function VideoView() {
           onPause={() => setPlaying(false)}
           onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
         />
-      </div>
-      {playback ? (
-        <div className="stack-3 rounded-lg border border-border/60 bg-card p-3">
-          <div className="flex items-center gap-3">
-            <Button size="icon" onClick={togglePlay}>
-              {playing ? <Pause /> : <Play />}
-            </Button>
-            <Button size="icon" onClick={() => void load()}>
-              <RotateCcw />
-            </Button>
-            <Button size="icon" onClick={() => setMuted((value) => !value)}>
-              {muted ? <VolumeX /> : <Volume2 />}
-            </Button>
-            <span className="text-xs text-muted-foreground">
-              {formatDuration(currentTime)} / {formatDuration(duration)}
-            </span>
+        {playback ? (
+          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-3">
+            <Slider
+              className="mb-2"
+              value={[Math.min(currentTime, duration)]}
+              max={duration || 1}
+              step={1}
+              onValueChange={([value]) => {
+                const video = videoRef.current;
+                if (video) video.currentTime = value;
+              }}
+            />
+            <div className="flex items-center gap-3">
+              <Button
+                size="icon"
+                variant="ghost"
+                className="text-white hover:bg-white/20"
+                onClick={togglePlay}
+              >
+                {playing ? <Pause /> : <Play />}
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="text-white hover:bg-white/20"
+                onClick={() => void load()}
+              >
+                <RotateCcw />
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="text-white hover:bg-white/20"
+                onClick={() => setMuted((value) => !value)}
+              >
+                {muted ? <VolumeX /> : <Volume2 />}
+              </Button>
+              <span className="text-xs text-white">
+                {formatDuration(currentTime)} / {formatDuration(duration)}
+              </span>
+            </div>
           </div>
-          <Slider
-            value={[Math.min(currentTime, duration)]}
-            max={duration || 1}
-            step={1}
-            onValueChange={([value]) => {
-              const video = videoRef.current;
-              if (video) video.currentTime = value;
-            }}
-          />
-        </div>
-      ) : null}
+        ) : null}
+      </div>
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
       {detail ? (
         <div className="stack-2 rounded-lg border border-border/60 bg-card p-4">

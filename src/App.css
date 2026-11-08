@@ -201,7 +201,7 @@
     @apply grid grid-cols-1 gap-4 p-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4;
   }
   .video-card-cover {
-    @apply relative aspect-video w-full overflow-hidden rounded-lg bg-muted;
+    @apply relative aspect-video w-[80%] overflow-hidden rounded-lg bg-muted;
   }
   .video-card-title {
     @apply line-clamp-2 text-sm font-medium text-card-foreground;

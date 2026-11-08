@@ -2,7 +2,10 @@ import { Play, User } from "lucide-react";
 
 import type { VideoCard as VideoCardModel } from "@/api/media";
 import { formatCount, formatDuration } from "@/lib/format";
+import { createLogger } from "@/lib/logger";
 import { useNavigatorContext } from "@/contexts/navigator";
+
+const log = createLogger("Media/VideoCard");
 
 interface VideoCardProps {
   video: VideoCardModel;
@@ -23,7 +26,15 @@ export default function VideoCard({ video }: VideoCardProps) {
             src={video.coverUrl}
             alt={video.title}
             className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
+            referrerPolicy="no-referrer"
             loading="lazy"
+            crossOrigin="anonymous"
+            onError={() =>
+              log.warn("cover failed", {
+                videoId: video.videoId,
+                url: video.coverUrl,
+              })
+            }
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center text-muted-foreground">
