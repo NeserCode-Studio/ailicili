@@ -1,6 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export type StreamProtocol = "hls" | "flv" | "dash" | "mp4";
+export type Platform = "bilibili" | "douyin" | "huya" | "custom";
+export type VideoSourceKind =
+  | "popular"
+  | "recommend"
+  | "region"
+  | "search"
+  | "related"
+  | "detail"
+  | "history";
 
 export interface OwnerInfo {
   id: number;
@@ -15,6 +24,7 @@ export interface VideoStats {
 }
 
 export interface VideoCard {
+  platform: Platform;
   videoId: string;
   title: string;
   coverUrl?: string;
@@ -23,22 +33,26 @@ export interface VideoCard {
   owner?: OwnerInfo;
   stats: VideoStats;
   cid?: number;
-  sourceKind: string;
+  sourceKind: VideoSourceKind;
 }
 
 export interface PagedVideos {
   page: number;
   items: VideoCard[];
   hasMore: boolean;
+  nextCursor?: string;
+  fallback?: boolean;
 }
 
 export interface StreamSource {
   id: string;
   protocol: StreamProtocol;
   url: string;
+  backupUrls?: string[];
   qualityId: number;
   qualityLabel: string;
   audioUrl?: string;
+  audioBackupUrls?: string[];
   codec?: string;
   audioCodec?: string;
 }
@@ -94,6 +108,17 @@ export interface HistoryEntry {
 
 export async function getPopularVideos(page = 1): Promise<PagedVideos> {
   return invoke("get_popular_videos", { page });
+}
+
+export async function getRecommendedVideos(page = 1): Promise<PagedVideos> {
+  return invoke("get_recommended_videos", { page });
+}
+
+export async function getRegionVideos(
+  regionId: number,
+  page = 1
+): Promise<PagedVideos> {
+  return invoke("get_region_videos", { regionId, page });
 }
 
 export async function getVideoPlayback(

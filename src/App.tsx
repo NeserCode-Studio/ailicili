@@ -29,7 +29,7 @@ import { lifecycle } from "@/lifecycle";
 import SettingsDialog from "@/components/framework/SettingsDialog";
 import AboutDialog from "@/components/framework/AboutDialog";
 import AccountDialog from "@/components/account/AccountDialog";
-import { SettingsDialogContext } from "@/contexts/settings";
+import { SettingsDialogContext, type SettingsTab } from "@/contexts/settings";
 import { AccountProvider } from "@/contexts/account";
 import { createLogger } from "@/lib/logger";
 
@@ -78,7 +78,11 @@ function App() {
 
   /* 弹窗状态 */
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const openSettings = useCallback(() => setSettingsOpen(true), []);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("search");
+  const openSettings = useCallback((tab: SettingsTab = "search") => {
+    setSettingsTab(tab);
+    setSettingsOpen(true);
+  }, []);
   const [aboutOpen, setAboutOpen] = useState(false);
   const openAbout = useCallback(() => setAboutOpen(true), []);
 
@@ -195,6 +199,7 @@ function App() {
                   <SettingsDialog
                     open={settingsOpen}
                     onOpenChange={setSettingsOpen}
+                    initialTab={settingsTab}
                   />
                   <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} />
                   <Toaster richColors theme={theme} position="bottom-right" />

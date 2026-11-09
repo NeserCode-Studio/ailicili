@@ -1,6 +1,6 @@
 import { TitleContext } from "@/contexts/title";
 import { useLocalStorageState } from "ahooks";
-import { useContext, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import { useI18n, useToast } from "@/composables";
 import AccountAvatar from "@/components/account/AccountAvatar";
 import {
@@ -42,11 +42,17 @@ import {
 } from "@/components/ui/alert-dialog";
 import { commandErrorKey } from "@/lib/command-error";
 import { asCommandError } from "@/api/account";
+import {
+  setRecommendationPriority,
+  useRecommendationPriority,
+  type RecommendationPriority,
+} from "@/lib/preferences";
+import type { SettingsTab } from "@/contexts/settings";
 
 /** 设置项索引：供搜索与「最近修改」跳转使用 */
 interface SettingIndexItem {
   id: string;
-  group: string;
+  group: SettingsTab;
   labelKey: string;
   keywords: string[];
 }
@@ -85,20 +91,38 @@ const SETTING_INDEX: SettingIndexItem[] = [
     labelKey: "Settings.items.auto-complete.title",
     keywords: ["auto", "complete", "自动补全", "补全"],
   },
+  {
+    id: "recommendation-priority",
+    group: "general",
+    labelKey: "Settings.items.recommendation-priority.title",
+    keywords: [
+      "recommend",
+      "personalized",
+      "anonymous",
+      "推荐",
+      "个性化",
+      "热门",
+    ],
+  },
 ];
 
 interface ChangedRecord {
   id: string;
   label: string;
-  group: string;
+  group: SettingsTab;
   at: number;
 }
 
 const MAX_HISTORY = 8;
 
-export default function Settings() {
+export default function Settings({
+  initialTab = "search",
+}: {
+  initialTab?: SettingsTab;
+}) {
   const { t, setLang, lang } = useI18n();
   const { title, setTitle } = useContext(TitleContext);
+  const recommendationPriority = useRecommendationPriority();
   const [autoComplete, setAutoComplete] = useLocalStorageState(
     "use-auto-complete",
     {
@@ -133,7 +157,11 @@ export default function Settings() {
 
   /* 搜索状态 */
   const [query, setQuery] = useState("");
-  const [activeTab, setActiveTab] = useState("search");
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
 
   const recordChange = (id: string, labelKey: string) => {
     const meta = SETTING_INDEX.find((item) => item.id === id);
@@ -175,7 +203,7 @@ export default function Settings() {
     });
   }, [query, t]);
 
-  const jumpTo = (group: string) => {
+  const jumpTo = (group: SettingsTab) => {
     setActiveTab(group);
     setQuery("");
   };
@@ -216,9 +244,47 @@ export default function Settings() {
     success("Settings.items.auto-complete.success");
   };
 
+  const recommendationItems: SettingSelectItemItem[] = [
+    {
+      value: "anonymous",
+      label: t("Settings.items.recommendation-priority.anonymous"),
+    },
+    {
+      value: "personalized",
+      label: t("Settings.items.recommendation-priority.personalized"),
+    },
+  ];
+  const recommendationAction = (data: FormData) => {
+    const value = data.get("select");
+    if (value !== "anonymous" && value !== "personalized") {
+      return error("Settings.items.recommendation-priority.error");
+    }
+    if (value === recommendationPriority) {
+      return error("Settings.items.recommendation-priority.error");
+    }
+    setRecommendationPriority(value as RecommendationPriority);
+    recordChange(
+      "recommendation-priority",
+      "Settings.items.recommendation-priority.title"
+    );
+    success("Settings.items.recommendation-priority.success");
+  };
+
   return (
     <div className="view-settings">
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+      <Tabs
+        value={activeTab}
+        onValueChange={(value) => {
+          if (
+            value === "search" ||
+            value === "general" ||
+            value === "account"
+          ) {
+            setActiveTab(value);
+          }
+        }}
+        className="w-full"
+      >
         <TabsList className="bg-muted/50 w-full justify-start gap-1 rounded-xl p-1">
           <TabsTrigger value="search" className="flex-none gap-1.5 rounded-lg">
             <Search className="icon-md" />
@@ -365,6 +431,19 @@ export default function Settings() {
               onItemSubmit={langAction}
               title={t("Settings.items.lang.title")}
               description={t("Settings.items.lang.description")}
+            />
+            <SettingSelectItem
+              items={recommendationItems}
+              value={recommendationItems.find(
+                (item) => item.value === recommendationPriority
+              )}
+              label={t("Settings.items.recommendation-priority.label")}
+              placeholder={t("Settings.items.select.default.placeholder")}
+              onItemSubmit={recommendationAction}
+              title={t("Settings.items.recommendation-priority.title")}
+              description={t(
+                "Settings.items.recommendation-priority.description"
+              )}
             />
             <SettingOptionalItem
               label={t("Settings.items.auto-complete.label")}

@@ -1,0 +1,34 @@
+{
+  "code": 0,
+  "message": "0",
+  "data": {
+    "items": [
+      {
+        "bilibili": {
+          "aid": 1003,
+          "bvid": "BV1RECOMMEND",
+          "cid": 2003,
+          "title": "Recommend fixture",
+          "pic": "https://example.invalid/recommend-cover.jpg",
+          "duration": 360,
+          "pubdate": 1700000200,
+          "owner": {
+            "mid": 3003,
+            "name": "Recommend owner",
+            "face": "https://example.invalid/recommend-avatar.jpg"
+          },
+          "stat": {
+            "view": 3200,
+            "like": 280,
+            "danmaku": 140
+          }
+        }
+      }
+    ],
+    "has_more": 1,
+    "fresh_idx": 1,
+    "fetch_row": 1,
+    "brush": 0,
+    "last_showlist": []
+  }
+}

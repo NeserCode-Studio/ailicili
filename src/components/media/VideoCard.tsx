@@ -13,6 +13,7 @@ interface VideoCardProps {
 
 export default function VideoCard({ video }: VideoCardProps) {
   const { navigator } = useNavigatorContext();
+  const stats = video.stats ?? { view: 0, like: 0, danmaku: 0 };
 
   return (
     <button
@@ -51,8 +52,7 @@ export default function VideoCard({ video }: VideoCardProps) {
           {video.owner?.name ?? "Unknown"}
         </span>
         <span className="text-muted-foreground text-xs">
-          {formatCount(video.stats.view)} · {formatCount(video.stats.danmaku)}
-          弹幕
+          {formatCount(stats.view)} · {formatCount(stats.danmaku)}弹幕
         </span>
       </div>
     </button>

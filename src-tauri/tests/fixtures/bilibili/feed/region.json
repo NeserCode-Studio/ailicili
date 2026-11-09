@@ -1,0 +1,28 @@
+{
+  "code": 0,
+  "message": "0",
+  "data": {
+    "archives": [
+      {
+        "aid": 1002,
+        "bvid": "BV1REGION0001",
+        "cid": 2002,
+        "title": "Region fixture",
+        "cover": "//example.invalid/region-cover.jpg",
+        "duration": 245,
+        "pubdate": 1700000100,
+        "author": {
+          "mid": 3002,
+          "name": "Region owner",
+          "face": "//example.invalid/region-avatar.jpg"
+        },
+        "stat": {
+          "view": 2200,
+          "like": 180,
+          "danmaku": 90
+        }
+      }
+    ],
+    "has_more": 1
+  }
+}

@@ -189,9 +189,34 @@ pub struct VideoStats {
     pub danmaku: i64,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Platform {
+    #[default]
+    Bilibili,
+    Douyin,
+    Huya,
+    Custom,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum VideoSourceKind {
+    #[default]
+    Popular,
+    Recommend,
+    Region,
+    Search,
+    Related,
+    Detail,
+    History,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VideoCard {
+    #[serde(default)]
+    pub platform: Platform,
     pub video_id: String,
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -202,11 +227,12 @@ pub struct VideoCard {
     pub published_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub owner: Option<OwnerInfo>,
-    #[serde(default, skip_serializing_if = "VideoStats::is_zero")]
+    #[serde(default)]
     pub stats: VideoStats,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cid: Option<i64>,
-    pub source_kind: String,
+    #[serde(default)]
+    pub source_kind: VideoSourceKind,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -238,18 +264,16 @@ pub struct HistoryEntry {
     pub updated_at: i64,
 }
 
-impl VideoStats {
-    fn is_zero(&self) -> bool {
-        self.view == 0 && self.like == 0 && self.danmaku == 0
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PagedVideos {
     pub page: u32,
     pub items: Vec<VideoCard>,
     pub has_more: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fallback: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -258,10 +282,14 @@ pub struct StreamSource {
     pub id: String,
     pub protocol: StreamProtocol,
     pub url: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub backup_urls: Vec<String>,
     pub quality_id: i64,
     pub quality_label: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audio_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audio_backup_urls: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub codec: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

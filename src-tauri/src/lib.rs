@@ -34,12 +34,29 @@ fn open_devtools(app: tauri::AppHandle) -> Result<(), String> {
 async fn get_popular_videos(
     state: tauri::State<'_, AppState>,
     page: u32,
-) -> Result<domain::PagedVideos, String> {
+) -> Result<domain::PagedVideos, domain::CommandError> {
+    state.bilibili.popular(page).await.map_err(Into::into)
+}
+
+#[tauri::command]
+async fn get_recommended_videos(
+    state: tauri::State<'_, AppState>,
+    page: u32,
+) -> Result<domain::PagedVideos, domain::CommandError> {
+    state.bilibili.recommend(page).await.map_err(Into::into)
+}
+
+#[tauri::command]
+async fn get_region_videos(
+    state: tauri::State<'_, AppState>,
+    region_id: i64,
+    page: u32,
+) -> Result<domain::PagedVideos, domain::CommandError> {
     state
         .bilibili
-        .popular(page)
+        .region_feed(region_id, page)
         .await
-        .map_err(|err| err.to_string())
+        .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -60,12 +77,12 @@ async fn get_video_playback(
 async fn get_video_detail(
     state: tauri::State<'_, AppState>,
     video_id: String,
-) -> Result<domain::VideoDetail, String> {
+) -> Result<domain::VideoDetail, domain::CommandError> {
     state
         .bilibili
         .video_detail(&video_id)
         .await
-        .map_err(|err| err.to_string())
+        .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -73,12 +90,12 @@ async fn get_search_videos(
     state: tauri::State<'_, AppState>,
     keyword: String,
     page: u32,
-) -> Result<domain::PagedVideos, String> {
+) -> Result<domain::PagedVideos, domain::CommandError> {
     state
         .bilibili
         .search(&keyword, page)
         .await
-        .map_err(|err| err.to_string())
+        .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -215,10 +232,11 @@ fn reset_bilibili_device_identity(
 }
 
 #[tauri::command]
-async fn list_local_history() -> Result<Vec<domain::HistoryEntry>, String> {
+async fn list_local_history() -> Result<Vec<domain::HistoryEntry>, domain::CommandError> {
     tauri::async_runtime::spawn_blocking(storage::list_history)
         .await
-        .map_err(|err| err.to_string())?
+        .map_err(|err| storage_error(err.to_string()))?
+        .map_err(storage_error)
 }
 
 #[tauri::command]
@@ -228,7 +246,7 @@ async fn save_local_history(
     page_title: String,
     progress_seconds: i64,
     duration_seconds: i64,
-) -> Result<Vec<domain::HistoryEntry>, String> {
+) -> Result<Vec<domain::HistoryEntry>, domain::CommandError> {
     let entry = domain::HistoryEntry {
         card: detail.card,
         page_cid,
@@ -239,7 +257,58 @@ async fn save_local_history(
     };
     tauri::async_runtime::spawn_blocking(move || storage::save_history_entry(entry))
         .await
-        .map_err(|err| err.to_string())?
+        .map_err(|err| storage_error(err.to_string()))?
+        .map_err(storage_error)
+}
+
+fn storage_error(_detail: String) -> domain::CommandError {
+    domain::CommandError::new("storageError", "本地数据读写失败，请检查应用数据目录权限。")
+}
+
+#[cfg(target_os = "windows")]
+fn install_bilibili_media_referer(window: &tauri::WebviewWindow) -> tauri::Result<()> {
+    use webview2_com::{
+        Microsoft::Web::WebView2::Win32::COREWEBVIEW2_WEB_RESOURCE_CONTEXT_MEDIA,
+        WebResourceRequestedEventHandler,
+    };
+    use windows_core::HSTRING;
+
+    window.with_webview(|webview| {
+        let result = (|| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            let core = unsafe { webview.controller().CoreWebView2()? };
+            unsafe {
+                core.AddWebResourceRequestedFilter(
+                    &HSTRING::from("*"),
+                    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_MEDIA,
+                )?;
+            }
+
+            let mut token = 0;
+            unsafe {
+                core.add_WebResourceRequested(
+                    &WebResourceRequestedEventHandler::create(Box::new(|_, args| {
+                        let Some(args) = args else {
+                            return Ok(());
+                        };
+                        let request = args.Request()?;
+                        // The current player only serves Bilibili media. Revisit this
+                        // handler when P4 introduces other platform media sources.
+                        request.Headers()?.SetHeader(
+                            &HSTRING::from("Referer"),
+                            &HSTRING::from("https://www.bilibili.com/"),
+                        )?;
+                        Ok(())
+                    })),
+                    &mut token,
+                )?;
+            }
+            Ok(())
+        })();
+
+        if let Err(error) = result {
+            log::warn!("failed to install Bilibili media referer: {error}");
+        }
+    })
 }
 
 /// 左键点击托盘图标：显隐主窗口。
@@ -280,6 +349,13 @@ pub fn run() {
             let bilibili = bilibili::BilibiliClient::new(session.clone())?;
             let account = account::AccountManager::new(session);
             app.manage(AppState { bilibili, account });
+
+            #[cfg(target_os = "windows")]
+            if let Some(window) = app.get_webview_window("main") {
+                if let Err(error) = install_bilibili_media_referer(&window) {
+                    log::warn!("failed to attach Bilibili media referer handler: {error}");
+                }
+            }
 
             let icon = Image::from_bytes(include_bytes!("../icons/32x32.png"))
                 .expect("Failed to load tray icon");
@@ -332,6 +408,8 @@ pub fn run() {
             greet,
             open_devtools,
             get_popular_videos,
+            get_recommended_videos,
+            get_region_videos,
             get_video_playback,
             get_video_detail,
             get_search_videos,

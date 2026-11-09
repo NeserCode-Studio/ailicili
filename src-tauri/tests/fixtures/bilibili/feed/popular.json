@@ -1,0 +1,27 @@
+{
+  "code": 0,
+  "message": "0",
+  "data": {
+    "list": [
+      {
+        "aid": 1001,
+        "bvid": "BV1POPULAR001",
+        "cid": 2001,
+        "title": "Popular fixture",
+        "pic": "https://example.invalid/popular-cover.jpg",
+        "duration": 125,
+        "pubdate": 1700000000,
+        "owner": {
+          "mid": 3001,
+          "name": "Popular owner",
+          "face": "https://example.invalid/popular-avatar.jpg"
+        },
+        "stat": {
+          "view": 1200,
+          "like": 80,
+          "danmaku": 40
+        }
+      }
+    ]
+  }
+}

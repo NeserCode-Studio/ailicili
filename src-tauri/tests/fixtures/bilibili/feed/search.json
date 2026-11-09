@@ -1,0 +1,22 @@
+{
+  "code": 0,
+  "message": "0",
+  "data": {
+    "page": 1,
+    "numResults": 1,
+    "numPages": 2,
+    "result": [
+      {
+        "aid": 1004,
+        "bvid": "BV1SEARCH0001",
+        "title": "Search <em class=\"keyword\">fixture</em>",
+        "pic": "//example.invalid/search-cover.jpg",
+        "duration": "06:05",
+        "author": "Search owner",
+        "mid": 3004,
+        "play": 4200,
+        "video_review": 210
+      }
+    ]
+  }
+}

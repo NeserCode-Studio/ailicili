@@ -33,3 +33,5 @@ uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["windows-native"] }
+webview2-com = "0.38.2"
+windows-core = "0.61.2"

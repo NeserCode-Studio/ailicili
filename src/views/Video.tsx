@@ -11,12 +11,18 @@ import {
 import {
   ArrowLeft,
   Check,
+  CircleAlert,
+  Loader2,
   Maximize,
+  MessageCircle,
   Minimize,
   Pause,
   PictureInPicture2,
   Play,
   Settings2,
+  Share2,
+  Star,
+  ThumbsUp,
   Volume2,
   VolumeX,
 } from "lucide-react";
@@ -65,6 +71,33 @@ const QUALITY_LABELS: Record<number, string> = {
   127: "8K",
 };
 
+function mediaUrlsMatch(currentSrc: string, targetUrl?: string) {
+  if (!currentSrc || !targetUrl) return false;
+  try {
+    return new URL(currentSrc).href === new URL(targetUrl).href;
+  } catch {
+    return currentSrc === targetUrl;
+  }
+}
+
+function mediaSourceUrls(primaryUrl?: string, backupUrls?: string[]) {
+  return [primaryUrl, ...(backupUrls ?? [])].filter(
+    (url, index, urls): url is string =>
+      Boolean(url) && urls.indexOf(url) === index
+  );
+}
+
+interface PlaybackMediaError {
+  code?: number;
+  message?: string;
+}
+
+interface SourceSelection {
+  streamId?: string;
+  videoIndex: number;
+  audioIndex: number;
+}
+
 interface PlayerErrorBoundaryState {
   failed: boolean;
 }
@@ -86,19 +119,24 @@ class PlayerErrorBoundary extends Component<
     });
   }
 
+  retry = () => {
+    this.setState({ failed: false });
+  };
+
   render() {
     if (this.state.failed) {
       return (
-        <div className="grid aspect-video w-full place-items-center rounded-lg bg-black text-white">
+        <div className="grid h-full w-full place-items-center bg-black text-white">
           <div className="flex flex-col items-center gap-3">
             <span className="text-sm">播放器初始化失败</span>
             <Button
               type="button"
-              variant="outline"
+              variant="secondary"
               size="sm"
-              onClick={() => window.location.reload()}
+              className="border-white/30 bg-white text-black hover:bg-white/90"
+              onClick={this.retry}
             >
-              重新加载
+              重新尝试
             </Button>
           </div>
         </div>
@@ -106,6 +144,193 @@ class PlayerErrorBoundary extends Component<
     }
     return this.props.children;
   }
+}
+
+interface PlayerPausePanelProps {
+  detail: VideoDetail | null;
+  error: CommandError | null;
+  qualityNotice?: PlaybackInfo["qualityNotice"];
+  active: boolean;
+  ready: boolean;
+  currentTime: number;
+  onBack: () => void;
+  onContinue?: () => void;
+  onRetry: () => void;
+  onLogin: () => void;
+}
+
+const PAUSE_BLUR_MASK =
+  "linear-gradient(to bottom, rgba(0, 0, 0, 0.1) 0%, rgba(0, 0, 0, 0.15) 10%, rgba(0, 0, 0, 0.28) 20%, rgba(0, 0, 0, 0.47) 30%, rgba(0, 0, 0, 0.7) 40%, rgba(0, 0, 0, 0.88) 50%, rgba(0, 0, 0, 0.96) 60%, rgba(0, 0, 0, 0.995) 70%, rgb(0, 0, 0) 75%)";
+
+function PlayerPausePanel({
+  detail,
+  error,
+  qualityNotice,
+  active,
+  ready,
+  currentTime,
+  onBack,
+  onContinue,
+  onRetry,
+  onLogin,
+}: PlayerPausePanelProps) {
+  const { t } = useI18n();
+  const canContinue = ready && !error && Boolean(onContinue);
+  const showResume = ready && currentTime > 0.5;
+  const placeholderActions = [
+    { label: t("Video.actions.like"), icon: ThumbsUp },
+    { label: t("Video.actions.comment"), icon: MessageCircle },
+    { label: t("Video.actions.favorite"), icon: Star },
+    { label: t("Video.actions.share"), icon: Share2 },
+  ];
+
+  return (
+    <section
+      aria-label={t("Video.panelLabel")}
+      aria-hidden={!active}
+      inert={!active}
+      className={`absolute inset-0 z-20 overflow-hidden text-white transition-[opacity,transform,visibility] duration-200 ease-out motion-reduce:transition-none ${
+        active
+          ? "visible translate-y-0 scale-100 opacity-100"
+          : "pointer-events-none invisible translate-y-1 scale-[0.995] opacity-0"
+      }`}
+    >
+      <div
+        className="pointer-events-none absolute inset-0 bg-black/45 backdrop-blur-[21.6px]"
+        style={{
+          maskImage: PAUSE_BLUR_MASK,
+          WebkitMaskImage: PAUSE_BLUR_MASK,
+        }}
+      />
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/75 via-black/25 to-transparent" />
+
+      <div className="relative mx-auto flex h-full w-full max-w-[1440px] flex-col px-5 pt-5 pb-28 sm:px-8 sm:pb-32 lg:px-12 lg:pt-8">
+        <div className="flex items-center justify-between gap-4">
+          <button
+            type="button"
+            aria-label={t("Video.back")}
+            title={t("Video.back")}
+            className="inline-flex size-10 items-center justify-center rounded-full border border-white/15 bg-black/25 text-white/90 transition-[background-color,color,transform] duration-150 hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:ring-white/80 focus-visible:outline-none active:scale-95"
+            onClick={onBack}
+          >
+            <ArrowLeft className="size-4" />
+          </button>
+        </div>
+
+        <div className="mt-auto grid min-w-0 gap-6 md:grid-cols-[minmax(0,1fr)_minmax(16rem,22rem)] md:items-end lg:gap-10">
+          <div className="min-w-0">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-sm text-white/70">
+              <span className="max-w-full truncate font-medium text-white/90">
+                {detail?.card.owner?.name ?? "Bilibili UGC"}
+              </span>
+              {detail ? (
+                <span>
+                  {formatCount(detail.card.stats.view)} {t("Video.views")}
+                </span>
+              ) : null}
+              {detail ? (
+                <span>
+                  {formatCount(detail.card.stats.like)}{" "}
+                  {t("Video.actions.like")}
+                </span>
+              ) : null}
+            </div>
+
+            <h1 className="mt-2 line-clamp-2 max-w-3xl text-2xl leading-tight font-semibold [overflow-wrap:anywhere] sm:text-3xl lg:text-4xl">
+              {detail?.card.title ?? "Bilibili UGC"}
+            </h1>
+
+            {detail?.description ? (
+              <p className="mt-3 line-clamp-2 max-w-3xl text-sm leading-6 text-white/70">
+                {detail.description}
+              </p>
+            ) : null}
+
+            {qualityNotice && qualityNotice.kind !== "none" ? (
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-white/65">
+                <span>{t(`Quality.notice.${qualityNotice.messageCode}`)}</span>
+                {qualityNotice.kind === "loginRequired" ||
+                qualityNotice.kind === "accountExpired" ? (
+                  <button
+                    type="button"
+                    className="font-medium text-white underline underline-offset-4 hover:text-white/80 focus-visible:ring-2 focus-visible:ring-white/80 focus-visible:outline-none"
+                    onClick={onLogin}
+                  >
+                    {t("Account.titlebar.login")}
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+
+            {error ? (
+              <div className="mt-4 max-w-3xl border-l-2 border-red-300/60 pl-3">
+                <p className="text-sm leading-5 text-red-100">
+                  {commandErrorMessage(error, t)}
+                </p>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="mt-2 bg-white text-black hover:bg-white/90"
+                  onClick={
+                    error.code === "authRequired" ||
+                    error.code === "loginExpired"
+                      ? onLogin
+                      : onRetry
+                  }
+                >
+                  {error.code === "authRequired" ||
+                  error.code === "loginExpired"
+                    ? t("Account.titlebar.login")
+                    : t("Video.retry")}
+                </Button>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="flex min-w-0 flex-col gap-4">
+            <Button
+              type="button"
+              size="lg"
+              disabled={!canContinue}
+              className="h-11 w-full rounded-full bg-white px-5 text-black hover:bg-white/90 focus-visible:ring-white/80 disabled:bg-white/70"
+              onClick={() => onContinue?.()}
+            >
+              {error ? (
+                <CircleAlert />
+              ) : ready ? (
+                <Play className="fill-current" />
+              ) : (
+                <Loader2 className="animate-spin" />
+              )}
+              {error
+                ? t("Video.unavailable")
+                : ready
+                  ? showResume
+                    ? t("Video.resume")
+                    : t("Video.play")
+                  : t("Video.loading")}
+            </Button>
+
+            <div className="grid grid-cols-4 gap-2">
+              {placeholderActions.map(({ label, icon: Icon }) => (
+                <button
+                  key={label}
+                  type="button"
+                  disabled
+                  aria-label={`${label} (${t("Video.actions.pending")})`}
+                  title={`${label} (${t("Video.actions.pending")})`}
+                  className="inline-flex h-11 min-w-0 items-center justify-center rounded-full border border-white/15 bg-white/10 text-white/85 transition-[background-color,color,transform] duration-150 hover:bg-white/20 hover:text-white focus-visible:ring-2 focus-visible:ring-white/80 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Icon className="size-4" />
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
 }
 
 function canPlayDashStream(stream: StreamSource) {
@@ -149,15 +374,23 @@ interface AudioStore {
 }
 
 interface AudioTrackProps {
-  stream: StreamSource;
+  src: string;
   onStore: (store: AudioStore | null) => void;
   onCanPlay: (canPlay: boolean) => void;
+  onPlaybackError: (error: PlaybackMediaError) => void;
 }
 
-function AudioTrack({ stream, onStore, onCanPlay }: AudioTrackProps) {
+function AudioTrack({
+  src,
+  onStore,
+  onCanPlay,
+  onPlaybackError,
+}: AudioTrackProps) {
   const store = useAudioPlayer();
   const canPlay = useAudioPlayer((state) => state.canPlay);
   const currentSrc = useAudioPlayer((state) => state.currentSrc);
+  const mediaError = useAudioPlayer((state) => state.error);
+  const handledErrorKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     onStore(store);
@@ -165,37 +398,52 @@ function AudioTrack({ stream, onStore, onCanPlay }: AudioTrackProps) {
   }, [onStore, store]);
 
   useEffect(() => {
-    onCanPlay(canPlay && currentSrc === stream.audioUrl);
-  }, [canPlay, currentSrc, onCanPlay, stream.audioUrl]);
+    onCanPlay(canPlay && mediaUrlsMatch(currentSrc, src));
+  }, [canPlay, currentSrc, onCanPlay, src]);
 
-  return (
-    <Audio
-      src={stream.audioUrl}
-      preload="auto"
-      className="hidden"
-      ref={(element) => {
-        element?.setAttribute("referrerpolicy", "no-referrer");
-      }}
-    />
-  );
+  useEffect(() => {
+    if (!mediaError) {
+      handledErrorKeyRef.current = null;
+      return;
+    }
+    if (!mediaUrlsMatch(currentSrc, src)) {
+      return;
+    }
+    const errorKey = `${src}:${mediaError.code}:${mediaError.message}`;
+    if (handledErrorKeyRef.current === errorKey) return;
+    handledErrorKeyRef.current = errorKey;
+    onPlaybackError(mediaError);
+  }, [currentSrc, mediaError, onPlaybackError, src]);
+
+  return <Audio src={src} preload="auto" className="hidden" />;
 }
 
 interface VideoStageProps {
   playback: PlaybackInfo;
+  detail: VideoDetail | null;
+  error: CommandError | null;
   streamIndex: number;
   availableStreams: StreamSource[];
   onStreamIndexChange: (index: number) => void;
   onCurrentTimeChange: (time: number) => void;
   onPlaybackError: (message: string) => void;
+  onBack: () => void;
+  onRetry: () => void;
+  onLogin: () => void;
 }
 
 function VideoStage({
   playback,
+  detail,
+  error,
   streamIndex,
   availableStreams,
   onStreamIndexChange,
   onCurrentTimeChange,
   onPlaybackError,
+  onBack,
+  onRetry,
+  onLogin,
 }: VideoStageProps) {
   const videoStore = usePlayer();
   const paused = usePlayer((state) => state.paused);
@@ -209,12 +457,45 @@ function VideoStage({
     (state) => state.pictureInPictureAvailability
   );
   const mediaError = usePlayer((state) => state.error);
+  const canPlay = usePlayer((state) => state.canPlay);
 
   const selectedStream = playback.streams[streamIndex];
+  const selectedStreamId = selectedStream?.id;
+  const videoSourceUrls = useMemo(
+    () => mediaSourceUrls(selectedStream?.url, selectedStream?.backupUrls),
+    [selectedStream?.backupUrls, selectedStream?.url]
+  );
+  const audioSourceUrls = useMemo(
+    () =>
+      mediaSourceUrls(
+        selectedStream?.audioUrl,
+        selectedStream?.audioBackupUrls
+      ),
+    [selectedStream?.audioBackupUrls, selectedStream?.audioUrl]
+  );
+  const [sourceSelection, setSourceSelection] = useState<SourceSelection>({
+    videoIndex: 0,
+    audioIndex: 0,
+  });
+  const activeSourceSelection =
+    sourceSelection.streamId === selectedStreamId
+      ? sourceSelection
+      : { streamId: selectedStreamId, videoIndex: 0, audioIndex: 0 };
+  const currentVideoUrl =
+    videoSourceUrls[activeSourceSelection.videoIndex] ?? selectedStream?.url;
+  const currentAudioUrl =
+    audioSourceUrls[activeSourceSelection.audioIndex] ??
+    selectedStream?.audioUrl;
   const needsAudio =
-    selectedStream?.protocol === "dash" && Boolean(selectedStream.audioUrl);
+    selectedStream?.protocol === "dash" && Boolean(currentAudioUrl);
   const audioStoreRef = useRef<AudioStore | null>(null);
-  const [audioCanPlay, setAudioCanPlay] = useState(!needsAudio);
+  const [readyAudioUrl, setReadyAudioUrl] = useState<string | null>(
+    needsAudio ? null : (currentAudioUrl ?? null)
+  );
+  const audioCanPlay =
+    !needsAudio ||
+    (Boolean(currentAudioUrl) && readyAudioUrl === currentAudioUrl);
+  const mediaReady = canPlay && !mediaError && (!needsAudio || audioCanPlay);
   const [isSwitchingQuality, setIsSwitchingQuality] = useState(false);
   const [wasPlaying, setWasPlaying] = useState(false);
   const targetTimeRef = useRef(0);
@@ -228,26 +509,41 @@ function VideoStage({
   const [playbackRate, setPlaybackRate] = useState(1);
   const hideTimer = useRef<number | null>(null);
   const surfaceClickTimer = useRef<number | null>(null);
+  const handledMediaErrorKeyRef = useRef<string | null>(null);
+  const autoFallbackTriedRef = useRef(false);
+  const initialPauseAppliedRef = useRef(false);
 
   const handleAudioStore = useCallback((store: AudioStore | null) => {
     audioStoreRef.current = store;
   }, []);
 
-  const handleAudioCanPlay = useCallback((canPlayAudio: boolean) => {
-    setAudioCanPlay(canPlayAudio);
-  }, []);
+  const handleAudioCanPlay = useCallback(
+    (canPlayAudio: boolean) => {
+      setReadyAudioUrl(canPlayAudio ? (currentAudioUrl ?? null) : null);
+    },
+    [currentAudioUrl]
+  );
+
+  const reportPlaybackError = useCallback(
+    (message: string) => {
+      videoStore.pause();
+      audioStoreRef.current?.pause();
+      onPlaybackError(message);
+    },
+    [onPlaybackError, videoStore]
+  );
 
   const scheduleHideControls = useCallback(() => {
     if (hideTimer.current) {
       window.clearTimeout(hideTimer.current);
       hideTimer.current = null;
     }
-    if (speedMenuOpen || qualityMenuOpen || volumePanelOpen) return;
+    if (paused || speedMenuOpen || qualityMenuOpen || volumePanelOpen) return;
     hideTimer.current = window.setTimeout(() => {
       hideTimer.current = null;
       setControlsVisible(false);
     }, 2400);
-  }, [qualityMenuOpen, speedMenuOpen, volumePanelOpen]);
+  }, [paused, qualityMenuOpen, speedMenuOpen, volumePanelOpen]);
 
   const revealControls = useCallback(() => {
     setControlsVisible(true);
@@ -258,6 +554,22 @@ function VideoStage({
     if (isSwitchingQuality || isSeeking) return;
     onCurrentTimeChange(currentTime);
   }, [currentTime, isSeeking, isSwitchingQuality, onCurrentTimeChange]);
+
+  useEffect(() => {
+    if (!paused) return;
+    if (hideTimer.current) {
+      window.clearTimeout(hideTimer.current);
+      hideTimer.current = null;
+    }
+    setControlsVisible(true);
+  }, [paused]);
+
+  useEffect(() => {
+    if (!mediaReady || initialPauseAppliedRef.current) return;
+    initialPauseAppliedRef.current = true;
+    videoStore.pause();
+    audioStoreRef.current?.pause();
+  }, [mediaReady, videoStore]);
 
   useEffect(() => {
     return () => {
@@ -271,35 +583,138 @@ function VideoStage({
   }, []);
 
   useEffect(() => {
-    if (!mediaError) return;
+    if (canPlay && !mediaError && mediaUrlsMatch(currentSrc, currentVideoUrl)) {
+      autoFallbackTriedRef.current = false;
+      handledMediaErrorKeyRef.current = null;
+    }
+  }, [canPlay, currentSrc, currentVideoUrl, mediaError]);
+
+  useEffect(() => {
+    if (!mediaError) {
+      handledMediaErrorKeyRef.current = null;
+      return;
+    }
+    if (
+      !selectedStream ||
+      !selectedStreamId ||
+      !currentVideoUrl ||
+      (currentSrc && !mediaUrlsMatch(currentSrc, currentVideoUrl))
+    ) {
+      return;
+    }
+    const errorKey = `${selectedStreamId}:${currentVideoUrl}:${mediaError.code}:${mediaError.message}`;
+    if (handledMediaErrorKeyRef.current === errorKey) return;
+    handledMediaErrorKeyRef.current = errorKey;
+
     log.error("video playback failed", {
       videoId: playback.videoId,
-      streamId: selectedStream?.id,
+      streamId: selectedStreamId,
       currentSrc,
       code: mediaError.code,
       message: mediaError.message,
     });
 
-    const nextStream = playback.streams[streamIndex + 1];
-    if (nextStream) {
+    const nextVideoSourceIndex = activeSourceSelection.videoIndex + 1;
+    if (nextVideoSourceIndex < videoSourceUrls.length) {
+      const nextAudioSourceIndex =
+        activeSourceSelection.audioIndex + 1 < audioSourceUrls.length
+          ? activeSourceSelection.audioIndex + 1
+          : activeSourceSelection.audioIndex;
+      targetTimeRef.current = currentTime;
+      setWasPlaying(!paused);
+      videoStore.pause();
+      if (audioCanPlay) {
+        audioStoreRef.current?.pause();
+      }
+      setIsSwitchingQuality(true);
+      videoStore.dismissError();
+      setSourceSelection({
+        streamId: selectedStreamId,
+        videoIndex: nextVideoSourceIndex,
+        audioIndex: nextAudioSourceIndex,
+      });
+      log.info("video CDN fallback started", {
+        videoId: playback.videoId,
+        streamId: selectedStreamId,
+        sourceIndex: nextVideoSourceIndex,
+      });
+      return;
+    }
+
+    const nextStreamIndex = playback.streams.findIndex(
+      (stream, index) => index > streamIndex && canPlayDashStream(stream)
+    );
+    if (!autoFallbackTriedRef.current && nextStreamIndex >= 0) {
+      autoFallbackTriedRef.current = true;
       targetTimeRef.current = currentTime;
       setWasPlaying(!paused);
       setIsSwitchingQuality(true);
-      onStreamIndexChange(streamIndex + 1);
+      videoStore.dismissError();
+      setSourceSelection({
+        streamId: playback.streams[nextStreamIndex].id,
+        videoIndex: 0,
+        audioIndex: 0,
+      });
+      onStreamIndexChange(nextStreamIndex);
       return;
     }
-    onPlaybackError(mediaError.message || "视频播放失败");
+
+    setIsSwitchingQuality(false);
+    reportPlaybackError(mediaError.message || "视频播放失败");
   }, [
+    activeSourceSelection.audioIndex,
+    activeSourceSelection.videoIndex,
+    audioCanPlay,
+    audioSourceUrls,
     currentSrc,
     currentTime,
+    currentVideoUrl,
     mediaError,
-    onPlaybackError,
     onStreamIndexChange,
     paused,
     playback.streams,
     playback.videoId,
-    selectedStream?.id,
+    selectedStream,
+    selectedStreamId,
     streamIndex,
+    videoSourceUrls,
+    videoStore,
+    reportPlaybackError,
+  ]);
+
+  const handleAudioPlaybackError = useCallback(
+    (audioError: PlaybackMediaError) => {
+      log.error("audio playback failed", {
+        videoId: playback.videoId,
+        streamId: selectedStreamId,
+        code: audioError.code,
+        message: audioError.message,
+      });
+
+      if (isSwitchingQuality) return;
+      setIsSwitchingQuality(false);
+      reportPlaybackError(audioError.message || "音频播放失败");
+    },
+    [
+      isSwitchingQuality,
+      playback.videoId,
+      reportPlaybackError,
+      selectedStreamId,
+    ]
+  );
+
+  useEffect(() => {
+    if (!isSwitchingQuality) return;
+    const timer = window.setTimeout(() => {
+      setIsSwitchingQuality(false);
+      reportPlaybackError("切换播放线路超时，请重试");
+    }, 20000);
+    return () => window.clearTimeout(timer);
+  }, [
+    currentAudioUrl,
+    currentVideoUrl,
+    isSwitchingQuality,
+    reportPlaybackError,
   ]);
 
   useEffect(() => {
@@ -366,7 +781,7 @@ function VideoStage({
     if (
       !isSwitchingQuality ||
       !selectedStream ||
-      currentSrc !== selectedStream.url ||
+      !mediaUrlsMatch(currentSrc, currentVideoUrl) ||
       playerDuration <= 0 ||
       (needsAudio && !audioCanPlay)
     ) {
@@ -389,7 +804,7 @@ function VideoStage({
             await audioStoreRef.current?.play();
           }
         }
-        log.info("quality switch ready", {
+        log.info("playback source ready", {
           videoId: playback.videoId,
           quality: selectedStream.qualityId,
           targetTime: restoredTime,
@@ -404,7 +819,7 @@ function VideoStage({
           err,
         });
         setIsSwitchingQuality(false);
-        onPlaybackError("切换清晰度失败");
+        reportPlaybackError("切换播放线路失败，请重试");
       }
     };
 
@@ -414,19 +829,21 @@ function VideoStage({
     };
   }, [
     audioCanPlay,
+    currentVideoUrl,
     currentSrc,
     isSwitchingQuality,
     needsAudio,
-    onPlaybackError,
     playerDuration,
     playback.videoId,
+    reportPlaybackError,
     selectedStream,
     videoStore,
     wasPlaying,
   ]);
 
   const changeQuality = (index: number) => {
-    if (index === streamIndex || !playback.streams[index]) return;
+    const nextStream = playback.streams[index];
+    if (index === streamIndex || !nextStream) return;
     if (!currentSrc || !videoStore.target) return;
     targetTimeRef.current = currentTime;
     setWasPlaying(!paused);
@@ -436,6 +853,11 @@ function VideoStage({
     }
     setIsSwitchingQuality(true);
     setQualityMenuOpen(false);
+    setSourceSelection({
+      streamId: nextStream.id,
+      videoIndex: 0,
+      audioIndex: 0,
+    });
     onStreamIndexChange(index);
     log.info("quality switch started", {
       videoId: playback.videoId,
@@ -467,7 +889,7 @@ function VideoStage({
         targetTime: time,
         err,
       });
-      onPlaybackError("切换进度失败");
+      reportPlaybackError("切换进度失败");
     }
   };
 
@@ -490,7 +912,7 @@ function VideoStage({
         videoId: playback.videoId,
         err,
       });
-      onPlaybackError("播放控制失败");
+      reportPlaybackError("播放控制失败");
     }
   };
 
@@ -580,28 +1002,41 @@ function VideoStage({
       {needsAudio && selectedStream?.audioUrl ? (
         <AudioPlayer>
           <AudioTrack
-            stream={selectedStream}
+            src={currentAudioUrl ?? selectedStream.audioUrl}
             onStore={handleAudioStore}
             onCanPlay={handleAudioCanPlay}
+            onPlaybackError={handleAudioPlaybackError}
           />
         </AudioPlayer>
       ) : null}
 
-      <Container className="relative aspect-video w-full overflow-hidden rounded-lg bg-black [&:fullscreen]:aspect-auto [&:fullscreen]:h-screen [&:fullscreen]:w-screen [&:fullscreen]:rounded-none">
+      <Container className="relative h-full min-h-0 w-full overflow-hidden bg-black [&:fullscreen]:h-screen [&:fullscreen]:w-screen">
         {selectedStream ? (
           <Video
-            src={selectedStream.url}
+            src={currentVideoUrl}
             preload="auto"
             playsInline
             className="absolute inset-0 h-full w-full object-contain"
-            ref={(element) => {
-              element?.setAttribute("referrerpolicy", "no-referrer");
-            }}
+          />
+        ) : null}
+
+        {!isSwitchingQuality ? (
+          <PlayerPausePanel
+            detail={detail}
+            error={error}
+            qualityNotice={playback.qualityNotice}
+            active={!mediaReady || !playing}
+            ready={mediaReady}
+            currentTime={currentTime}
+            onBack={onBack}
+            onContinue={() => void togglePlay()}
+            onRetry={onRetry}
+            onLogin={onLogin}
           />
         ) : null}
 
         {isSwitchingQuality ? (
-          <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center">
+          <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center bg-black/35 backdrop-blur-sm">
             <div className="flex flex-col items-center gap-2 text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.75)]">
               <Pause className="size-8 fill-current" />
               <span className="text-sm font-medium">
@@ -623,23 +1058,8 @@ function VideoStage({
             onDoubleClick={handleSurfaceDoubleClick}
           />
 
-          {!playing && !isSwitchingQuality ? (
-            <button
-              type="button"
-              aria-label="播放"
-              className="absolute top-1/2 left-1/2 z-10 grid size-14 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border border-white/20 bg-black/45 text-white shadow-lg backdrop-blur-sm hover:bg-black/65 focus-visible:ring-2 focus-visible:ring-white/80 focus-visible:outline-none"
-              onClick={(event) => {
-                event.stopPropagation();
-                revealControls();
-                void togglePlay();
-              }}
-            >
-              <Play className="ml-0.5 size-7 fill-current" />
-            </button>
-          ) : null}
-
           <div
-            className={`absolute inset-x-0 bottom-0 z-20 transition-[transform,opacity] duration-200 ${
+            className={`absolute inset-x-0 bottom-0 z-30 transition-[transform,opacity] duration-200 ${
               controlsVisible
                 ? "translate-y-0 opacity-100"
                 : "pointer-events-none translate-y-2 opacity-0"
@@ -648,7 +1068,7 @@ function VideoStage({
             onDoubleClick={(event) => event.stopPropagation()}
           >
             <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-black/35 to-transparent" />
-            <div className="relative">
+            <div className="relative flex flex-col gap-2 px-3 pb-3 sm:px-4">
               <Slider
                 aria-label="播放进度"
                 className="h-4 w-full [&_[data-slot=slider-range]]:bg-[var(--player-accent)] [&_[data-slot=slider-thumb]]:size-2 [&_[data-slot=slider-thumb]]:border-[var(--player-accent)] [&_[data-slot=slider-thumb]]:bg-white [&_[data-slot=slider-track]]:h-[3px] [&_[data-slot=slider-track]]:rounded-none [&_[data-slot=slider-track]]:bg-white/25"
@@ -659,14 +1079,15 @@ function VideoStage({
                 onValueCommit={([value]) => void seekTo(value)}
               />
 
-              <div className="flex h-9 items-center gap-2 bg-black/20 px-3 sm:h-10 sm:gap-3 sm:px-4">
+              <div className="flex h-10 items-center gap-2 rounded-md border border-white/10 bg-black/60 px-2 backdrop-blur-md sm:gap-3">
                 <Button
                   type="button"
                   size="icon"
                   variant="ghost"
-                  className={`${CONTROL_BUTTON_CLASS} -ml-1`}
+                  className={CONTROL_BUTTON_CLASS}
                   aria-label={playing ? "暂停" : "播放"}
                   title={playing ? "暂停" : "播放"}
+                  disabled={!mediaReady}
                   onClick={() => void togglePlay()}
                 >
                   {playing ? (
@@ -698,7 +1119,7 @@ function VideoStage({
                       <div
                         role="menu"
                         aria-label="清晰度"
-                        className="absolute right-0 bottom-full z-30 mb-2 w-32 rounded-md border border-white/10 bg-black/95 p-1.5 text-white shadow-2xl backdrop-blur-md"
+                        className="absolute right-0 bottom-full z-40 mb-2 w-32 rounded-md border border-white/10 bg-black/95 p-1.5 text-white shadow-2xl backdrop-blur-md"
                       >
                         <div className="px-2 py-1 text-xs text-white/60">
                           清晰度
@@ -750,7 +1171,7 @@ function VideoStage({
                       <div
                         role="menu"
                         aria-label="播放速度"
-                        className="absolute right-0 bottom-full z-30 mb-2 w-40 rounded-md border border-white/10 bg-black/95 p-1.5 text-white shadow-2xl backdrop-blur-md"
+                        className="absolute right-0 bottom-full z-40 mb-2 w-40 rounded-md border border-white/10 bg-black/95 p-1.5 text-white shadow-2xl backdrop-blur-md"
                       >
                         <div className="px-2 py-1 text-xs text-white/60">
                           播放速度
@@ -805,7 +1226,7 @@ function VideoStage({
                       {userMuted || volume === 0 ? <VolumeX /> : <Volume2 />}
                     </Button>
                     {volumePanelOpen ? (
-                      <div className="absolute right-0 bottom-full z-30 pb-2">
+                      <div className="absolute right-0 bottom-full z-40 pb-2">
                         <div className="flex items-center rounded-md border border-white/10 bg-black/90 p-2 shadow-xl">
                           <Slider
                             aria-label="音量"
@@ -861,19 +1282,25 @@ function VideoStage({
 export default function VideoView() {
   const { videoId = "" } = useParams();
   const { navigator } = useNavigatorContext();
-  const { t } = useI18n();
   const { openLogin } = useAccount();
   const [detail, setDetail] = useState<VideoDetail | null>(null);
   const [playback, setPlayback] = useState<PlaybackInfo | null>(null);
   const [streamIndex, setStreamIndex] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [error, setError] = useState<CommandError | null>(null);
+  const loadRequestIdRef = useRef(0);
+
+  const handlePlaybackError = useCallback((message: string) => {
+    setError({ code: "playbackError", message });
+  }, []);
 
   const load = useCallback(async () => {
+    const requestId = ++loadRequestIdRef.current;
     setError(null);
     setPlayback(null);
     try {
       const videoDetail = await getVideoDetail(videoId);
+      if (requestId !== loadRequestIdRef.current) return;
       log.info("detail loaded", {
         videoId,
         resolvedId: videoDetail.card.videoId,
@@ -885,6 +1312,7 @@ export default function VideoView() {
       const page = videoDetail.pages[0];
       if (!page) throw new Error("No playable page");
       const info = await getVideoPlayback(videoId, page.cid);
+      if (requestId !== loadRequestIdRef.current) return;
       const playableStreams = info.streams.filter(canPlayDashStream);
       const selectedStream = playableStreams[0] ?? info.streams[0];
       log.info("playback loaded", {
@@ -900,6 +1328,7 @@ export default function VideoView() {
       setStreamIndex(info.streams.indexOf(selectedStream));
       setPlayback(info);
     } catch (err) {
+      if (requestId !== loadRequestIdRef.current) return;
       log.error("video load failed", { videoId, err });
       setError(asCommandError(err));
     }
@@ -907,6 +1336,9 @@ export default function VideoView() {
 
   useEffect(() => {
     void load();
+    return () => {
+      loadRequestIdRef.current += 1;
+    };
   }, [load]);
 
   useEffect(() => {
@@ -937,85 +1369,39 @@ export default function VideoView() {
   }, [playback]);
 
   return (
-    <div className="stack-3 h-full p-4">
-      <div className="flex items-center gap-3">
-        <Button variant="outline" size="sm" onClick={() => navigator("/")}>
-          <ArrowLeft />
-        </Button>
-        <span className="truncate text-sm font-medium">
-          {detail?.card.title ?? "Bilibili UGC"}
-        </span>
-      </div>
-
+    <div className="relative h-[calc(100vh-2rem)] min-h-0 w-full overflow-hidden bg-black">
       {playback ? (
         <PlayerErrorBoundary key={videoId}>
           <VideoPlayer defaultPlaybackRates={PLAYBACK_RATES}>
             <VideoStage
               playback={playback}
+              detail={detail}
+              error={error}
               streamIndex={streamIndex}
               availableStreams={availableStreams}
               onStreamIndexChange={setStreamIndex}
               onCurrentTimeChange={setCurrentTime}
-              onPlaybackError={(message) =>
-                setError({ code: "playbackError", message })
-              }
+              onPlaybackError={handlePlaybackError}
+              onBack={() => navigator("/")}
+              onRetry={() => void load()}
+              onLogin={() => openLogin()}
             />
           </VideoPlayer>
         </PlayerErrorBoundary>
       ) : (
-        <div className="aspect-video w-full overflow-hidden rounded-lg bg-black" />
+        <div className="relative h-full w-full overflow-hidden bg-black">
+          <PlayerPausePanel
+            detail={detail}
+            error={error}
+            active
+            ready={false}
+            currentTime={0}
+            onBack={() => navigator("/")}
+            onRetry={() => void load()}
+            onLogin={() => openLogin()}
+          />
+        </div>
       )}
-
-      {playback && playback.qualityNotice.kind !== "none" ? (
-        <div className="text-muted-foreground flex flex-wrap items-center gap-2 text-xs">
-          <span>
-            {t(`Quality.notice.${playback.qualityNotice.messageCode}`)}
-          </span>
-          {playback.qualityNotice.kind === "loginRequired" ||
-          playback.qualityNotice.kind === "accountExpired" ? (
-            <Button
-              type="button"
-              variant="link"
-              size="sm"
-              className="h-auto px-0"
-              onClick={() => openLogin()}
-            >
-              {t("Account.titlebar.login")}
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
-
-      {error ? (
-        <div className="text-destructive flex flex-wrap items-center gap-2 text-sm">
-          <span>{commandErrorMessage(error, t)}</span>
-          {error.code === "authRequired" || error.code === "loginExpired" ? (
-            <Button
-              type="button"
-              variant="link"
-              size="sm"
-              className="h-auto px-0"
-              onClick={() => openLogin()}
-            >
-              {t("Account.titlebar.login")}
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
-
-      {detail ? (
-        <div className="stack-2 border-border/60 bg-card rounded-lg border p-4">
-          <div className="stack-1">
-            <span className="text-muted-foreground text-xs">
-              {detail.card.owner?.name ?? "Unknown"} ·{" "}
-              {formatCount(detail.card.stats.view)}播放
-            </span>
-            <p className="text-muted-foreground line-clamp-3 text-xs whitespace-pre-line">
-              {detail.description || "No description"}
-            </p>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 use crate::domain::{
     PagedVideos, PlaybackInfo, QualityNotice, QualityNoticeKind, QualityOption, StreamProtocol,
-    StreamSource, VideoCard, VideoDetail, VideoPage, VideoStats,
+    StreamSource, VideoCard, VideoDetail, VideoPage, VideoSourceKind, VideoStats,
 };
 use crate::{
     account::{SessionCookies, SharedSession},
@@ -52,12 +52,94 @@ pub struct BilibiliClient {
     session: SharedSession,
     device: Arc<DeviceManager>,
     wbi_cache: Arc<Mutex<Option<WbiCache>>>,
+    recommend_cursor: Arc<Mutex<RecommendationCursor>>,
 }
 
 #[derive(Debug, Clone)]
 struct WbiCache {
     mixin_key: String,
     expires_at: Instant,
+}
+
+#[derive(Debug, Clone)]
+struct RecommendationCursor {
+    fresh_idx: u32,
+    fresh_idx_1h: u32,
+    brush: u32,
+    fetch_row: u32,
+    uniq_id: String,
+    last_showlist: Vec<i64>,
+}
+
+impl RecommendationCursor {
+    fn new() -> Self {
+        Self {
+            fresh_idx: 1,
+            fresh_idx_1h: 1,
+            brush: 1,
+            fetch_row: 1,
+            uniq_id: uuid::Uuid::new_v4().simple().to_string(),
+            last_showlist: Vec::new(),
+        }
+    }
+
+    fn reset(&mut self) {
+        self.brush = self.brush.saturating_add(1);
+        self.rewind();
+    }
+
+    fn rewind(&mut self) {
+        self.fresh_idx = 1;
+        self.fresh_idx_1h = 1;
+        self.fetch_row = 1;
+        self.last_showlist.clear();
+    }
+
+    fn query(&self) -> Vec<(String, String)> {
+        let mut query = vec![
+            ("fresh_type".to_string(), "4".to_string()),
+            ("ps".to_string(), "30".to_string()),
+            ("fresh_idx".to_string(), self.fresh_idx.to_string()),
+            ("fresh_idx_1h".to_string(), self.fresh_idx_1h.to_string()),
+            ("brush".to_string(), self.brush.to_string()),
+            ("fetch_row".to_string(), self.fetch_row.to_string()),
+            ("feed_version".to_string(), "V8".to_string()),
+            ("homepage_ver".to_string(), "1".to_string()),
+            ("y_num".to_string(), "4".to_string()),
+            ("last_y_num".to_string(), "5".to_string()),
+            ("uniq_id".to_string(), self.uniq_id.clone()),
+            ("web_location".to_string(), "1430650".to_string()),
+        ];
+        if !self.last_showlist.is_empty() {
+            query.push((
+                "last_showlist".to_string(),
+                self.last_showlist
+                    .iter()
+                    .map(|aid| format!("av_{aid}"))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ));
+        }
+        query
+    }
+
+    fn advance(&mut self, aids: &[i64], server_fresh_idx: u32, server_fresh_idx_1h: u32) {
+        let rows = ((aids.len() as u32) + 3) / 4;
+        self.fetch_row = self.fetch_row.saturating_add(rows.max(1));
+        self.fresh_idx = next_recommend_index(self.fresh_idx, server_fresh_idx);
+        self.fresh_idx_1h = next_recommend_index(self.fresh_idx_1h, server_fresh_idx_1h);
+        self.last_showlist = aids
+            .iter()
+            .copied()
+            .filter(|aid| *aid > 0)
+            .take(12)
+            .collect();
+    }
+}
+
+fn next_recommend_index(current: u32, server: u32) -> u32 {
+    let next = if server > 0 { server + 1 } else { current + 1 };
+    next.max(current + 1)
 }
 
 impl BilibiliClient {
@@ -73,6 +155,7 @@ impl BilibiliClient {
             session,
             device: Arc::new(device),
             wbi_cache: Arc::new(Mutex::new(None)),
+            recommend_cursor: Arc::new(Mutex::new(RecommendationCursor::new())),
         })
     }
 
@@ -502,7 +585,101 @@ impl BilibiliClient {
             page,
             items,
             has_more,
+            next_cursor: None,
+            fallback: false,
         })
+    }
+
+    pub async fn recommend(&self, page: u32) -> Result<PagedVideos, BiliError> {
+        let query = {
+            let mut cursor = self
+                .recommend_cursor
+                .lock()
+                .map_err(|_| BiliError::Storage("recommend cursor lock poisoned".to_string()))?;
+            if page <= 1 {
+                cursor.reset();
+            }
+            cursor.query()
+        };
+
+        let root = match self
+            .wbi_json("/x/web-interface/wbi/index/top/feed/rcmd", query)
+            .await
+        {
+            Ok(root) => root,
+            Err(recommend_error) => {
+                return self.recommend_fallback(page, recommend_error).await;
+            }
+        };
+        let Some(data) = root.get("data") else {
+            return self
+                .recommend_fallback(
+                    page,
+                    BiliError::Invalid("missing recommendation data".to_string()),
+                )
+                .await;
+        };
+        let (items, aids, server_fresh_idx, server_fresh_idx_1h) = parse_recommendation(data);
+        if items.is_empty() {
+            return self
+                .recommend_fallback(
+                    page,
+                    BiliError::Invalid("recommendation returned no video items".to_string()),
+                )
+                .await;
+        }
+
+        {
+            let mut cursor = self
+                .recommend_cursor
+                .lock()
+                .map_err(|_| BiliError::Storage("recommend cursor lock poisoned".to_string()))?;
+            cursor.advance(&aids, server_fresh_idx, server_fresh_idx_1h);
+        }
+        let has_more = items.len() >= 30;
+        Ok(PagedVideos {
+            page,
+            items,
+            has_more,
+            next_cursor: has_more.then(|| (page + 1).to_string()),
+            fallback: false,
+        })
+    }
+
+    async fn recommend_fallback(
+        &self,
+        page: u32,
+        recommend_error: BiliError,
+    ) -> Result<PagedVideos, BiliError> {
+        match self.popular(page.max(1)).await {
+            Ok(mut fallback) => {
+                fallback.fallback = true;
+                Ok(fallback)
+            }
+            Err(_) => Err(recommend_error),
+        }
+    }
+
+    pub async fn region_feed(&self, region_id: i64, page: u32) -> Result<PagedVideos, BiliError> {
+        let region_id = normalize_region_id(region_id)
+            .ok_or_else(|| BiliError::Invalid(format!("unsupported region id {region_id}")))?;
+        let display_id = page.max(1);
+        let query = vec![
+            ("display_id".to_string(), display_id.to_string()),
+            ("request_cnt".to_string(), "20".to_string()),
+            ("from_region".to_string(), region_id.to_string()),
+            ("device".to_string(), "web".to_string()),
+            ("plat".to_string(), "30".to_string()),
+        ];
+        let session = self.session_snapshot()?;
+        let root = self
+            .api_root(
+                "/x/web-interface/region/feed/rcmd",
+                &query,
+                session.as_ref(),
+            )
+            .await?;
+        parse_region_feed_page(&root, display_id)
     }
 
     pub async fn video_detail(&self, video_id: &str) -> Result<VideoDetail, BiliError> {
@@ -514,7 +691,7 @@ impl BilibiliClient {
             .ok_or_else(|| BiliError::Invalid("missing detail data".to_string()))?;
         let mut card = parse_card(data)
             .ok_or_else(|| BiliError::Invalid("invalid detail card".to_string()))?;
-        card.source_kind = "detail".to_string();
+        card.source_kind = VideoSourceKind::Detail;
         let mut pages = data
             .get("pages")
             .and_then(Value::as_array)
@@ -569,7 +746,7 @@ impl BilibiliClient {
     }
 
     pub async fn search(&self, keyword: &str, page: u32) -> Result<PagedVideos, BiliError> {
-        let root = self
+        let root = match self
             .get_json(
                 "/x/web-interface/search/type",
                 &[
@@ -579,7 +756,23 @@ impl BilibiliClient {
                     ("page_size", "20".to_string()),
                 ],
             )
-            .await?;
+            .await
+        {
+            Ok(root) => root,
+            Err(BiliError::Api { code: -352, .. }) => {
+                self.wbi_json(
+                    "/x/web-interface/wbi/search/type",
+                    vec![
+                        ("search_type".to_string(), "video".to_string()),
+                        ("keyword".to_string(), keyword.to_string()),
+                        ("page".to_string(), page.to_string()),
+                        ("page_size".to_string(), "20".to_string()),
+                    ],
+                )
+                .await?
+            }
+            Err(error) => return Err(error),
+        };
         let mut items = root
             .pointer("/data/result")
             .and_then(Value::as_array)
@@ -588,13 +781,15 @@ impl BilibiliClient {
             .filter_map(parse_search_card)
             .collect::<Vec<_>>();
         for item in &mut items {
-            item.source_kind = "search".to_string();
+            item.source_kind = VideoSourceKind::Search;
         }
-        let has_more = items.len() == 20;
+        let has_more = search_has_more(&root, page, items.len());
         Ok(PagedVideos {
             page,
             items,
             has_more,
+            next_cursor: has_more.then(|| (page + 1).to_string()),
+            fallback: false,
         })
     }
 
@@ -676,9 +871,11 @@ impl BilibiliClient {
                             },
                             protocol: StreamProtocol::Mp4,
                             url,
+                            backup_urls: Vec::new(),
                             quality_id,
                             quality_label: quality_label(quality_id),
                             audio_url: None,
+                            audio_backup_urls: Vec::new(),
                             codec: Some("mp4".to_string()),
                             audio_codec: None,
                         });
@@ -1055,15 +1252,7 @@ fn parse_dash_streams(dash: &Value) -> Vec<StreamSource> {
             let Some(quality_id) = item.get("id").and_then(Value::as_i64) else {
                 continue;
             };
-            let url = item
-                .get("baseUrl")
-                .and_then(Value::as_str)
-                .map(normalize_url)
-                .filter(|url| !url.is_empty());
-            let Some(url) = url else {
-                continue;
-            };
-            if url.is_empty() {
+            if dash_media_urls(item).is_none() {
                 continue;
             }
             let codec = item
@@ -1093,23 +1282,24 @@ fn parse_dash_streams(dash: &Value) -> Vec<StreamSource> {
         .into_iter()
         .map(|(item, _, _)| {
             let quality_id = item.get("id").and_then(Value::as_i64).unwrap_or_default();
-            let url = item
-                .get("baseUrl")
-                .and_then(Value::as_str)
-                .map(normalize_url)
-                .unwrap_or_default();
+            let (url, backup_urls) = dash_media_urls(item).unwrap_or_default();
             StreamSource {
                 id: format!("dash-{quality_id}"),
                 protocol: StreamProtocol::Dash,
                 url,
+                backup_urls,
                 quality_id,
                 quality_label: quality_label(quality_id),
-                audio_url: audio.as_ref().map(|audio| audio.0.clone()),
+                audio_url: audio.as_ref().map(|audio| audio.url.clone()),
+                audio_backup_urls: audio
+                    .as_ref()
+                    .map(|audio| audio.backup_urls.clone())
+                    .unwrap_or_default(),
                 codec: item
                     .get("codecs")
                     .and_then(Value::as_str)
                     .map(ToOwned::to_owned),
-                audio_codec: audio.as_ref().and_then(|audio| audio.1.clone()),
+                audio_codec: audio.as_ref().and_then(|audio| audio.codec.clone()),
             }
         })
         .collect::<Vec<_>>();
@@ -1117,7 +1307,50 @@ fn parse_dash_streams(dash: &Value) -> Vec<StreamSource> {
     streams
 }
 
-fn select_dash_audio(dash: &Value) -> Option<(String, Option<String>)> {
+#[derive(Debug, Clone)]
+struct DashAudioSource {
+    url: String,
+    backup_urls: Vec<String>,
+    codec: Option<String>,
+}
+
+fn dash_media_urls(item: &Value) -> Option<(String, Vec<String>)> {
+    let url = item
+        .get("baseUrl")
+        .or_else(|| item.get("base_url"))
+        .and_then(Value::as_str)
+        .map(normalize_url)
+        .filter(|url| !url.is_empty())?;
+    let mut backup_urls = Vec::new();
+
+    for key in ["backupUrl", "backup_url"] {
+        match item.get(key) {
+            Some(Value::Array(values)) => {
+                for value in values.iter().filter_map(Value::as_str) {
+                    push_unique_media_url(&mut backup_urls, value, &url);
+                }
+            }
+            Some(Value::String(value)) => {
+                push_unique_media_url(&mut backup_urls, value, &url);
+            }
+            _ => {}
+        }
+    }
+
+    Some((url, backup_urls))
+}
+
+fn push_unique_media_url(urls: &mut Vec<String>, candidate: &str, primary_url: &str) {
+    let candidate = normalize_url(candidate);
+    if !candidate.is_empty()
+        && candidate != primary_url
+        && !urls.iter().any(|url| url == &candidate)
+    {
+        urls.push(candidate);
+    }
+}
+
+fn select_dash_audio(dash: &Value) -> Option<DashAudioSource> {
     let audio_arrays = [
         dash.get("audio").and_then(Value::as_array),
         dash.get("dolby")
@@ -1131,11 +1364,7 @@ fn select_dash_audio(dash: &Value) -> Option<(String, Option<String>)> {
         let selected = audio
             .iter()
             .filter_map(|item| {
-                let url = item
-                    .get("baseUrl")
-                    .and_then(Value::as_str)
-                    .map(normalize_url)
-                    .filter(|url| !url.is_empty())?;
+                let (url, backup_urls) = dash_media_urls(item)?;
                 let codec = item
                     .get("codecs")
                     .and_then(Value::as_str)
@@ -1144,10 +1373,16 @@ fn select_dash_audio(dash: &Value) -> Option<(String, Option<String>)> {
                     .get("bandwidth")
                     .and_then(Value::as_i64)
                     .unwrap_or_default();
-                Some((url, codec, bandwidth))
+                Some(DashAudioSource {
+                    url,
+                    backup_urls,
+                    codec,
+                })
+                .map(|audio| (audio, bandwidth))
             })
-            .max_by_key(|(_, _, bandwidth)| *bandwidth)?;
-        return Some((selected.0, selected.1));
+            .max_by_key(|(_, bandwidth)| *bandwidth)?
+            .0;
+        return Some(selected);
     }
     None
 }
@@ -1224,12 +1459,161 @@ fn quality_label(id: i64) -> String {
     .to_string()
 }
 
+fn normalize_region_id(region_id: i64) -> Option<i64> {
+    if matches!(
+        region_id,
+        1001 | 1002
+            | 1003
+            | 1004
+            | 1005
+            | 1006
+            | 1007
+            | 1008
+            | 1009
+            | 1010
+            | 1011
+            | 1012
+            | 1013
+            | 1014
+            | 1015
+            | 1016
+            | 1017
+            | 1018
+            | 1019
+            | 1020
+            | 1021
+            | 1022
+            | 1023
+            | 1024
+            | 1025
+            | 1026
+            | 1027
+            | 1029
+            | 1030
+            | 1031
+    ) {
+        return Some(region_id);
+    }
+    None
+}
+
+fn parse_region_feed_page(root: &Value, page: u32) -> Result<PagedVideos, BiliError> {
+    if root.get("code").and_then(Value::as_i64) == Some(62013) {
+        return Ok(PagedVideos {
+            page,
+            items: Vec::new(),
+            has_more: false,
+            next_cursor: None,
+            fallback: false,
+        });
+    }
+    ensure_api_success(root)?;
+
+    let data = root
+        .get("data")
+        .ok_or_else(|| BiliError::Invalid("missing region feed data".to_string()))?;
+    let items = data
+        .get("archives")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| parse_card_with_source(item, VideoSourceKind::Region))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let declared_has_more = data
+        .get("has_more")
+        .and_then(Value::as_i64)
+        .is_some_and(|value| value > 0);
+    let has_more = declared_has_more || items.len() >= 20;
+    Ok(PagedVideos {
+        page,
+        items,
+        has_more,
+        next_cursor: has_more.then(|| (page + 1).to_string()),
+        fallback: false,
+    })
+}
+
+fn search_has_more(root: &Value, page: u32, item_count: usize) -> bool {
+    root.pointer("/data/numPages")
+        .and_then(Value::as_u64)
+        .map(|total_pages| u64::from(page) < total_pages)
+        .unwrap_or(item_count >= 20)
+}
+
+fn parse_recommendation(data: &Value) -> (Vec<VideoCard>, Vec<i64>, u32, u32) {
+    let entries = data
+        .get("item")
+        .or_else(|| data.get("items"))
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let mut items = Vec::new();
+    let mut aids = Vec::new();
+
+    for entry in entries {
+        if entry
+            .get("goto")
+            .and_then(Value::as_str)
+            .is_some_and(|goto| goto != "av")
+        {
+            continue;
+        }
+        let video = entry.get("bilibili").unwrap_or(entry);
+        let Some(card) = parse_card_with_source(video, VideoSourceKind::Recommend) else {
+            continue;
+        };
+        if let Some(aid) = video
+            .get("aid")
+            .or_else(|| video.get("id"))
+            .and_then(Value::as_i64)
+        {
+            if aid > 0 {
+                aids.push(aid);
+            }
+        }
+        items.push(card);
+    }
+
+    let fresh_idx = recommendation_counter(data, "fresh_idx");
+    let fresh_idx_1h = recommendation_counter(data, "fresh_idx_1h");
+    (items, aids, fresh_idx, fresh_idx_1h)
+}
+
+fn recommendation_counter(data: &Value, key: &str) -> u32 {
+    let Some(userfeature) = data.get("userfeature") else {
+        return 0;
+    };
+    let parsed;
+    let object = if let Some(raw) = userfeature.as_str() {
+        parsed = serde_json::from_str::<Value>(raw).ok();
+        parsed.as_ref()
+    } else {
+        Some(userfeature)
+    };
+    object
+        .and_then(|value| value.get(key))
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or_default()
+}
+
 fn parse_card(value: &Value) -> Option<VideoCard> {
+    parse_card_with_source(value, VideoSourceKind::Popular)
+}
+
+fn parse_card_with_source(value: &Value, source_kind: VideoSourceKind) -> Option<VideoCard> {
     let bvid = value
         .get("bvid")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let aid = value.get("aid").and_then(Value::as_i64).unwrap_or_default();
+    let aid = value
+        .get("aid")
+        .or_else(|| value.get("id"))
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
     let video_id = if !bvid.is_empty() {
         bvid.to_string()
     } else if aid > 0 {
@@ -1266,6 +1650,7 @@ fn parse_card(value: &Value) -> Option<VideoCard> {
     });
 
     Some(VideoCard {
+        platform: crate::domain::Platform::Bilibili,
         video_id,
         title,
         cover_url: value
@@ -1278,7 +1663,7 @@ fn parse_card(value: &Value) -> Option<VideoCard> {
         owner,
         stats: stat.unwrap_or_default(),
         cid: value.get("cid").and_then(Value::as_i64),
-        source_kind: "popular".to_string(),
+        source_kind,
     })
 }
 
@@ -1312,11 +1697,12 @@ fn parse_search_card(value: &Value) -> Option<VideoCard> {
     };
 
     Some(VideoCard {
+        platform: crate::domain::Platform::Bilibili,
         video_id,
         title,
         cover_url: value.get("pic").and_then(Value::as_str).map(normalize_url),
         duration,
-        published_at: None,
+        published_at: value.get("pubdate").and_then(Value::as_i64),
         owner: Some(crate::domain::OwnerInfo {
             id: mid,
             name: author.to_string(),
@@ -1324,7 +1710,7 @@ fn parse_search_card(value: &Value) -> Option<VideoCard> {
         }),
         stats: stat,
         cid: None,
-        source_kind: "search".to_string(),
+        source_kind: VideoSourceKind::Search,
     })
 }
 
@@ -1374,7 +1760,155 @@ fn parse_duration_text(value: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::{CommandError, Platform};
     use serde_json::json;
+
+    #[test]
+    fn feed_fixtures_map_to_the_unified_video_card() {
+        let popular: Value =
+            serde_json::from_str(include_str!("../tests/fixtures/bilibili/feed/popular.json"))
+                .unwrap();
+        let popular_card = parse_card(&popular["data"]["list"][0]).unwrap();
+        assert_eq!(popular_card.platform, Platform::Bilibili);
+        assert_eq!(popular_card.source_kind, VideoSourceKind::Popular);
+        assert_eq!(popular_card.owner.unwrap().name, "Popular owner");
+
+        let region: Value =
+            serde_json::from_str(include_str!("../tests/fixtures/bilibili/feed/region.json"))
+                .unwrap();
+        let region_card =
+            parse_card_with_source(&region["data"]["archives"][0], VideoSourceKind::Region)
+                .unwrap();
+        assert_eq!(region_card.video_id, "BV1REGION0001");
+        assert_eq!(
+            region_card.cover_url.as_deref(),
+            Some("https://example.invalid/region-cover.jpg")
+        );
+        assert_eq!(region_card.source_kind, VideoSourceKind::Region);
+
+        let recommend: Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/bilibili/feed/recommend.json"
+        ))
+        .unwrap();
+        let recommend_card = parse_card_with_source(
+            &recommend["data"]["items"][0]["bilibili"],
+            VideoSourceKind::Recommend,
+        )
+        .unwrap();
+        assert_eq!(recommend_card.video_id, "BV1RECOMMEND");
+        assert_eq!(recommend_card.stats.view, 3200);
+        assert_eq!(recommend_card.source_kind, VideoSourceKind::Recommend);
+
+        let search: Value =
+            serde_json::from_str(include_str!("../tests/fixtures/bilibili/feed/search.json"))
+                .unwrap();
+        let search_card = parse_search_card(&search["data"]["result"][0]).unwrap();
+        assert_eq!(search_card.title, "Search fixture");
+        assert_eq!(search_card.duration, Some(365));
+        assert_eq!(search_card.source_kind, VideoSourceKind::Search);
+    }
+
+    #[test]
+    fn unified_cards_always_serialize_required_stats() {
+        let card = parse_card(&json!({
+            "aid": 1005,
+            "title": "Zero stats fixture"
+        }))
+        .unwrap();
+
+        let serialized = serde_json::to_value(card).unwrap();
+        assert_eq!(serialized["stats"]["view"], 0);
+        assert_eq!(serialized["stats"]["like"], 0);
+        assert_eq!(serialized["stats"]["danmaku"], 0);
+    }
+
+    #[test]
+    fn feed_fixtures_preserve_pagination_and_error_boundaries() {
+        let region_end: Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/bilibili/feed/region-end.json"
+        ))
+        .unwrap();
+        let end_page = parse_region_feed_page(&region_end, 7).unwrap();
+        assert_eq!(end_page.page, 7);
+        assert!(end_page.items.is_empty());
+        assert!(!end_page.has_more);
+        assert!(end_page.next_cursor.is_none());
+
+        let region: Value =
+            serde_json::from_str(include_str!("../tests/fixtures/bilibili/feed/region.json"))
+                .unwrap();
+        let region_page = parse_region_feed_page(&region, 1).unwrap();
+        assert_eq!(region_page.items.len(), 1);
+        assert!(region_page.has_more);
+        assert_eq!(region_page.next_cursor.as_deref(), Some("2"));
+
+        let search: Value =
+            serde_json::from_str(include_str!("../tests/fixtures/bilibili/feed/search.json"))
+                .unwrap();
+        assert!(search_has_more(&search, 1, 1));
+        assert!(!search_has_more(&search, 2, 1));
+
+        let risk_control: Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/bilibili/feed/risk-control.json"
+        ))
+        .unwrap();
+        let command_error: CommandError = api_error(&risk_control).into();
+        assert_eq!(command_error.code, "riskControl");
+    }
+
+    #[test]
+    fn region_ids_require_confirmed_v2_values() {
+        for region_id in [
+            1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014,
+            1015, 1016, 1017, 1018, 1019, 1020, 1021, 1022, 1023, 1024, 1025, 1026, 1027, 1029,
+            1030, 1031,
+        ] {
+            assert_eq!(normalize_region_id(region_id), Some(region_id));
+        }
+
+        assert_eq!(normalize_region_id(0), None);
+        assert_eq!(normalize_region_id(1), None);
+        assert_eq!(normalize_region_id(160), None);
+    }
+
+    #[test]
+    fn recommendation_cursor_advances_and_resets_for_a_new_feed() {
+        let mut cursor = RecommendationCursor {
+            fresh_idx: 1,
+            fresh_idx_1h: 1,
+            brush: 1,
+            fetch_row: 1,
+            uniq_id: "fixture".to_string(),
+            last_showlist: Vec::new(),
+        };
+
+        cursor.advance(&[101, 102, 103, 104, 105], 2, 3);
+        let query = cursor.query();
+        let value = |key: &str| {
+            query
+                .iter()
+                .find(|(candidate, _)| candidate == key)
+                .map(|(_, value)| value.as_str())
+        };
+
+        assert_eq!(value("fresh_idx"), Some("3"));
+        assert_eq!(value("fresh_idx_1h"), Some("4"));
+        assert_eq!(value("fetch_row"), Some("3"));
+        assert_eq!(
+            value("last_showlist"),
+            Some("av_101,av_102,av_103,av_104,av_105")
+        );
+
+        cursor.reset();
+        let reset_query = cursor.query();
+        assert!(reset_query
+            .iter()
+            .any(|(key, value)| { key == "fresh_idx" && value == "1" }));
+        assert!(reset_query
+            .iter()
+            .any(|(key, value)| { key == "brush" && value == "2" }));
+        assert!(!reset_query.iter().any(|(key, _)| key == "last_showlist"));
+    }
 
     #[test]
     fn passport_shape_keeps_structure_without_sensitive_values() {
@@ -1495,6 +2029,10 @@ mod tests {
                 {
                     "id": 80,
                     "baseUrl": "https://example.com/video-80.m4s",
+                    "backupUrl": [
+                        "https://cdn.example.com/video-80.m4s",
+                        "https://cdn.example.com/video-80.m4s"
+                    ],
                     "codecs": "avc1.640032",
                     "bandwidth": 3000000
                 }
@@ -1507,6 +2045,10 @@ mod tests {
                 },
                 {
                     "baseUrl": "https://example.com/audio-high.m4s",
+                    "backup_url": [
+                        "https://cdn.example.com/audio-high.m4s",
+                        "https://example.com/audio-high.m4s"
+                    ],
                     "codecs": "mp4a.40.2",
                     "bandwidth": 192000
                 }
@@ -1534,12 +2076,20 @@ mod tests {
         let streams = parse_dash_streams(&dash);
         assert_eq!(streams.len(), 2);
         assert_eq!(streams[0].quality_id, 80);
+        assert_eq!(
+            streams[0].backup_urls,
+            vec!["https://cdn.example.com/video-80.m4s"]
+        );
         assert_eq!(streams[1].quality_id, 64);
         assert_eq!(streams[1].protocol, StreamProtocol::Dash);
         assert_eq!(streams[1].url, "https://example.com/video-64-avc.m4s");
         assert_eq!(
             streams[1].audio_url.as_deref(),
             Some("https://example.com/audio-high.m4s")
+        );
+        assert_eq!(
+            streams[1].audio_backup_urls,
+            vec!["https://cdn.example.com/audio-high.m4s"]
         );
         assert_eq!(streams[1].audio_codec.as_deref(), Some("mp4a.40.2"));
         assert_eq!(dash_audio_items(&dash).len(), 4);
