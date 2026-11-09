@@ -40,6 +40,7 @@ export interface StreamSource {
   qualityLabel: string;
   audioUrl?: string;
   codec?: string;
+  audioCodec?: string;
 }
 
 export interface QualityOption {

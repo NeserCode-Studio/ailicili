@@ -264,6 +264,8 @@ pub struct StreamSource {
     pub audio_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub codec: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_codec: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -112,6 +112,8 @@ export const I18nTexts = {
       "Sign in for a chance to unlock higher quality.",
     "Quality.notice.dashRequiredForHigherQuality":
       "This build only supports the returned MP4 quality. DASH switching comes in P2.",
+    "Quality.notice.higherQualityUnavailable":
+      "Higher quality is not available for this account or video.",
     "Quality.notice.none": "",
 
     "Command.placeholder": "Type a command or search...",
@@ -348,6 +350,8 @@ export const I18nTexts = {
     "Quality.notice.loginForHigherQuality": "登录后可能解锁更高画质。",
     "Quality.notice.dashRequiredForHigherQuality":
       "当前版本仅支持接口返回的 MP4 画质，DASH 切换将在 P2 支持。",
+    "Quality.notice.higherQualityUnavailable":
+      "当前账号或视频暂不可用更高画质。",
     "Quality.notice.none": "",
 
     "Command.placeholder": "键入命令或搜索...",

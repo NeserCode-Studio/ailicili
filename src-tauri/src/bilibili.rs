@@ -607,10 +607,10 @@ impl BilibiliClient {
         let mut query = vec![
             ("cid".to_string(), cid.to_string()),
             ("qn".to_string(), quality.to_string()),
-            ("fnval".to_string(), "1".to_string()),
+            ("fnval".to_string(), "4048".to_string()),
             ("fnver".to_string(), "0".to_string()),
             ("fourk".to_string(), "1".to_string()),
-            ("platform".to_string(), "html5".to_string()),
+            ("platform".to_string(), "pc".to_string()),
         ];
         if let Some(stripped) = video_id.strip_prefix("av") {
             query.push(("aid".to_string(), stripped.to_string()));
@@ -631,43 +631,58 @@ impl BilibiliClient {
             .unwrap_or_default();
         let mut streams = Vec::new();
         let mut durl_count = 0;
+        let mut dash_video_count = 0;
+        let mut dash_audio_count = 0;
 
-        if let Some(durl) = data.get("durl").and_then(Value::as_array) {
-            durl_count = durl.len();
-            for (index, item) in durl.iter().enumerate() {
-                let mut urls = Vec::new();
-                if let Some(url) = item.get("url").and_then(Value::as_str) {
-                    urls.push(url);
-                }
-                if let Some(backups) = item.get("backup_url").and_then(Value::as_array) {
-                    urls.extend(backups.iter().filter_map(Value::as_str));
-                }
+        if let Some(dash) = data.get("dash") {
+            dash_video_count = dash
+                .get("video")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                .unwrap_or_default();
+            dash_audio_count = dash_audio_items(dash).len();
+            streams = parse_dash_streams(dash);
+        }
 
-                for (variant, url) in urls
-                    .into_iter()
-                    .map(normalize_url)
-                    .filter(|url| !url.is_empty())
-                    .enumerate()
-                {
-                    if streams
-                        .iter()
-                        .any(|stream: &StreamSource| stream.url == url)
-                    {
-                        continue;
+        if streams.is_empty() {
+            if let Some(durl) = data.get("durl").and_then(Value::as_array) {
+                durl_count = durl.len();
+                for (index, item) in durl.iter().enumerate() {
+                    let mut urls = Vec::new();
+                    if let Some(url) = item.get("url").and_then(Value::as_str) {
+                        urls.push(url);
                     }
-                    streams.push(StreamSource {
-                        id: if variant == 0 {
-                            format!("mp4-{index}")
-                        } else {
-                            format!("mp4-{index}-fallback-{variant}")
-                        },
-                        protocol: StreamProtocol::Mp4,
-                        url,
-                        quality_id,
-                        quality_label: quality_label(quality_id),
-                        audio_url: None,
-                        codec: Some("mp4".to_string()),
-                    });
+                    if let Some(backups) = item.get("backup_url").and_then(Value::as_array) {
+                        urls.extend(backups.iter().filter_map(Value::as_str));
+                    }
+
+                    for (variant, url) in urls
+                        .into_iter()
+                        .map(normalize_url)
+                        .filter(|url| !url.is_empty())
+                        .enumerate()
+                    {
+                        if streams
+                            .iter()
+                            .any(|stream: &StreamSource| stream.url == url)
+                        {
+                            continue;
+                        }
+                        streams.push(StreamSource {
+                            id: if variant == 0 {
+                                format!("mp4-{index}")
+                            } else {
+                                format!("mp4-{index}-fallback-{variant}")
+                            },
+                            protocol: StreamProtocol::Mp4,
+                            url,
+                            quality_id,
+                            quality_label: quality_label(quality_id),
+                            audio_url: None,
+                            codec: Some("mp4".to_string()),
+                            audio_codec: None,
+                        });
+                    }
                 }
             }
         }
@@ -685,15 +700,20 @@ impl BilibiliClient {
             .map(|quality| quality.id)
             .max()
             .unwrap_or(quality_id);
+        let highest_available = streams
+            .iter()
+            .map(|stream| stream.quality_id)
+            .max()
+            .unwrap_or(quality_id);
         let quality_notice = if !logged_in {
             QualityNotice {
                 kind: QualityNoticeKind::LoginRequired,
                 message_code: "loginForHigherQuality".to_string(),
             }
-        } else if quality_id < highest_advertised {
+        } else if highest_available < highest_advertised {
             QualityNotice {
                 kind: QualityNoticeKind::QualityUnavailable,
-                message_code: "dashRequiredForHigherQuality".to_string(),
+                message_code: "higherQualityUnavailable".to_string(),
             }
         } else {
             QualityNotice {
@@ -703,7 +723,7 @@ impl BilibiliClient {
         };
         info!(
             target: "Bilibili",
-            "playback loaded video={video_id} cid={cid} qn={quality} quality={quality_id} durl={durl_count} sources={} logged_in={logged_in}",
+            "playback loaded video={video_id} cid={cid} qn={quality} quality={quality_id} dash_video={dash_video_count} dash_audio={dash_audio_count} durl={durl_count} sources={} logged_in={logged_in}",
             streams.len(),
         );
 
@@ -713,8 +733,8 @@ impl BilibiliClient {
             duration_ms,
             streams,
             current_quality: QualityOption {
-                id: quality_id,
-                label: quality_label(quality_id),
+                id: highest_available,
+                label: quality_label(highest_available),
             },
             advertised_qualities,
             quality_notice,
@@ -1005,6 +1025,142 @@ fn error_code(error: &BiliError) -> String {
         BiliError::Api { code, .. } => format!("api:{code}"),
         BiliError::Invalid(_) => "invalidResponse".to_string(),
         _ => "unavailable".to_string(),
+    }
+}
+
+fn dash_audio_items(dash: &Value) -> Vec<&Value> {
+    let mut items = Vec::new();
+    if let Some(audio) = dash.get("audio").and_then(Value::as_array) {
+        items.extend(audio.iter());
+    }
+    if let Some(dolby) = dash.get("dolby").and_then(|value| value.get("audio")) {
+        if let Some(audio) = dolby.as_array() {
+            items.extend(audio.iter());
+        }
+    }
+    if let Some(flac) = dash.get("flac").and_then(|value| value.get("audio")) {
+        if let Some(audio) = flac.as_array() {
+            items.extend(audio.iter());
+        }
+    }
+    items
+}
+
+fn parse_dash_streams(dash: &Value) -> Vec<StreamSource> {
+    let audio = select_dash_audio(dash);
+    let mut videos: Vec<(&Value, i32, i64)> = Vec::new();
+
+    if let Some(items) = dash.get("video").and_then(Value::as_array) {
+        for item in items {
+            let Some(quality_id) = item.get("id").and_then(Value::as_i64) else {
+                continue;
+            };
+            let url = item
+                .get("baseUrl")
+                .and_then(Value::as_str)
+                .map(normalize_url)
+                .filter(|url| !url.is_empty());
+            let Some(url) = url else {
+                continue;
+            };
+            if url.is_empty() {
+                continue;
+            }
+            let codec = item
+                .get("codecs")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let bandwidth = item
+                .get("bandwidth")
+                .and_then(Value::as_i64)
+                .unwrap_or_default();
+            let score = codec_score(&codec);
+            match videos.iter_mut().find(|(candidate, _, _)| {
+                candidate.get("id").and_then(Value::as_i64) == Some(quality_id)
+            }) {
+                Some(entry) => {
+                    if score > entry.1 || (score == entry.1 && bandwidth > entry.2) {
+                        *entry = (item, score, bandwidth);
+                    }
+                }
+                None => videos.push((item, score, bandwidth)),
+            }
+        }
+    }
+
+    let mut streams = videos
+        .into_iter()
+        .map(|(item, _, _)| {
+            let quality_id = item.get("id").and_then(Value::as_i64).unwrap_or_default();
+            let url = item
+                .get("baseUrl")
+                .and_then(Value::as_str)
+                .map(normalize_url)
+                .unwrap_or_default();
+            StreamSource {
+                id: format!("dash-{quality_id}"),
+                protocol: StreamProtocol::Dash,
+                url,
+                quality_id,
+                quality_label: quality_label(quality_id),
+                audio_url: audio.as_ref().map(|audio| audio.0.clone()),
+                codec: item
+                    .get("codecs")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned),
+                audio_codec: audio.as_ref().and_then(|audio| audio.1.clone()),
+            }
+        })
+        .collect::<Vec<_>>();
+    streams.sort_by(|left, right| right.quality_id.cmp(&left.quality_id));
+    streams
+}
+
+fn select_dash_audio(dash: &Value) -> Option<(String, Option<String>)> {
+    let audio_arrays = [
+        dash.get("audio").and_then(Value::as_array),
+        dash.get("dolby")
+            .and_then(|value| value.get("audio"))
+            .and_then(Value::as_array),
+        dash.get("flac")
+            .and_then(|value| value.get("audio"))
+            .and_then(Value::as_array),
+    ];
+    for audio in audio_arrays.into_iter().flatten() {
+        let selected = audio
+            .iter()
+            .filter_map(|item| {
+                let url = item
+                    .get("baseUrl")
+                    .and_then(Value::as_str)
+                    .map(normalize_url)
+                    .filter(|url| !url.is_empty())?;
+                let codec = item
+                    .get("codecs")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned);
+                let bandwidth = item
+                    .get("bandwidth")
+                    .and_then(Value::as_i64)
+                    .unwrap_or_default();
+                Some((url, codec, bandwidth))
+            })
+            .max_by_key(|(_, _, bandwidth)| *bandwidth)?;
+        return Some((selected.0, selected.1));
+    }
+    None
+}
+
+fn codec_score(codec: &str) -> i32 {
+    if codec.contains("avc1") {
+        4
+    } else if codec.contains("hvc1") || codec.contains("hev1") {
+        3
+    } else if codec.contains("av01") {
+        2
+    } else {
+        1
     }
 }
 
@@ -1318,5 +1474,74 @@ mod tests {
             vec!["cid", "tel", "code", "source", "captcha_key", "go_url"]
         );
         assert!(!fields.contains(&"keep"));
+    }
+
+    #[test]
+    fn dash_streams_use_actual_video_ids_and_best_standard_audio() {
+        let dash = json!({
+            "video": [
+                {
+                    "id": 64,
+                    "baseUrl": "https://example.com/video-64-hevc.m4s",
+                    "codecs": "hev1.1.6.L120.90",
+                    "bandwidth": 2000000
+                },
+                {
+                    "id": 64,
+                    "baseUrl": "https://example.com/video-64-avc.m4s",
+                    "codecs": "avc1.640028",
+                    "bandwidth": 1800000
+                },
+                {
+                    "id": 80,
+                    "baseUrl": "https://example.com/video-80.m4s",
+                    "codecs": "avc1.640032",
+                    "bandwidth": 3000000
+                }
+            ],
+            "audio": [
+                {
+                    "baseUrl": "https://example.com/audio-low.m4s",
+                    "codecs": "mp4a.40.2",
+                    "bandwidth": 64000
+                },
+                {
+                    "baseUrl": "https://example.com/audio-high.m4s",
+                    "codecs": "mp4a.40.2",
+                    "bandwidth": 192000
+                }
+            ],
+            "dolby": {
+                "audio": [
+                    {
+                        "baseUrl": "https://example.com/audio-dolby.m4s",
+                        "codecs": "ec-3",
+                        "bandwidth": 384000
+                    }
+                ]
+            },
+            "flac": {
+                "audio": [
+                    {
+                        "baseUrl": "https://example.com/audio-flac.m4s",
+                        "codecs": "flac",
+                        "bandwidth": 900000
+                    }
+                ]
+            }
+        });
+
+        let streams = parse_dash_streams(&dash);
+        assert_eq!(streams.len(), 2);
+        assert_eq!(streams[0].quality_id, 80);
+        assert_eq!(streams[1].quality_id, 64);
+        assert_eq!(streams[1].protocol, StreamProtocol::Dash);
+        assert_eq!(streams[1].url, "https://example.com/video-64-avc.m4s");
+        assert_eq!(
+            streams[1].audio_url.as_deref(),
+            Some("https://example.com/audio-high.m4s")
+        );
+        assert_eq!(streams[1].audio_codec.as_deref(), Some("mp4a.40.2"));
+        assert_eq!(dash_audio_items(&dash).len(), 4);
     }
 }
