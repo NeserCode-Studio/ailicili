@@ -4,11 +4,12 @@
 
 **Tauri 2 + React 19 多端视频与直播观看应用**
 
-以 Bilibili UGC 视频为主的个人学习与研究项目，后续扩展直播源与多端播放能力。当前阶段包含匿名热门视频首页与基础 MP4 播放。
+以 Bilibili UGC 视频为主的个人学习与研究项目，逐步扩展登录态、高画质、直播源与 Android 播放能力。
 
 [![Tauri](https://img.shields.io/badge/Tauri-2-blue?style=flat-round&logo=tauri&logoColor=white)](https://tauri.app)
 [![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-round&logo=react&logoColor=black)](https://react.dev)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-round&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![Rust](https://img.shields.io/badge/Rust-stable-000000?style=flat-round&logo=rust&logoColor=white)](https://www.rust-lang.org)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-4-06B6D4?style=flat-round&logo=tailwindcss&logoColor=white)](https://tailwindcss.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=flat-round)](LICENSE)
 
@@ -18,211 +19,173 @@
 
 ---
 
-## 特性
+## 当前进度
 
-| | |
+| 模块 | 状态 |
 | --- | --- |
-| **双窗口架构** | 主窗口 + 托盘弹窗，同一 bundle 按窗口标签分流 |
-| **无边框标题栏** | Windows 风格原生菜单（转到 / 编辑 / 帮助），标题栏可拖拽 |
-| **系统托盘** | 托盘图标 + 自绘弹出菜单，左键显隐主窗口、右键唤出菜单 |
-| **命令面板** | `⌘K` / `Ctrl+K` 唤起，支持模糊搜索与快捷键提示 |
-| **设置中心** | 通用设置项组件（输入框 / 下拉 / 开关），内置搜索与修改记录 |
-| **主题切换** | 亮色 / 暗色，跟随系统，用户手动选择后不再自动跟随 |
-| **国际化** | 中英双语，语言可运行时切换 |
-| **生命周期钩子** | 阶段化的启动 / 挂载 / 就绪钩子，业务初始化有明确落点 |
-| **跨窗口通信** | Rust ↔ 前端双向事件通道，托盘可直接唤起主窗口功能 |
+| Bilibili 匿名热门视频 | 可用 |
+| Bilibili UGC 视频搜索 | 可用 |
+| 视频详情与分 P 元数据 | 可用 |
+| MP4 播放 | 可用 |
+| 播放进度、倍速、音量、画中画、全屏 | 可用 |
+| 本地播放历史 | 可用 |
+| 二维码登录与高画质 | 计划中 |
+| Bilibili DASH 播放 | 计划中 |
+| 视频与直播弹幕 | 计划中 |
+| Bilibili 直播与 Douyin/Huya 适配 | 计划中 |
+| Android 工程与原生播放后端 | 计划中 |
 
-技术底座：**Tauri 2** · **React 19** · **TypeScript** · **Tailwind CSS 4** · **shadcn/ui** · **Radix UI** · **Rust**
+当前只支持 Bilibili 匿名 UGC 视频与 MP4 播放。番剧、影视、充电专属、直播、弹幕、评论互动、云端历史与下载缓存尚未实现。
 
----
+## 功能
+
+### 媒体功能
+
+- 视频优先首页，支持热门流与 UGC 关键词搜索。
+- 支持 `BV...` 与 `av...` 视频 ID、视频详情、分 P 信息与播放地址解析。
+- 封面请求使用 `no-referrer`，避免第三方 CDN 的 Referer 校验导致 403。
+- 播放器控制栏参考 Bilibili 网页版，包含进度、播放、时间、清晰度、倍速、音量、画中画与全屏。
+- 单击画面切换播放状态，双击只切换全屏，两者不会重复消费同一组点击。
+- 播放进度定期写入 Tauri 应用数据目录中的 `history.json`。
+
+### 模板能力
+
+- Windows 无边框标题栏、系统托盘与独立托盘弹窗。
+- 命令面板、设置中心、亮暗主题与中英双语。
+- 分阶段生命周期钩子，以及 Rust 与前端之间的跨窗口事件通道。
+- 统一日志工具，按模块与级别输出关键路径信息。
+
+## 技术栈
+
+| 层 | 技术 |
+| --- | --- |
+| 桌面与移动容器 | Tauri 2 |
+| 前端 | React 19、TypeScript、Vite |
+| 样式与组件 | Tailwind CSS 4、shadcn/ui、Radix UI |
+| 后端 | Rust、Reqwest |
+| 视频协议 | HTMLVideoElement、hls.js、mpegts.js |
+
+Tauri npm 包与 Rust crate 使用相同 minor 版本。修改 `@tauri-apps/*` 或 `Cargo.toml` 中的 Tauri 依赖时，必须同步检查 `pnpm tauri info` 与 `cargo check`。
 
 ## 快速开始
 
 ### 环境要求
 
-- Node.js ≥ 18
-- pnpm ≥ 9
-- Rust（stable）
-- Tauri 平台依赖（Linux 需 `webkit2gtk` 等，详见[官方文档](https://tauri.app/start/prerequisites/)）
+- Node.js >= 18
+- pnpm >= 9
+- Rust stable
+- Tauri 平台依赖，Windows 需要 WebView2
 
-### 安装与启动
+### 开发
 
 ```bash
 # 安装前端依赖
 pnpm install
 
-# 启动开发环境（自动编译 Rust，首次较慢）
+# 启动 Tauri 开发环境
 pnpm tauri dev
 ```
 
-### 构建
+开发服务器固定使用 `8888` 端口。如果端口已被其他实例占用，应先停止旧实例或按 Tauri 配置调整端口，不应让多个开发实例共享同一端口。
+
+### 检查与构建
 
 ```bash
-pnpm tauri build     # 生成安装包
-pnpm build           # 仅构建前端
+pnpm lint
+pnpm build
+
+cd src-tauri
+cargo check
 ```
 
-### 其他命令
+`pnpm tauri build` 只在最终发布阶段执行。日常开发与验收使用 `pnpm build`、`cargo check` 和 `pnpm tauri dev`。
 
-| 命令 | 说明 |
-| --- | --- |
-| `pnpm dev` | 启动前端开发服务器（端口 8888） |
-| `pnpm preview` | 预览前端构建产物 |
-| `pnpm lint` | ESLint 检查 |
-| `pnpm format` | Prettier 格式化 |
+## 媒体架构
 
-> 浏览器环境下界面可渲染，但托盘、跨窗口、原生能力不可用 —— 这些需 `pnpm tauri dev` 验证。
+```text
+React views
+  -> src/api/media.ts
+  -> Tauri invoke
+  -> src-tauri/src/lib.rs
+  -> Bilibili adapter / local storage
+  -> unified camelCase domain models
+  -> React player
+```
 
----
+核心边界：
+
+1. 平台请求、签名和响应映射位于 Rust，前端不直接解析平台 API。
+2. 前端只消费统一的视频、分 P、播放流与历史记录模型。
+3. 播放器只理解 `mp4`、`dash`、`hls`、`flv` 等协议，不理解具体平台。
+4. 新增直播平台时应扩展平台适配层，而不是修改播放器核心。
+5. Cookie、登录凭据和平台风控状态必须留在受控存储中，不写入普通日志。
 
 ## 项目结构
 
-```
+```text
 src/
-├── main.tsx              # 入口
-├── App.tsx               # 根组件：路由装配、Context、跨窗口事件、生命周期触发
-├── App.css               # 设计令牌 + 组件类
-│
+├── api/
+│   └── media.ts             # 前端媒体调用层
 ├── components/
-│   ├── framework/        # 框架组件
-│   │   ├── Titlebar*         # 无边框标题栏
-│   │   ├── CommandDialog     # 命令面板
-│   │   ├── SettingsDialog    # 设置弹窗
-│   │   ├── AboutDialog       # 关于弹窗
-│   │   └── Tooltip
-│   └── ui/               # shadcn/ui 组件库
-│
-├── views/                # 页面
-│   ├── Home / Software / Framework
-│   └── TrayMenu          # 托盘菜单
-│
-├── composables/          # 业务 Hook
-│   ├── useTheme          # 主题
-│   ├── useI18n           # 国际化
-│   ├── useToast          # 轻提示
-│   └── useSuperCommand   # 命令注册表
-│
-├── contexts/             # 全局 Context
-├── lifecycle/            # 生命周期总线（阶段：mount / ready）
-├── lib/                  # 工具与资源
-│   ├── i18n.resource.ts  # 中英文案表
-│   ├── window.utils.ts   # 窗口工具
-│   ├── editor.actions.ts # 编辑命令
-│   ├── logger.ts         # 日志模块
-│   └── utils.ts          # cn()
-└── shared/               # 共享类型
+│   ├── framework/           # 标题栏、设置、命令面板、托盘组件
+│   ├── media/               # 视频卡片等媒体组件
+│   └── ui/                  # shadcn/ui 组件
+├── views/
+│   ├── Home.tsx             # 热门与搜索
+│   ├── Video.tsx            # 视频详情与播放器
+│   └── Settings.tsx         # 设置中心
+├── lib/
+│   ├── format.ts            # 数字与时间格式化
+│   └── logger.ts            # 分级日志
+└── contexts/                # 导航、设置、主题、国际化
 
 src-tauri/
-├── tauri.conf.json       # 窗口与打包配置
-├── capabilities/         # 权限白名单
-└── src/lib.rs            # 托盘与 Rust 命令
+├── src/
+│   ├── bilibili.rs          # Bilibili 请求与响应映射
+│   ├── domain.rs            # 统一媒体领域模型
+│   ├── storage.rs           # 本地历史
+│   └── lib.rs               # Tauri command 与窗口生命周期
+├── capabilities/            # Tauri 权限白名单
+└── tauri.conf.json          # 窗口与打包配置
 ```
 
----
+## API 证据
 
-## 架构说明
+平台接口来源、请求类型、响应字段、错误码和风险说明统一记录在 `docs/api-evidence.md`。该目录已从 Git 排除，避免将后端调查记录作为公开内容发布。
 
-### 双窗口模型
+修改平台适配器前应先核对证据文档；接口行为变化后也必须先更新证据，再修改代码。
 
-配置了两个窗口，**同一份前端代码按窗口标签分流**：
+## 验证
 
-| 窗口 | 用途 |
-| --- | --- |
-| `main` | 主界面：无边框、可拖拽标题栏、路由内容 |
-| `tray` | 托盘弹出菜单：独立小窗、失焦自动隐藏 |
+每个里程碑至少执行：
 
-托盘右键 → Rust 侧发出定位事件 → 主窗口计算坐标后弹出托盘菜单；托盘菜单中的操作通过事件反向通知主窗口。
+```bash
+pnpm lint
+pnpm build
 
-### 生命周期系统
-
-提供阶段化钩子，让初始化逻辑有明确落点：
-
-```
-mount（React 挂载完成） → ready（应用就绪）
+cd src-tauri
+cargo check
 ```
 
-钩子支持优先级排序、一次性执行、卸载函数。同阶段按优先级顺序 `await` 执行，行为可预测。
+交互功能由用户在实际 Tauri 窗口中验收。Agent 不应自动抢占鼠标、窗口或长期占用开发端口。
 
-内置两个阶段对应两个真实触发点（均在 `App.tsx` 的挂载 effect 内按序触发）：
+## 后续路线
 
-| 阶段 | 时机 | 典型用途 |
-| --- | --- | --- |
-| `mount` | React 挂载完成 | 注册全局事件监听、启动定时任务 |
-| `ready` | 挂载完成后 | 需要窗口就绪才能执行的动作（聚焦、置前） |
-
-需要扩展时，在 `src/lifecycle/types.ts` 的 `LifecycleStage` 联合类型里加阶段，并在合适位置补上 `lifecycle.fire(...)`，`register` / `fire` 的实现无需改动。
-
-### 状态与持久化
-
-- 全局状态用 React Context，value 统一经 `useMemo` 固定引用，避免无关状态引发全量重渲染
-- 用户偏好（主题、语言、标题、置顶状态等）持久化到 `localStorage`
-- 弹窗开关状态集中在根组件，通过 Context 下发
-
-### 主题机制
-
-- CSS 变量驱动，所有颜色集中在 `App.css` 定义，亮/暗两套令牌
-- 首次启动跟随系统；用户手动切换后不再自动跟随
-- 切换无闪烁，状态与 DOM 始终一致
-
-### 国际化
-
-- 文案集中在 `src/lib/i18n.resource.ts`，新增文案改一处即可
-- 运行时可切换语言，无需重启
-- 未命中的 key 会回退为 key 本身，不会崩溃
-
-### 命令系统
-
-命令面板提供两种模式：
-
-- **普通模式** —— 页面跳转、设置打开、重载等常用操作
-- **高级模式** —— 输入 `@super` 前缀后执行扩展命令，支持前端动作与 Rust 命令两种执行方式
-
-命令以注册表形式管理，新增命令即插即用。
-
-### 日志
-
-`src/lib/logger.ts` 提供带级别过滤的日志模块：
-
-```ts
-import { createLogger } from "@/lib/logger";
-
-const log = createLogger("MyModule");
-log.debug("detail", { some: "data" });
-log.info("something happened");
-log.warn("recoverable problem");
-log.error("failed", error);
-```
-
-- 输出格式统一为 `[模块:级别]`，带颜色高亮，可按模块检索
-- **开发环境**输出全部级别；**生产构建**默认只保留 `warn` / `error`
-- 支持子 logger：`log.child("Sub")` → `[MyModule/Sub:info]`
-
-运行时切换级别（无需重新构建），在控制台执行：
-
-```js
-localStorage.setItem("app-log-level", "debug"); // 打开全部
-localStorage.removeItem("app-log-level");        // 恢复默认
-```
-
----
+1. 持续维护当前基线，保持 Tauri 版本、README 与功能状态一致。
+2. 实现 Bilibili 二维码登录、WBI、高画质与个性化推荐。
+3. 实现 DASH 分离音视频播放并提炼播放器核心。
+4. 补齐内容、收藏、云端历史、评论与互动。
+5. 接入 Bilibili 直播，再扩展 Douyin 与 Huya。
+6. 建设 Android 播放链路与 FFmpeg 内置运行环境。
+7. 统一视频与直播弹幕，再评估下载缓存与更多平台。
 
 ## 开发约定
 
-### 样式
-
-- **shadcn 组件的样式覆盖请平铺写进 `className`**，由组件内的 `cn()`（`twMerge`）自动合并
-- `@layer components` 只用于纯自有元素；该层优先级低于 Tailwind 工具类，覆盖 shadcn 组件会静默失效
-- 重复出现 3 次以上的样式组合可收纳为组件类，统一维护在 `App.css`
-
-### shadcn 组件
-
-`src/components/ui/` 由 shadcn CLI 生成，请勿手动修改 —— 会被 `shadcn add/update` 覆盖。全局定制请改 `App.css` 中的设计令牌。
-
-### 权限
-
-Tauri 采用权限白名单机制。新增原生能力时，在 `src-tauri/capabilities/default.json` 中显式声明后前端才能调用。
-
----
+- shadcn 组件样式通过调用处 `className` 覆盖，由 `cn()` 和 `twMerge` 合并。
+- `@layer components` 只收录纯自有元素的可复用样式。
+- 新增原生能力时，同步修改 `src-tauri/capabilities/default.json`。
+- 平台 API 证据、临时调查文件与本地计划统一保存在 Git 排除目录。
+- 每个里程碑完成后由用户验收，再更新文档并提交。
 
 ## 许可
 
