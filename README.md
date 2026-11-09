@@ -21,21 +21,24 @@
 
 ## 当前进度
 
-| 模块 | 状态 |
-| --- | --- |
-| Bilibili 匿名热门视频 | 可用 |
-| Bilibili UGC 视频搜索 | 可用 |
-| 视频详情与分 P 元数据 | 可用 |
-| MP4 播放 | 可用 |
-| 播放进度、倍速、音量、画中画、全屏 | 可用 |
-| 本地播放历史 | 可用 |
-| 二维码登录与高画质 | 计划中 |
-| Bilibili DASH 播放 | 计划中 |
-| 视频与直播弹幕 | 计划中 |
-| Bilibili 直播与 Douyin/Huya 适配 | 计划中 |
-| Android 工程与原生播放后端 | 计划中 |
+| 模块                                 | 状态                     |
+| ------------------------------------ | ------------------------ |
+| Bilibili 匿名热门视频                | 可用                     |
+| Bilibili UGC 视频搜索                | 可用                     |
+| 视频详情与分 P 元数据                | 可用                     |
+| MP4 播放                             | 可用                     |
+| 播放进度、倍速、音量、画中画、全屏   | 可用                     |
+| 本地播放历史                         | 可用                     |
+| Windows Bilibili 二维码/短信登录     | 可用                     |
+| Windows 原生凭据存储、设备指纹与 WBI | 可用                     |
+| 登录态 MP4 与实际画质提示            | 可用                     |
+| 标题栏与设置页账号状态               | 可用，头像待最终视觉验收 |
+| Bilibili DASH 播放                   | 计划中                   |
+| 视频与直播弹幕                       | 计划中                   |
+| Bilibili 直播与 Douyin/Huya 适配     | 计划中                   |
+| Android 工程与原生播放后端           | 计划中                   |
 
-当前只支持 Bilibili 匿名 UGC 视频与 MP4 播放。番剧、影视、充电专属、直播、弹幕、评论互动、云端历史与下载缓存尚未实现。
+当前 Windows 版支持 Bilibili 匿名浏览、搜索、详情、MP4 播放与本地历史，也支持二维码和手机短信验证码登录。登录凭据保存在 Windows 原生凭据库中；播放接口使用持久化设备身份和 WBI 签名请求实际可用的 MP4 档位。DASH 清晰度切换、Android 播放、番剧/影视、直播、弹幕、评论互动、云端历史与下载缓存尚未实现。
 
 ## 功能
 
@@ -48,6 +51,16 @@
 - 单击画面切换播放状态，双击只切换全屏，两者不会重复消费同一组点击。
 - 播放进度定期写入 Tauri 应用数据目录中的 `history.json`。
 
+### 账号功能（Windows）
+
+- 支持 Bilibili 二维码登录和手机短信验证码登录，不提供 Cookie 粘贴、密码或 WebView 登录。
+- 登录会话保存在 Windows 原生凭据库，不写入前端持久化状态或普通 JSON。
+- `buvid3/buvid4` 设备身份独立保存，退出登录不会自动删除，可在设置页显式重置。
+- 使用 WBI 签名请求登录态播放地址，并展示实际返回画质、未登录提示和 DASH 后续能力提示。
+- 标题栏和设置页共享统一账号状态与头像；头像加载失败时回退为本地图标。
+
+Android 的登录能力接口已经预留，但 Android Keystore 尚未接入。为避免出现“可以登录但无法安全保存”的假完成状态，当前 Android 构建不会展示登录入口。
+
 ### 模板能力
 
 - Windows 无边框标题栏、系统托盘与独立托盘弹窗。
@@ -57,13 +70,13 @@
 
 ## 技术栈
 
-| 层 | 技术 |
-| --- | --- |
-| 桌面与移动容器 | Tauri 2 |
-| 前端 | React 19、TypeScript、Vite |
-| 样式与组件 | Tailwind CSS 4、shadcn/ui、Radix UI |
-| 后端 | Rust、Reqwest |
-| 视频协议 | HTMLVideoElement、hls.js、mpegts.js |
+| 层             | 技术                                |
+| -------------- | ----------------------------------- |
+| 桌面与移动容器 | Tauri 2                             |
+| 前端           | React 19、TypeScript、Vite          |
+| 样式与组件     | Tailwind CSS 4、shadcn/ui、Radix UI |
+| 后端           | Rust、Reqwest                       |
+| 视频协议       | HTMLVideoElement、hls.js、mpegts.js |
 
 Tauri npm 包与 Rust crate 使用相同 minor 版本。修改 `@tauri-apps/*` 或 `Cargo.toml` 中的 Tauri 依赖时，必须同步检查 `pnpm tauri info` 与 `cargo check`。
 
@@ -96,6 +109,8 @@ pnpm build
 
 cd src-tauri
 cargo check
+cargo fmt --check
+cargo test
 ```
 
 `pnpm tauri build` 只在最终发布阶段执行。日常开发与验收使用 `pnpm build`、`cargo check` 和 `pnpm tauri dev`。
@@ -125,8 +140,10 @@ React views
 ```text
 src/
 ├── api/
+│   ├── account.ts           # 账号 command 调用层
 │   └── media.ts             # 前端媒体调用层
 ├── components/
+│   ├── account/             # 二维码、短信、验证码与统一头像
 │   ├── framework/           # 标题栏、设置、命令面板、托盘组件
 │   ├── media/               # 视频卡片等媒体组件
 │   └── ui/                  # shadcn/ui 组件
@@ -135,16 +152,21 @@ src/
 │   ├── Video.tsx            # 视频详情与播放器
 │   └── Settings.tsx         # 设置中心
 ├── lib/
+│   ├── bilibili-captcha.ts  # 极验脚本与挑战生命周期
+│   ├── command-error.ts     # command 错误码到 i18n 的映射
 │   ├── format.ts            # 数字与时间格式化
 │   └── logger.ts            # 分级日志
-└── contexts/                # 导航、设置、主题、国际化
+└── contexts/                # 导航、设置、主题、国际化、账号
 
 src-tauri/
 ├── src/
+│   ├── account.rs           # 登录状态、凭据存储与账号命令模型
 │   ├── bilibili.rs          # Bilibili 请求与响应映射
+│   ├── device.rs            # buvid3/buvid4 设备身份
 │   ├── domain.rs            # 统一媒体领域模型
 │   ├── storage.rs           # 本地历史
-│   └── lib.rs               # Tauri command 与窗口生命周期
+│   ├── wbi.rs               # WBI mixin key 与签名
+│   └── lib.rs               # AppState、Tauri command 与窗口生命周期
 ├── capabilities/            # Tauri 权限白名单
 └── tauri.conf.json          # 窗口与打包配置
 ```
@@ -165,19 +187,20 @@ pnpm build
 
 cd src-tauri
 cargo check
+cargo fmt --check
+cargo test
 ```
 
 交互功能由用户在实际 Tauri 窗口中验收。Agent 不应自动抢占鼠标、窗口或长期占用开发端口。
 
 ## 后续路线
 
-1. 持续维护当前基线，保持 Tauri 版本、README 与功能状态一致。
-2. 实现 Bilibili 二维码登录、WBI、高画质与个性化推荐。
-3. 实现 DASH 分离音视频播放并提炼播放器核心。
-4. 补齐内容、收藏、云端历史、评论与互动。
-5. 接入 Bilibili 直播，再扩展 Douyin 与 Huya。
-6. 建设 Android 播放链路与 FFmpeg 内置运行环境。
-7. 统一视频与直播弹幕，再评估下载缓存与更多平台。
+1. 完成账号头像与 P1 交互的最终视觉验收。
+2. 实现 Bilibili DASH 分离音视频播放、清晰度切换并提炼播放器核心。
+3. 补齐分区、个性化推荐、收藏、云端历史、评论与互动。
+4. 接入 Bilibili 直播，再扩展 Douyin 与 Huya。
+5. 建设 Android 播放链路、Android Keystore 与 FFmpeg 内置运行环境。
+6. 统一视频与直播弹幕，再评估下载缓存与更多平台。
 
 ## 开发约定
 
@@ -190,3 +213,5 @@ cargo check
 ## 许可
 
 [MIT](LICENSE)
+
+本项目仅用于个人学习与研究，不用于商业分发，不提供内容源，不绕过付费或区域限制，也不承诺第三方接口持续可用。

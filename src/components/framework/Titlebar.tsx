@@ -8,12 +8,15 @@ import {
   MenubarTrigger,
 } from "@/components/ui/menubar";
 
+import AccountAvatar from "@/components/account/AccountAvatar";
 import TitlebarOperations, {
   ThemeIcon,
 } from "@/components/framework/TitlebarOperations";
 import { useContext } from "react";
+import { AlertTriangle, LogIn, UserRound } from "lucide-react";
 import { ThemeContext } from "@/contexts/theme";
 import { NavigatorContext } from "@/contexts/navigator";
+import { useAccount } from "@/contexts/account-context";
 import TitlebarTitle from "./TitlebarTitle";
 import { useI18n } from "@/composables";
 import { useSettingsDialog } from "@/contexts/settings";
@@ -27,6 +30,7 @@ export default function Titlebar() {
   /* Navigator */
   const { navigator } = useContext(NavigatorContext);
   const { openSettings, openAbout } = useSettingsDialog();
+  const { account, openLogin } = useAccount();
 
   function toggleTheme() {
     if (theme === "dark") {
@@ -38,7 +42,7 @@ export default function Titlebar() {
 
   return (
     <div
-      className="fixed top-0 z-50 flex h-8 w-screen flex-row items-center justify-between border-b border-neutral-400 bg-white pl-2 shadow-sm transition-colors duration-100 ease-in-out dark:border-neutral-600 dark:bg-black"
+      className="fixed top-0 z-50 grid h-8 w-screen grid-cols-[auto_minmax(0,1fr)_auto] items-center border-b border-neutral-400 bg-white pl-2 shadow-sm transition-colors duration-100 ease-in-out dark:border-neutral-600 dark:bg-black"
       data-tauri-drag-region
     >
       <Menubar className="h-6 w-fit gap-1 rounded-none border-0 bg-transparent p-0 text-neutral-600 shadow-none transition-colors duration-100 ease-in-out dark:text-neutral-200">
@@ -132,9 +136,50 @@ export default function Titlebar() {
         </MenubarMenu>
       </Menubar>
 
-      <TitlebarTitle data-tauri-drag-region />
+      <div
+        className="flex min-w-0 items-center justify-center px-2"
+        data-tauri-drag-region
+      >
+        <TitlebarTitle data-tauri-drag-region />
+      </div>
 
-      <TitlebarOperations />
+      <div className="flex shrink-0 items-center gap-1 self-stretch">
+        <button
+          type="button"
+          className="row-icon focus-visible:ring-ring h-6 max-w-40 px-2 text-xs text-neutral-700 hover:bg-neutral-200 focus-visible:ring-2 focus-visible:outline-none dark:text-neutral-200 dark:hover:bg-neutral-600"
+          title={
+            account?.status === "authenticated"
+              ? t("Account.titlebar.authenticated")
+              : t("Account.titlebar.login")
+          }
+          onClick={() => {
+            if (account?.status === "anonymous" || !account) {
+              openLogin();
+            } else {
+              openSettings();
+            }
+          }}
+        >
+          {account?.status === "authenticated" ? (
+            <AccountAvatar
+              src={account.profile?.avatarUrl}
+              className="size-4"
+              fallback={<UserRound className="icon-sm" />}
+            />
+          ) : account?.status === "expired" || account?.status === "locked" ? (
+            <AlertTriangle className="icon-sm text-amber-500" />
+          ) : (
+            <LogIn className="icon-sm" />
+          )}
+          <span className="truncate">
+            {account?.status === "authenticated"
+              ? (account.profile?.name ?? t("Account.titlebar.authenticated"))
+              : t("Account.titlebar.login")}
+          </span>
+        </button>
+
+        <TitlebarOperations />
+      </div>
     </div>
   );
 }

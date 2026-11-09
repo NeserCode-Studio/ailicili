@@ -4,7 +4,7 @@ use crate::domain::HistoryEntry;
 
 const HISTORY_FILE: &str = "history.json";
 
-fn data_dir() -> Result<PathBuf, String> {
+pub(crate) fn data_dir() -> Result<PathBuf, String> {
     let dir = dirs::data_local_dir()
         .map(|path| path.join("ailicili"))
         .ok_or_else(|| "Cannot resolve local data directory".to_string())?;

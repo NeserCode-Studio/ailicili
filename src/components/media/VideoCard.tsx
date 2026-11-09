@@ -28,7 +28,6 @@ export default function VideoCard({ video }: VideoCardProps) {
             className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
             referrerPolicy="no-referrer"
             loading="lazy"
-            crossOrigin="anonymous"
             onError={() =>
               log.warn("cover failed", {
                 videoId: video.videoId,
@@ -37,7 +36,7 @@ export default function VideoCard({ video }: VideoCardProps) {
             }
           />
         ) : (
-          <div className="flex h-full w-full items-center justify-center text-muted-foreground">
+          <div className="text-muted-foreground flex h-full w-full items-center justify-center">
             <Play className="icon-md" />
           </div>
         )}
@@ -47,12 +46,13 @@ export default function VideoCard({ video }: VideoCardProps) {
       </div>
       <div className="video-card-info">
         <span className="video-card-title">{video.title}</span>
-        <span className="flex items-center gap-1 truncate text-xs text-muted-foreground">
+        <span className="text-muted-foreground flex items-center gap-1 truncate text-xs">
           <User className="h-3 w-3" />
           {video.owner?.name ?? "Unknown"}
         </span>
-        <span className="text-xs text-muted-foreground">
-          {formatCount(video.stats.view)} · {formatCount(video.stats.danmaku)}弹幕
+        <span className="text-muted-foreground text-xs">
+          {formatCount(video.stats.view)} · {formatCount(video.stats.danmaku)}
+          弹幕
         </span>
       </div>
     </button>

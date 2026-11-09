@@ -18,11 +18,15 @@ import {
   type PlaybackInfo,
   type VideoDetail,
 } from "@/api/media";
+import { asCommandError, type CommandError } from "@/api/account";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
+import { useI18n } from "@/composables";
+import { useAccount } from "@/contexts/account-context";
 import { useNavigatorContext } from "@/contexts/navigator";
 import { formatCount } from "@/lib/format";
 import { createLogger } from "@/lib/logger";
+import { commandErrorMessage } from "@/lib/command-error";
 
 import { useParams } from "react-router";
 
@@ -61,10 +65,13 @@ function formatPlayerTime(seconds?: number) {
 export default function VideoView() {
   const { videoId = "" } = useParams();
   const { navigator } = useNavigatorContext();
+  const { t } = useI18n();
+  const { openLogin } = useAccount();
   const videoRef = useRef<HTMLVideoElement>(null);
   const [detail, setDetail] = useState<VideoDetail | null>(null);
   const [playback, setPlayback] = useState<PlaybackInfo | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [streamIndex, setStreamIndex] = useState(0);
+  const [error, setError] = useState<CommandError | null>(null);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -81,6 +88,7 @@ export default function VideoView() {
   const hideTimer = useRef<number | null>(null);
   const surfaceClickTimer = useRef<number | null>(null);
   const playerRef = useRef<HTMLDivElement>(null);
+  const loadedStreamKey = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -102,18 +110,18 @@ export default function VideoView() {
         videoId,
         cid: info.cid,
         protocol: info.streams[0]?.protocol,
-        quality: info.streams[0]?.qualityLabel,
+        quality: info.currentQuality.label,
+        noticeKind: info.qualityNotice.kind,
         urlHost: info.streams[0] ? new URL(info.streams[0].url).host : null,
       });
       setDurationSeconds(Math.round(info.durationMs / 1000));
-      const stream = info.streams[0];
-      const video = videoRef.current;
-      if (!stream || !video) throw new Error("No playable stream");
-      video.src = stream.url;
+      if (!info.streams[0]) throw new Error("No playable stream");
+      loadedStreamKey.current = null;
+      setStreamIndex(0);
       setPlayback(info);
     } catch (err) {
       log.error("video load failed", { videoId, err });
-      setError(err instanceof Error ? err.message : String(err));
+      setError(asCommandError(err));
     }
   }, [videoId]);
 
@@ -141,6 +149,26 @@ export default function VideoView() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    const stream = playback?.streams[streamIndex];
+    if (!video || !stream) return;
+    const streamKey = `${playback.videoId}:${playback.cid}:${stream.id}:${stream.url}`;
+    if (loadedStreamKey.current === streamKey) return;
+    loadedStreamKey.current = streamKey;
+    setError(null);
+    log.info("video source selected", {
+      videoId: playback.videoId,
+      streamId: stream.id,
+      attempt: streamIndex + 1,
+      total: playback.streams.length,
+      urlHost: new URL(stream.url).host,
+    });
+    video.setAttribute("referrerpolicy", "no-referrer");
+    video.src = stream.url;
+    video.load();
+  }, [playback, streamIndex]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -255,9 +283,11 @@ export default function VideoView() {
   }, [playback]);
 
   const qualityLabel = useMemo(() => {
-    const stream = playback?.streams[0];
-    if (!stream) return "";
-    return QUALITY_LABELS[stream.qualityId] ?? stream.qualityLabel;
+    if (!playback) return "";
+    return (
+      QUALITY_LABELS[playback.currentQuality.id] ??
+      playback.currentQuality.label
+    );
   }, [playback]);
 
   const togglePlay = () => {
@@ -266,7 +296,7 @@ export default function VideoView() {
     if (video.paused) {
       void video.play().catch((err) => {
         log.error("play failed", { videoId: detail?.card.videoId, err });
-        setError(err instanceof Error ? err.message : String(err));
+        setError(asCommandError(err));
       });
     } else {
       video.pause();
@@ -372,7 +402,9 @@ export default function VideoView() {
           className="h-full w-full"
           controls={false}
           playsInline
+          preload="auto"
           onPlay={() => {
+            setError(null);
             setPlaying(true);
             log.debug("playback started", { videoId: detail?.card.videoId });
           }}
@@ -385,12 +417,33 @@ export default function VideoView() {
           }
           onError={(event) => {
             const mediaError = event.currentTarget.error;
+            const nextStream = playback?.streams[streamIndex + 1];
             log.error("video element failed", {
               videoId: detail?.card.videoId,
+              streamId: playback?.streams[streamIndex]?.id,
+              attempt: streamIndex + 1,
+              total: playback?.streams.length,
+              urlHost: playback?.streams[streamIndex]
+                ? new URL(playback.streams[streamIndex].url).host
+                : null,
+              networkState: event.currentTarget.networkState,
+              readyState: event.currentTarget.readyState,
               code: mediaError?.code,
               message: mediaError?.message,
             });
-            setError(mediaError?.message || "视频播放失败");
+            if (nextStream) {
+              log.warn("retrying fallback video source", {
+                videoId: detail?.card.videoId,
+                nextStreamId: nextStream.id,
+                urlHost: new URL(nextStream.url).host,
+              });
+              setStreamIndex((index) => index + 1);
+              return;
+            }
+            setError({
+              code: "playbackError",
+              message: mediaError?.message || "视频播放失败",
+            });
           }}
         />
 
@@ -596,7 +649,41 @@ export default function VideoView() {
           </div>
         ) : null}
       </div>
-      {error ? <p className="text-destructive text-sm">{error}</p> : null}
+      {playback && playback.qualityNotice.kind !== "none" ? (
+        <div className="text-muted-foreground flex flex-wrap items-center gap-2 text-xs">
+          <span>
+            {t(`Quality.notice.${playback.qualityNotice.messageCode}`)}
+          </span>
+          {playback.qualityNotice.kind === "loginRequired" ||
+          playback.qualityNotice.kind === "accountExpired" ? (
+            <Button
+              type="button"
+              variant="link"
+              size="sm"
+              className="h-auto px-0"
+              onClick={() => openLogin()}
+            >
+              {t("Account.titlebar.login")}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      {error ? (
+        <div className="text-destructive flex flex-wrap items-center gap-2 text-sm">
+          <span>{commandErrorMessage(error, t)}</span>
+          {error.code === "authRequired" || error.code === "loginExpired" ? (
+            <Button
+              type="button"
+              variant="link"
+              size="sm"
+              className="h-auto px-0"
+              onClick={() => openLogin()}
+            >
+              {t("Account.titlebar.login")}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
       {detail ? (
         <div className="stack-2 border-border/60 bg-card rounded-lg border p-4">
           <div className="stack-1">

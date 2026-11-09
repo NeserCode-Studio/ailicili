@@ -2,6 +2,7 @@ import { TitleContext } from "@/contexts/title";
 import { useLocalStorageState } from "ahooks";
 import { useContext, useMemo, useState } from "react";
 import { useI18n, useToast } from "@/composables";
+import AccountAvatar from "@/components/account/AccountAvatar";
 import {
   SettingInputItem,
   SettingOptionalItem,
@@ -11,16 +12,36 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
+  AlertTriangle,
   CheckCircle2,
   ChevronRight,
   Clock,
   History,
+  LogIn,
+  LogOut,
+  RefreshCw,
   Search,
   Settings2,
+  ShieldOff,
   Trash2,
+  UserRound,
 } from "lucide-react";
 
 import type { SettingSelectItemItem } from "@/shared";
+import { useAccount } from "@/contexts/account-context";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { commandErrorKey } from "@/lib/command-error";
+import { asCommandError } from "@/api/account";
 
 /** 设置项索引：供搜索与「最近修改」跳转使用 */
 interface SettingIndexItem {
@@ -31,6 +52,21 @@ interface SettingIndexItem {
 }
 
 const SETTING_INDEX: SettingIndexItem[] = [
+  {
+    id: "account",
+    group: "account",
+    labelKey: "Settings.tabs.account",
+    keywords: [
+      "account",
+      "login",
+      "qr",
+      "sms",
+      "账号",
+      "登录",
+      "二维码",
+      "验证码",
+    ],
+  },
   {
     id: "title",
     group: "general",
@@ -72,6 +108,16 @@ export default function Settings() {
   const { success, error } = useToast({
     duration: 2000,
   });
+  const {
+    account,
+    capabilities,
+    loading: accountLoading,
+    error: accountError,
+    openLogin,
+    refresh: refreshAccount,
+    logout,
+    resetDeviceIdentity,
+  } = useAccount();
 
   /* 搜索历史 + 修改记录（localStorage 持久化） */
   const [searchHistory, setSearchHistory] = useLocalStorageState<string[]>(
@@ -173,7 +219,7 @@ export default function Settings() {
   return (
     <div className="view-settings">
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="w-full justify-start gap-1 rounded-xl bg-muted/50 p-1">
+        <TabsList className="bg-muted/50 w-full justify-start gap-1 rounded-xl p-1">
           <TabsTrigger value="search" className="flex-none gap-1.5 rounded-lg">
             <Search className="icon-md" />
             {t("Settings.tabs.search")}
@@ -182,15 +228,17 @@ export default function Settings() {
             <Settings2 className="icon-md" />
             {t("Settings.tabs.general")}
           </TabsTrigger>
+          <TabsTrigger value="account" className="flex-none gap-1.5 rounded-lg">
+            <UserRound className="icon-md" />
+            {t("Settings.tabs.account")}
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="search" className="mt-5">
           <div className="stack-5">
-            <p className="text-muted-sm">
-              {t("Settings.search.description")}
-            </p>
+            <p className="text-muted-sm">{t("Settings.search.description")}</p>
             <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 icon-md -translate-y-1/2 text-muted-foreground" />
+              <Search className="icon-md text-muted-foreground pointer-events-none absolute top-1/2 left-3 -translate-y-1/2" />
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
@@ -198,7 +246,7 @@ export default function Settings() {
                   if (e.key === "Enter") recordSearch(query);
                 }}
                 placeholder={t("Settings.search.placeholder")}
-                className="h-10 rounded-lg bg-muted/40 pl-9"
+                className="bg-muted/40 h-10 rounded-lg pl-9"
               />
             </div>
 
@@ -213,15 +261,15 @@ export default function Settings() {
                         recordSearch(query);
                         jumpTo(r.group);
                       }}
-                      className="group flex items-center gap-2 rounded-lg border border-transparent px-3 py-2 text-left text-sm transition-colors hover:border-border hover:bg-accent/50 hover:text-accent-foreground"
+                      className="group hover:border-border hover:bg-accent/50 hover:text-accent-foreground flex items-center gap-2 rounded-lg border border-transparent px-3 py-2 text-left text-sm transition-colors"
                     >
                       <Search className="icon-action" />
                       <span className="truncate">{t(r.labelKey)}</span>
-                      <ChevronRight className="ml-auto icon-sm shrink-0 text-muted-foreground/50 transition-transform group-hover:translate-x-0.5" />
+                      <ChevronRight className="icon-sm text-muted-foreground/50 ml-auto shrink-0 transition-transform group-hover:translate-x-0.5" />
                     </button>
                   ))
                 ) : (
-                  <div className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-muted-sm">
+                  <div className="border-border text-muted-sm rounded-lg border border-dashed px-3 py-6 text-center">
                     {t("Settings.search.empty")}
                   </div>
                 )}
@@ -242,7 +290,7 @@ export default function Settings() {
                               key={s}
                               type="button"
                               onClick={() => setQuery(s)}
-                              className="rounded-full border border-border/60 bg-muted/60 px-2.5 py-1 text-xs transition-colors hover:border-primary/40 hover:bg-accent hover:text-accent-foreground"
+                              className="border-border/60 bg-muted/60 hover:border-primary/40 hover:bg-accent hover:text-accent-foreground rounded-full border px-2.5 py-1 text-xs transition-colors"
                             >
                               {s}
                             </button>
@@ -263,7 +311,7 @@ export default function Settings() {
                               key={r.id}
                               type="button"
                               onClick={() => jumpTo(r.group)}
-                              className="group flex items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50 hover:text-accent-foreground"
+                              className="group hover:bg-accent/50 hover:text-accent-foreground flex items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors"
                             >
                               <CheckCircle2 className="icon-action" />
                               <span className="truncate">{r.label}</span>
@@ -278,15 +326,15 @@ export default function Settings() {
                       variant="ghost"
                       size="sm"
                       onClick={clearHistory}
-                      className="self-start text-muted-foreground"
+                      className="text-muted-foreground self-start"
                     >
                       <Trash2 className="icon-md" />
                       {t("Settings.search.clear")}
                     </Button>
                   </>
                 ) : (
-                  <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border px-3 py-10 text-center">
-                    <Search className="h-5 w-5 text-muted-foreground/60" />
+                  <div className="border-border flex flex-col items-center gap-2 rounded-lg border border-dashed px-3 py-10 text-center">
+                    <Search className="text-muted-foreground/60 h-5 w-5" />
                     <p className="text-muted-sm">
                       {t("Settings.search.noHistory")}
                     </p>
@@ -299,9 +347,7 @@ export default function Settings() {
 
         <TabsContent value="general" className="mt-5">
           <div className="flex flex-col gap-4">
-            <p className="text-muted-sm">
-              {t("Settings.general.description")}
-            </p>
+            <p className="text-muted-sm">{t("Settings.general.description")}</p>
             <SettingInputItem
               type="text"
               value={title ?? ""}
@@ -328,6 +374,169 @@ export default function Settings() {
               title={t("Settings.items.auto-complete.title")}
               description={t("Settings.items.auto-complete.description")}
             />
+          </div>
+        </TabsContent>
+
+        <TabsContent value="account" className="mt-5">
+          <div className="flex flex-col gap-4">
+            <p className="text-muted-sm">{t("Settings.account.description")}</p>
+
+            <section className="rounded-lg border p-4">
+              <div className="flex items-start gap-3">
+                <AccountAvatar
+                  src={account?.profile?.avatarUrl}
+                  className="size-10"
+                  fallback={
+                    account?.status === "expired" ||
+                    account?.status === "locked" ? (
+                      <AlertTriangle className="size-5 text-amber-500" />
+                    ) : (
+                      <UserRound className="text-muted-foreground size-5" />
+                    )
+                  }
+                />
+
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="truncate text-sm font-medium">
+                      {account?.profile?.name ??
+                        t(`Account.status.${account?.status ?? "anonymous"}`)}
+                    </p>
+                    <span className="text-muted-foreground rounded-full border px-2 py-0.5 text-[11px]">
+                      {t(`Account.status.${account?.status ?? "anonymous"}`)}
+                    </span>
+                  </div>
+                  <p className="text-muted-xs mt-1">
+                    {accountLoading
+                      ? t("Account.settings.loading")
+                      : account?.messageCode
+                        ? t(`Account.message.${account.messageCode}`)
+                        : t("Account.settings.localSession")}
+                  </p>
+                  {accountError ? (
+                    <p className="text-destructive mt-2 text-xs">
+                      {t(commandErrorKey(accountError))}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                {account?.status === "authenticated" ? (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={accountLoading}
+                      onClick={() => {
+                        void refreshAccount()
+                          .then(() =>
+                            success("Account.settings.refreshSuccess")
+                          )
+                          .catch((reason) =>
+                            error(commandErrorKey(asCommandError(reason)))
+                          );
+                      }}
+                    >
+                      <RefreshCw
+                        className={accountLoading ? "animate-spin" : ""}
+                      />
+                      {t("Account.settings.refresh")}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        void logout()
+                          .then(() => success("Account.settings.logoutSuccess"))
+                          .catch((reason) =>
+                            error(commandErrorKey(asCommandError(reason)))
+                          );
+                      }}
+                    >
+                      <LogOut />
+                      {t("Account.settings.logout")}
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={
+                      !capabilities ||
+                      (!capabilities.qrAvailable && !capabilities.smsAvailable)
+                    }
+                    onClick={() =>
+                      openLogin(
+                        capabilities?.qrAvailable === false ? "sms" : "qr"
+                      )
+                    }
+                  >
+                    <LogIn />
+                    {t("Account.settings.login")}
+                  </Button>
+                )}
+              </div>
+            </section>
+
+            <section className="rounded-lg border p-4">
+              <p className="text-sm font-medium">
+                {t("Account.settings.methodsTitle")}
+              </p>
+              <p className="text-muted-xs mt-1">
+                {capabilities &&
+                !capabilities.qrAvailable &&
+                !capabilities.smsAvailable
+                  ? t("Account.settings.methodsUnavailable")
+                  : capabilities?.qrAvailable
+                    ? t("Account.settings.methodsBoth")
+                    : t("Account.settings.methodsSms")}
+              </p>
+            </section>
+
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="text-destructive self-start"
+                >
+                  <ShieldOff />
+                  {t("Account.settings.resetDevice")}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>
+                    {t("Account.settings.resetDeviceTitle")}
+                  </AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {t("Account.settings.resetDeviceDescription")}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>
+                    {t("Account.settings.cancel")}
+                  </AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={() => {
+                      void resetDeviceIdentity()
+                        .then(() =>
+                          success("Account.settings.resetDeviceSuccess")
+                        )
+                        .catch((reason) =>
+                          error(commandErrorKey(asCommandError(reason)))
+                        );
+                    }}
+                  >
+                    {t("Account.settings.confirmReset")}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         </TabsContent>
       </Tabs>

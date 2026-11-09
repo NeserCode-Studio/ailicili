@@ -1,13 +1,21 @@
+use std::sync::{Arc, RwLock};
 use tauri::{
-    Manager,
     image::Image,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Emitter, Position, Size,
+    Emitter, Manager, Position, Size,
 };
 
+mod account;
 mod bilibili;
+mod device;
 mod domain;
 mod storage;
+mod wbi;
+
+struct AppState {
+    bilibili: bilibili::BilibiliClient,
+    account: account::AccountManager,
+}
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -23,9 +31,12 @@ fn open_devtools(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn get_popular_videos(page: u32) -> Result<domain::PagedVideos, String> {
-    bilibili::BilibiliClient::new()
-        .map_err(|err| err.to_string())?
+async fn get_popular_videos(
+    state: tauri::State<'_, AppState>,
+    page: u32,
+) -> Result<domain::PagedVideos, String> {
+    state
+        .bilibili
         .popular(page)
         .await
         .map_err(|err| err.to_string())
@@ -33,33 +44,174 @@ async fn get_popular_videos(page: u32) -> Result<domain::PagedVideos, String> {
 
 #[tauri::command]
 async fn get_video_playback(
+    state: tauri::State<'_, AppState>,
     video_id: String,
     cid: i64,
     quality: i64,
-) -> Result<domain::PlaybackInfo, String> {
-    bilibili::BilibiliClient::new()
-        .map_err(|err| err.to_string())?
+) -> Result<domain::PlaybackInfo, domain::CommandError> {
+    state
+        .bilibili
         .video_playback(&video_id, cid, quality)
         .await
-        .map_err(|err| err.to_string())
+        .map_err(Into::into)
 }
 
 #[tauri::command]
-async fn get_video_detail(video_id: String) -> Result<domain::VideoDetail, String> {
-    bilibili::BilibiliClient::new()
-        .map_err(|err| err.to_string())?
+async fn get_video_detail(
+    state: tauri::State<'_, AppState>,
+    video_id: String,
+) -> Result<domain::VideoDetail, String> {
+    state
+        .bilibili
         .video_detail(&video_id)
         .await
         .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
-async fn get_search_videos(keyword: String, page: u32) -> Result<domain::PagedVideos, String> {
-    bilibili::BilibiliClient::new()
-        .map_err(|err| err.to_string())?
+async fn get_search_videos(
+    state: tauri::State<'_, AppState>,
+    keyword: String,
+    page: u32,
+) -> Result<domain::PagedVideos, String> {
+    state
+        .bilibili
         .search(&keyword, page)
         .await
         .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn get_bilibili_login_capabilities(state: tauri::State<'_, AppState>) -> domain::LoginCapabilities {
+    state.account.login_capabilities()
+}
+
+#[tauri::command]
+async fn get_bilibili_account(
+    state: tauri::State<'_, AppState>,
+) -> Result<domain::BilibiliAccount, domain::CommandError> {
+    state
+        .account
+        .get_account(&state.bilibili)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn refresh_bilibili_account(
+    state: tauri::State<'_, AppState>,
+) -> Result<domain::BilibiliAccount, domain::CommandError> {
+    state
+        .account
+        .refresh_account(&state.bilibili)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn start_bilibili_qr_login(
+    state: tauri::State<'_, AppState>,
+) -> Result<domain::QrLoginStart, domain::CommandError> {
+    state
+        .account
+        .start_qr_login(&state.bilibili)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn poll_bilibili_qr_login(
+    state: tauri::State<'_, AppState>,
+    login_id: String,
+) -> Result<domain::QrLoginPoll, domain::CommandError> {
+    state
+        .account
+        .poll_qr_login(&state.bilibili, &login_id)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn cancel_bilibili_qr_login(
+    state: tauri::State<'_, AppState>,
+    login_id: String,
+) -> Result<(), domain::CommandError> {
+    state.account.cancel_qr_login(&login_id).map_err(Into::into)
+}
+
+#[tauri::command]
+async fn create_bilibili_sms_challenge(
+    state: tauri::State<'_, AppState>,
+) -> Result<domain::SmsChallenge, domain::CommandError> {
+    state
+        .account
+        .create_sms_challenge(&state.bilibili)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn send_bilibili_sms_code(
+    state: tauri::State<'_, AppState>,
+    challenge_id: String,
+    country_code: String,
+    phone: String,
+    challenge: String,
+    validate: String,
+    seccode: String,
+) -> Result<domain::SmsCodeSent, domain::CommandError> {
+    state
+        .account
+        .send_sms_code(
+            &state.bilibili,
+            &challenge_id,
+            country_code,
+            phone,
+            challenge,
+            validate,
+            seccode,
+        )
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn login_bilibili_with_sms(
+    state: tauri::State<'_, AppState>,
+    sms_flow_id: String,
+    code: String,
+) -> Result<domain::BilibiliAccount, domain::CommandError> {
+    state
+        .account
+        .login_with_sms(&state.bilibili, &sms_flow_id, code)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn cancel_bilibili_sms_login(
+    state: tauri::State<'_, AppState>,
+    challenge_id: Option<String>,
+    sms_flow_id: Option<String>,
+) -> Result<(), domain::CommandError> {
+    state
+        .account
+        .cancel_sms_login(challenge_id.as_deref(), sms_flow_id.as_deref())
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn logout_bilibili(
+    state: tauri::State<'_, AppState>,
+) -> Result<domain::BilibiliAccount, domain::CommandError> {
+    state.account.logout().map_err(Into::into)
+}
+
+#[tauri::command]
+fn reset_bilibili_device_identity(
+    state: tauri::State<'_, AppState>,
+) -> Result<(), domain::CommandError> {
+    state.bilibili.reset_device_identity().map_err(Into::into)
 }
 
 #[tauri::command]
@@ -118,8 +270,17 @@ fn toggle_main_window(app: &tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format_timestamp_secs()
+        .try_init();
+
     tauri::Builder::default()
         .setup(|app| {
+            let session = Arc::new(RwLock::new(None));
+            let bilibili = bilibili::BilibiliClient::new(session.clone())?;
+            let account = account::AccountManager::new(session);
+            app.manage(AppState { bilibili, account });
+
             let icon = Image::from_bytes(include_bytes!("../icons/32x32.png"))
                 .expect("Failed to load tray icon");
 
@@ -149,10 +310,13 @@ pub fn run() {
 
                     if is_right {
                         if let Some(window) = tray.app_handle().get_webview_window("main") {
-                            let _ = window.emit("tray-popup", serde_json::json!({
-                                "x": (rx + rw / 2.0) as i32,
-                                "y": ry as i32,
-                            }));
+                            let _ = window.emit(
+                                "tray-popup",
+                                serde_json::json!({
+                                    "x": (rx + rw / 2.0) as i32,
+                                    "y": ry as i32,
+                                }),
+                            );
                         }
                     } else {
                         toggle_main_window(tray.app_handle());
@@ -172,7 +336,19 @@ pub fn run() {
             get_video_detail,
             get_search_videos,
             list_local_history,
-            save_local_history
+            save_local_history,
+            get_bilibili_login_capabilities,
+            get_bilibili_account,
+            refresh_bilibili_account,
+            start_bilibili_qr_login,
+            poll_bilibili_qr_login,
+            cancel_bilibili_qr_login,
+            create_bilibili_sms_challenge,
+            send_bilibili_sms_code,
+            login_bilibili_with_sms,
+            cancel_bilibili_sms_login,
+            logout_bilibili,
+            reset_bilibili_device_identity
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

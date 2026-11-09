@@ -6,7 +6,15 @@ import { Toaster } from "@/components/ui/sonner";
 import { Routes, Route, useNavigate } from "react-router";
 
 import { useTheme, useI18nLogic } from "@/composables";
-import { lazy, Suspense, useEffect, useMemo, useState, useCallback, useRef } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+  useRef,
+} from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useLocalStorageState } from "ahooks";
 import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
@@ -20,7 +28,9 @@ import { I18nContext } from "@/contexts/i18n";
 import { lifecycle } from "@/lifecycle";
 import SettingsDialog from "@/components/framework/SettingsDialog";
 import AboutDialog from "@/components/framework/AboutDialog";
+import AccountDialog from "@/components/account/AccountDialog";
 import { SettingsDialogContext } from "@/contexts/settings";
+import { AccountProvider } from "@/contexts/account";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("App");
@@ -160,32 +170,35 @@ function App() {
           <ThemeContext.Provider value={themeValue}>
             <TitleContext.Provider value={titleValue}>
               <NavigatorContext.Provider value={navigatorValue}>
-                <main id="app-main" className="app-shell">
-                  <Titlebar />
-                  <CommandDialog />
+                <AccountProvider>
+                  <main id="app-main" className="app-shell">
+                    <Titlebar />
+                    <CommandDialog />
 
-                  <div id="container" className="app-body">
-                    <ScrollArea className="h-[calc(100vh-2rem)] w-full">
-                      <Suspense fallback={null}>
-                        <Routes>
-                          <Route path="/" index element={<Home />} />
-                          <Route
-                            path="/video/:videoId"
-                            element={<VideoView />}
-                          />
-                          <Route path="/software" element={<Software />} />
-                          <Route path="/framework" element={<Framework />} />
-                        </Routes>
-                      </Suspense>
-                    </ScrollArea>
-                  </div>
-                </main>
-                <SettingsDialog
-                  open={settingsOpen}
-                  onOpenChange={setSettingsOpen}
-                />
-                <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} />
-                <Toaster richColors theme={theme} position="bottom-right" />
+                    <div id="container" className="app-body">
+                      <ScrollArea className="h-[calc(100vh-2rem)] w-full">
+                        <Suspense fallback={null}>
+                          <Routes>
+                            <Route path="/" index element={<Home />} />
+                            <Route
+                              path="/video/:videoId"
+                              element={<VideoView />}
+                            />
+                            <Route path="/software" element={<Software />} />
+                            <Route path="/framework" element={<Framework />} />
+                          </Routes>
+                        </Suspense>
+                      </ScrollArea>
+                    </div>
+                  </main>
+                  <AccountDialog />
+                  <SettingsDialog
+                    open={settingsOpen}
+                    onOpenChange={setSettingsOpen}
+                  />
+                  <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} />
+                  <Toaster richColors theme={theme} position="bottom-right" />
+                </AccountProvider>
               </NavigatorContext.Provider>
             </TitleContext.Provider>
           </ThemeContext.Provider>
