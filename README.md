@@ -2,216 +2,97 @@
 
 # ailicili
 
-**Tauri 2 + React 19 多端视频与直播观看应用**
+**面向 Bilibili 的多端视频观看应用**
 
-以 Bilibili UGC 视频为主的个人学习与研究项目，逐步扩展登录态、高画质、直播源与 Android 播放能力。
+浏览热门视频、搜索用户投稿内容、播放视频，并在 Windows 上使用 Bilibili 账号登录。
 
-[![Tauri](https://img.shields.io/badge/Tauri-2-blue?style=flat-round&logo=tauri&logoColor=white)](https://tauri.app)
-[![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-round&logo=react&logoColor=black)](https://react.dev)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-round&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
-[![Rust](https://img.shields.io/badge/Rust-stable-000000?style=flat-round&logo=rust&logoColor=white)](https://www.rust-lang.org)
-[![Tailwind CSS](https://img.shields.io/badge/Tailwind-4-06B6D4?style=flat-round&logo=tailwindcss&logoColor=white)](https://tailwindcss.com)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=flat-round)](LICENSE)
+![Windows](https://img.shields.io/badge/Platform-Windows-0078D4)
+![Android](https://img.shields.io/badge/Platform-Android-lightgrey)
+![Bilibili](https://img.shields.io/badge/Content-Bilibili-00A1D6)
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow)
 
-> 本项目仅用于个人学习与研究：不用于商业分发，不提供内容源，不绕过付费或区域限制。使用公开接口时可能遇到平台风控或接口变更，本项目不承诺内容可用性。
+> 本项目仅用于个人学习与研究，不用于商业分发，不提供内容源，不绕过付费或区域限制。
 
 </div>
 
----
-
-## 当前进度
-
-| 模块                                 | 状态                     |
-| ------------------------------------ | ------------------------ |
-| Bilibili 匿名热门视频                | 可用                     |
-| Bilibili UGC 视频搜索                | 可用                     |
-| 视频详情与分 P 元数据                | 可用                     |
-| MP4 播放                             | 可用                     |
-| 播放进度、倍速、音量、画中画、全屏   | 可用                     |
-| 本地播放历史                         | 可用                     |
-| Windows Bilibili 二维码/短信登录     | 可用                     |
-| Windows 原生凭据存储、设备指纹与 WBI | 可用                     |
-| 登录态 MP4 与实际画质提示            | 可用                     |
-| 标题栏与设置页账号状态               | 可用，头像待最终视觉验收 |
-| Bilibili DASH 播放                   | 计划中                   |
-| 视频与直播弹幕                       | 计划中                   |
-| Bilibili 直播与 Douyin/Huya 适配     | 计划中                   |
-| Android 工程与原生播放后端           | 计划中                   |
-
-当前 Windows 版支持 Bilibili 匿名浏览、搜索、详情、MP4 播放与本地历史，也支持二维码和手机短信验证码登录。登录凭据保存在 Windows 原生凭据库中；播放接口使用持久化设备身份和 WBI 签名请求实际可用的 MP4 档位。DASH 清晰度切换、Android 播放、番剧/影视、直播、弹幕、评论互动、云端历史与下载缓存尚未实现。
-
 ## 功能
 
-### 媒体功能
+- 视频优先首页，可浏览 Bilibili 热门视频。
+- 支持用户投稿视频关键词搜索。
+- 支持 `BV...` 与 `av...` 视频详情、分 P 信息和视频播放。
+- 支持播放进度、倍速、音量、画中画、全屏和当前画质显示。
+- 支持单击画面暂停或继续，双击切换全屏。
+- 自动保存本地播放历史，便于继续观看。
+- 支持亮色、暗色主题与中英文界面。
+- Windows 支持系统托盘、无边框标题栏和命令面板。
 
-- 视频优先首页，支持热门流与 UGC 关键词搜索。
-- 支持 `BV...` 与 `av...` 视频 ID、视频详情、分 P 信息与播放地址解析。
-- 封面请求使用 `no-referrer`，避免第三方 CDN 的 Referer 校验导致 403。
-- 播放器控制栏参考 Bilibili 网页版，包含进度、播放、时间、清晰度、倍速、音量、画中画与全屏。
-- 单击画面切换播放状态，双击只切换全屏，两者不会重复消费同一组点击。
-- 播放进度定期写入 Tauri 应用数据目录中的 `history.json`。
+## 账号与画质
 
-### 账号功能（Windows）
+Windows 版支持 Bilibili 二维码登录和手机短信验证码登录。
 
-- 支持 Bilibili 二维码登录和手机短信验证码登录，不提供 Cookie 粘贴、密码或 WebView 登录。
-- 登录会话保存在 Windows 原生凭据库，不写入前端持久化状态或普通 JSON。
-- `buvid3/buvid4` 设备身份独立保存，退出登录不会自动删除，可在设置页显式重置。
-- 使用 WBI 签名请求登录态播放地址，并展示实际返回画质、未登录提示和 DASH 后续能力提示。
-- 标题栏和设置页共享统一账号状态与头像；头像加载失败时回退为本地图标。
+- 登录状态保存在 Windows 系统凭据库中。
+- 登录后可使用账号相关的视频访问能力。
+- 默认请求当前账号和视频可用的最高 MP4 画质。
+- 未登录或登录失效时，应用会提示登录后可能解锁更高画质。
+- 实际可播放画质由 Bilibili 根据账号、视频和平台策略返回。
+- 应用不会绕过付费、账号权限或区域限制。
 
-Android 的登录能力接口已经预留，但 Android Keystore 尚未接入。为避免出现“可以登录但无法安全保存”的假完成状态，当前 Android 构建不会展示登录入口。
+当前暂不提供 Cookie 粘贴、密码登录或网页登录。
 
-### 模板能力
+## 平台支持
 
-- Windows 无边框标题栏、系统托盘与独立托盘弹窗。
-- 命令面板、设置中心、亮暗主题与中英双语。
-- 分阶段生命周期钩子，以及 Rust 与前端之间的跨窗口事件通道。
-- 统一日志工具，按模块与级别输出关键路径信息。
+| 平台    | 状态   | 说明                                               |
+| ------- | ------ | -------------------------------------------------- |
+| Windows | 可用   | 支持浏览、搜索、播放、本地历史、账号登录和系统托盘 |
+| Android | 计划中 | 播放与登录能力尚未开放                             |
 
-## 技术栈
+## 当前限制
 
-| 层             | 技术                                |
-| -------------- | ----------------------------------- |
-| 桌面与移动容器 | Tauri 2                             |
-| 前端           | React 19、TypeScript、Vite          |
-| 样式与组件     | Tailwind CSS 4、shadcn/ui、Radix UI |
-| 后端           | Rust、Reqwest                       |
-| 视频协议       | HTMLVideoElement、hls.js、mpegts.js |
+> [!NOTE]
+> 当前版本以 Bilibili 用户投稿视频和 MP4 播放为主，部分能力仍在开发中。
 
-Tauri npm 包与 Rust crate 使用相同 minor 版本。修改 `@tauri-apps/*` 或 `Cargo.toml` 中的 Tauri 依赖时，必须同步检查 `pnpm tauri info` 与 `cargo check`。
+- 仅支持 Bilibili 用户投稿视频，暂不支持番剧、影视和充电专属内容。
+- 暂不支持更完整的高画质与清晰度切换。
+- 暂不支持 Android 播放和 Android 账号登录。
+- 暂不支持 Bilibili、Douyin、Huya 等平台直播。
+- 暂不支持视频弹幕、直播弹幕、评论、点赞、投币、收藏和云端历史。
+- 暂不支持视频下载与离线缓存。
 
-## 快速开始
+## 本地运行
+
+当前项目仍处于开发阶段，尚未提供正式安装包。
 
 ### 环境要求
 
-- Node.js >= 18
-- pnpm >= 9
+- Node.js 18 或更高版本
+- pnpm 9 或更高版本
 - Rust stable
-- Tauri 平台依赖，Windows 需要 WebView2
+- Tauri 2 对应平台依赖
+- Windows 需要 WebView2
 
-### 开发
+### 启动应用
 
 ```bash
-# 安装前端依赖
 pnpm install
-
-# 启动 Tauri 开发环境
 pnpm tauri dev
 ```
 
-开发服务器固定使用 `8888` 端口。如果端口已被其他实例占用，应先停止旧实例或按 Tauri 配置调整端口，不应让多个开发实例共享同一端口。
-
-### 检查与构建
+### 构建前端
 
 ```bash
-pnpm lint
 pnpm build
-
-cd src-tauri
-cargo check
-cargo fmt --check
-cargo test
 ```
 
-`pnpm tauri build` 只在最终发布阶段执行。日常开发与验收使用 `pnpm build`、`cargo check` 和 `pnpm tauri dev`。
+## 后续计划
 
-## 媒体架构
+- 支持更完整的高画质、分离音视频播放和清晰度切换。
+- 补齐分区、个性化推荐、收藏、云端历史、评论与互动。
+- 支持 Bilibili 直播，并逐步适配 Douyin、Huya 等直播平台。
+- 建设 Android 播放和 Android 登录能力。
+- 统一视频弹幕与直播弹幕，再评估下载缓存和更多平台。
 
-```text
-React views
-  -> src/api/media.ts
-  -> Tauri invoke
-  -> src-tauri/src/lib.rs
-  -> Bilibili adapter / local storage
-  -> unified camelCase domain models
-  -> React player
-```
-
-核心边界：
-
-1. 平台请求、签名和响应映射位于 Rust，前端不直接解析平台 API。
-2. 前端只消费统一的视频、分 P、播放流与历史记录模型。
-3. 播放器只理解 `mp4`、`dash`、`hls`、`flv` 等协议，不理解具体平台。
-4. 新增直播平台时应扩展平台适配层，而不是修改播放器核心。
-5. Cookie、登录凭据和平台风控状态必须留在受控存储中，不写入普通日志。
-
-## 项目结构
-
-```text
-src/
-├── api/
-│   ├── account.ts           # 账号 command 调用层
-│   └── media.ts             # 前端媒体调用层
-├── components/
-│   ├── account/             # 二维码、短信、验证码与统一头像
-│   ├── framework/           # 标题栏、设置、命令面板、托盘组件
-│   ├── media/               # 视频卡片等媒体组件
-│   └── ui/                  # shadcn/ui 组件
-├── views/
-│   ├── Home.tsx             # 热门与搜索
-│   ├── Video.tsx            # 视频详情与播放器
-│   └── Settings.tsx         # 设置中心
-├── lib/
-│   ├── bilibili-captcha.ts  # 极验脚本与挑战生命周期
-│   ├── command-error.ts     # command 错误码到 i18n 的映射
-│   ├── format.ts            # 数字与时间格式化
-│   └── logger.ts            # 分级日志
-└── contexts/                # 导航、设置、主题、国际化、账号
-
-src-tauri/
-├── src/
-│   ├── account.rs           # 登录状态、凭据存储与账号命令模型
-│   ├── bilibili.rs          # Bilibili 请求与响应映射
-│   ├── device.rs            # buvid3/buvid4 设备身份
-│   ├── domain.rs            # 统一媒体领域模型
-│   ├── storage.rs           # 本地历史
-│   ├── wbi.rs               # WBI mixin key 与签名
-│   └── lib.rs               # AppState、Tauri command 与窗口生命周期
-├── capabilities/            # Tauri 权限白名单
-└── tauri.conf.json          # 窗口与打包配置
-```
-
-## API 证据
-
-平台接口来源、请求类型、响应字段、错误码和风险说明统一记录在 `docs/api-evidence.md`。该目录已从 Git 排除，避免将后端调查记录作为公开内容发布。
-
-修改平台适配器前应先核对证据文档；接口行为变化后也必须先更新证据，再修改代码。
-
-## 验证
-
-每个里程碑至少执行：
-
-```bash
-pnpm lint
-pnpm build
-
-cd src-tauri
-cargo check
-cargo fmt --check
-cargo test
-```
-
-交互功能由用户在实际 Tauri 窗口中验收。Agent 不应自动抢占鼠标、窗口或长期占用开发端口。
-
-## 后续路线
-
-1. 完成账号头像与 P1 交互的最终视觉验收。
-2. 实现 Bilibili DASH 分离音视频播放、清晰度切换并提炼播放器核心。
-3. 补齐分区、个性化推荐、收藏、云端历史、评论与互动。
-4. 接入 Bilibili 直播，再扩展 Douyin 与 Huya。
-5. 建设 Android 播放链路、Android Keystore 与 FFmpeg 内置运行环境。
-6. 统一视频与直播弹幕，再评估下载缓存与更多平台。
-
-## 开发约定
-
-- shadcn 组件样式通过调用处 `className` 覆盖，由 `cn()` 和 `twMerge` 合并。
-- `@layer components` 只收录纯自有元素的可复用样式。
-- 新增原生能力时，同步修改 `src-tauri/capabilities/default.json`。
-- 平台 API 证据、临时调查文件与本地计划统一保存在 Git 排除目录。
-- 每个里程碑完成后由用户验收，再更新文档并提交。
-
-## 许可
-
-[MIT](LICENSE)
+## 使用声明
 
 本项目仅用于个人学习与研究，不用于商业分发，不提供内容源，不绕过付费或区域限制，也不承诺第三方接口持续可用。
+
+项目代码采用 [MIT License](LICENSE) 发布。
