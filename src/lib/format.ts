@@ -15,3 +15,12 @@ export function formatCount(value?: number): string {
   if (value < 100000000) return `${(value / 10000).toFixed(1)}万`;
   return `${(value / 100000000).toFixed(1)}亿`;
 }
+
+export function formatTimestamp(timestamp?: number, locale = "zh-CN"): string {
+  if (!timestamp || timestamp <= 0) return "";
+  return new Intl.DateTimeFormat(locale, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(timestamp * 1000));
+}

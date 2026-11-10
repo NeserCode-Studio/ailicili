@@ -26,12 +26,16 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
-import { useParams } from "react-router";
+import { useParams, useSearchParams } from "react-router";
 
 import {
+  addLocalFavorite,
   getVideoDetail,
   getVideoPlayback,
+  listLocalFavorites,
+  removeLocalFavorite,
   saveLocalHistory,
+  type FavoriteEntry,
   type PlaybackInfo,
   type StreamSource,
   type VideoDetail,
@@ -39,12 +43,13 @@ import {
 import { asCommandError, type CommandError } from "@/api/account";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { useI18n } from "@/composables";
+import { useI18n, useToast } from "@/composables";
 import { useAccount } from "@/contexts/account-context";
 import { useNavigatorContext } from "@/contexts/navigator";
 import { formatCount } from "@/lib/format";
 import { createLogger } from "@/lib/logger";
 import { commandErrorMessage } from "@/lib/command-error";
+import { favoriteMatches, favoriteTargetForVideo } from "@/lib/library";
 import { Container } from "@videojs/react";
 import { Video, VideoPlayer, usePlayer } from "@videojs/react/video";
 import {
@@ -153,8 +158,12 @@ interface PlayerPausePanelProps {
   active: boolean;
   ready: boolean;
   currentTime: number;
+  isFavorite: boolean;
+  favoriteBusy: boolean;
   onBack: () => void;
   onContinue?: () => void;
+  onFavorite: () => void;
+  onFavoriteHint: () => void;
   onRetry: () => void;
   onLogin: () => void;
 }
@@ -169,8 +178,12 @@ function PlayerPausePanel({
   active,
   ready,
   currentTime,
+  isFavorite,
+  favoriteBusy,
   onBack,
   onContinue,
+  onFavorite,
+  onFavoriteHint,
   onRetry,
   onLogin,
 }: PlayerPausePanelProps) {
@@ -180,7 +193,6 @@ function PlayerPausePanel({
   const placeholderActions = [
     { label: t("Video.actions.like"), icon: ThumbsUp },
     { label: t("Video.actions.comment"), icon: MessageCircle },
-    { label: t("Video.actions.favorite"), icon: Star },
     { label: t("Video.actions.share"), icon: Share2 },
   ];
 
@@ -313,6 +325,56 @@ function PlayerPausePanel({
             </Button>
 
             <div className="grid grid-cols-4 gap-2">
+              <button
+                type="button"
+                disabled={!detail || favoriteBusy}
+                aria-label={
+                  isFavorite
+                    ? t("Video.actions.unfavoriteHint")
+                    : t("Video.actions.favorite")
+                }
+                aria-pressed={isFavorite}
+                title={
+                  isFavorite
+                    ? t("Video.actions.unfavoriteHint")
+                    : t("Video.actions.favorite")
+                }
+                className={`inline-flex h-11 min-w-0 items-center justify-center rounded-full border transition-[background-color,color,transform] duration-150 focus-visible:ring-2 focus-visible:ring-white/80 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60 ${
+                  isFavorite
+                    ? "border-white bg-white text-black hover:bg-white/90"
+                    : "border-white/15 bg-white/10 text-white/85 hover:bg-white/20 hover:text-white"
+                }`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (isFavorite) {
+                    onFavoriteHint();
+                  } else {
+                    onFavorite();
+                  }
+                }}
+                onDoubleClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (isFavorite) onFavorite();
+                }}
+                onKeyDown={(event) => {
+                  if (
+                    isFavorite &&
+                    (event.key === "Enter" || event.key === " ")
+                  ) {
+                    event.preventDefault();
+                    onFavorite();
+                  }
+                }}
+              >
+                {favoriteBusy ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Star
+                    className={`size-4 ${isFavorite ? "fill-current" : ""}`}
+                  />
+                )}
+              </button>
               {placeholderActions.map(({ label, icon: Icon }) => (
                 <button
                   key={label}
@@ -424,8 +486,13 @@ interface VideoStageProps {
   error: CommandError | null;
   streamIndex: number;
   availableStreams: StreamSource[];
+  initialTime: number;
+  isFavorite: boolean;
+  favoriteBusy: boolean;
   onStreamIndexChange: (index: number) => void;
   onCurrentTimeChange: (time: number) => void;
+  onFavorite: () => void;
+  onFavoriteHint: () => void;
   onPlaybackError: (message: string) => void;
   onBack: () => void;
   onRetry: () => void;
@@ -438,8 +505,13 @@ function VideoStage({
   error,
   streamIndex,
   availableStreams,
+  initialTime,
+  isFavorite,
+  favoriteBusy,
   onStreamIndexChange,
   onCurrentTimeChange,
+  onFavorite,
+  onFavoriteHint,
   onPlaybackError,
   onBack,
   onRetry,
@@ -511,7 +583,7 @@ function VideoStage({
   const surfaceClickTimer = useRef<number | null>(null);
   const handledMediaErrorKeyRef = useRef<string | null>(null);
   const autoFallbackTriedRef = useRef(false);
-  const initialPauseAppliedRef = useRef(false);
+  const initialSetupAppliedRef = useRef(false);
 
   const handleAudioStore = useCallback((store: AudioStore | null) => {
     audioStoreRef.current = store;
@@ -565,11 +637,61 @@ function VideoStage({
   }, [paused]);
 
   useEffect(() => {
-    if (!mediaReady || initialPauseAppliedRef.current) return;
-    initialPauseAppliedRef.current = true;
+    if (!mediaReady || initialSetupAppliedRef.current) return;
+    initialSetupAppliedRef.current = true;
     videoStore.pause();
     audioStoreRef.current?.pause();
-  }, [mediaReady, videoStore]);
+    if (initialTime <= 0) return;
+
+    let cancelled = false;
+    const restoreInitialTime = async () => {
+      try {
+        const duration = playback.durationMs / 1000;
+        const targetTime =
+          duration > 0
+            ? Math.min(initialTime, Math.max(0, duration - 1))
+            : initialTime;
+        videoStore.pause();
+        const restoredTime = await videoStore.seek(targetTime);
+        if (cancelled) return;
+        if (needsAudio && audioCanPlay) {
+          await audioStoreRef.current?.seek(restoredTime);
+        }
+        if (cancelled) return;
+        videoStore.pause();
+        audioStoreRef.current?.pause();
+        onCurrentTimeChange(restoredTime);
+        log.info("history resume applied", {
+          videoId: playback.videoId,
+          targetTime,
+          restoredTime,
+        });
+      } catch (err) {
+        if (cancelled) return;
+        log.error("history resume failed", {
+          videoId: playback.videoId,
+          targetTime: initialTime,
+          err,
+        });
+        onPlaybackError("恢复播放进度失败");
+      }
+    };
+
+    void restoreInitialTime();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    audioCanPlay,
+    initialTime,
+    mediaReady,
+    needsAudio,
+    onCurrentTimeChange,
+    onPlaybackError,
+    playback.durationMs,
+    playback.videoId,
+    videoStore,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -1028,8 +1150,12 @@ function VideoStage({
             active={!mediaReady || !playing}
             ready={mediaReady}
             currentTime={currentTime}
+            isFavorite={isFavorite}
+            favoriteBusy={favoriteBusy}
             onBack={onBack}
             onContinue={() => void togglePlay()}
+            onFavorite={onFavorite}
+            onFavoriteHint={onFavoriteHint}
             onRetry={onRetry}
             onLogin={onLogin}
           />
@@ -1281,14 +1407,41 @@ function VideoStage({
 
 export default function VideoView() {
   const { videoId = "" } = useParams();
+  const [searchParams] = useSearchParams();
   const { navigator } = useNavigatorContext();
   const { openLogin } = useAccount();
+  const {
+    info: toastInfo,
+    success: toastSuccess,
+    error: toastError,
+  } = useToast();
+  const requestedCidValue = Number(searchParams.get("cid"));
+  const requestedPageCid =
+    Number.isSafeInteger(requestedCidValue) && requestedCidValue > 0
+      ? requestedCidValue
+      : null;
+  const requestedTimeValue = Number(searchParams.get("t"));
+  const requestedResumeTime =
+    Number.isFinite(requestedTimeValue) && requestedTimeValue > 0
+      ? requestedTimeValue
+      : 0;
+  const source = searchParams.get("from");
+  const backPath =
+    source === "history"
+      ? "/history"
+      : source === "favorites"
+        ? "/favorites"
+        : "/";
   const [detail, setDetail] = useState<VideoDetail | null>(null);
   const [playback, setPlayback] = useState<PlaybackInfo | null>(null);
   const [streamIndex, setStreamIndex] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
+  const [favorite, setFavorite] = useState<FavoriteEntry | null>(null);
+  const [favoriteBusy, setFavoriteBusy] = useState(false);
+  const [favoriteLoading, setFavoriteLoading] = useState(true);
   const [error, setError] = useState<CommandError | null>(null);
   const loadRequestIdRef = useRef(0);
+  const favoriteRequestIdRef = useRef(0);
 
   const handlePlaybackError = useCallback((message: string) => {
     setError({ code: "playbackError", message });
@@ -1297,6 +1450,7 @@ export default function VideoView() {
   const load = useCallback(async () => {
     const requestId = ++loadRequestIdRef.current;
     setError(null);
+    setDetail(null);
     setPlayback(null);
     try {
       const videoDetail = await getVideoDetail(videoId);
@@ -1309,7 +1463,9 @@ export default function VideoView() {
         firstCid: videoDetail.pages[0]?.cid,
       });
       setDetail(videoDetail);
-      const page = videoDetail.pages[0];
+      const page =
+        videoDetail.pages.find((item) => item.cid === requestedPageCid) ??
+        videoDetail.pages[0];
       if (!page) throw new Error("No playable page");
       const info = await getVideoPlayback(videoId, page.cid);
       if (requestId !== loadRequestIdRef.current) return;
@@ -1324,7 +1480,18 @@ export default function VideoView() {
         urlHost: selectedStream ? new URL(selectedStream.url).host : null,
       });
       if (!selectedStream) throw new Error("No playable stream");
-      setCurrentTime(0);
+      const resumeTime =
+        requestedPageCid !== null && info.cid === requestedPageCid
+          ? requestedResumeTime
+          : 0;
+      if (requestedResumeTime > 0 && resumeTime === 0) {
+        log.warn("requested history page unavailable", {
+          videoId,
+          requestedPageCid,
+          playbackCid: info.cid,
+        });
+      }
+      setCurrentTime(resumeTime);
       setStreamIndex(info.streams.indexOf(selectedStream));
       setPlayback(info);
     } catch (err) {
@@ -1332,7 +1499,7 @@ export default function VideoView() {
       log.error("video load failed", { videoId, err });
       setError(asCommandError(err));
     }
-  }, [videoId]);
+  }, [requestedPageCid, requestedResumeTime, videoId]);
 
   useEffect(() => {
     void load();
@@ -1342,12 +1509,99 @@ export default function VideoView() {
   }, [load]);
 
   useEffect(() => {
+    if (!detail) {
+      favoriteRequestIdRef.current += 1;
+      setFavorite(null);
+      setFavoriteLoading(false);
+      return;
+    }
+
+    const requestId = ++favoriteRequestIdRef.current;
+    const target = favoriteTargetForVideo(detail.card);
+    setFavorite(null);
+    setFavoriteLoading(true);
+    void listLocalFavorites()
+      .then((entries) => {
+        if (requestId !== favoriteRequestIdRef.current) return;
+        setFavorite(
+          entries.find((entry) => favoriteMatches(entry, target)) ?? null
+        );
+      })
+      .catch((reason) => {
+        if (requestId !== favoriteRequestIdRef.current) return;
+        log.warn("favorite state load failed", {
+          videoId: detail.card.videoId,
+          code: asCommandError(reason).code,
+        });
+      })
+      .finally(() => {
+        if (requestId === favoriteRequestIdRef.current) {
+          setFavoriteLoading(false);
+        }
+      });
+
+    return () => {
+      if (requestId === favoriteRequestIdRef.current) {
+        favoriteRequestIdRef.current += 1;
+      }
+    };
+  }, [detail]);
+
+  const toggleFavorite = useCallback(async () => {
+    if (!detail || favoriteBusy || favoriteLoading) return;
+
+    const target = favoriteTargetForVideo(detail.card);
+    favoriteRequestIdRef.current += 1;
+    setFavoriteBusy(true);
+    try {
+      const entries = favorite
+        ? await removeLocalFavorite(target)
+        : await addLocalFavorite({
+            target,
+            title: detail.card.title,
+            coverUrl: detail.card.coverUrl,
+            ownerName: detail.card.owner?.name,
+          });
+      setFavorite(
+        entries.find((entry) => favoriteMatches(entry, target)) ?? null
+      );
+      if (favorite) {
+        toastSuccess("Library.favorites.removed");
+      } else {
+        toastSuccess("Library.favorites.added");
+      }
+      log.info("favorite toggled", {
+        videoId: detail.card.videoId,
+        favorite: !favorite,
+      });
+    } catch (reason) {
+      toastError("Library.favorites.updateFailed");
+      log.error("favorite toggle failed", {
+        videoId: detail.card.videoId,
+        code: asCommandError(reason).code,
+      });
+    } finally {
+      setFavoriteBusy(false);
+    }
+  }, [
+    detail,
+    favorite,
+    favoriteBusy,
+    favoriteLoading,
+    toastError,
+    toastSuccess,
+  ]);
+
+  useEffect(() => {
     if (!detail || !playback || currentTime <= 5) return;
     const timer = window.setTimeout(() => {
+      const pageTitle =
+        detail.pages.find((page) => page.cid === playback.cid)?.title ??
+        detail.card.title;
       void saveLocalHistory(
         detail,
         playback.cid,
-        detail.pages[0]?.title ?? detail.card.title,
+        pageTitle,
         Math.floor(currentTime),
         Math.round(playback.durationMs / 1000)
       )
@@ -1367,6 +1621,10 @@ export default function VideoView() {
     const playable = playback.streams.filter(canPlayDashStream);
     return playable.length > 0 ? playable : playback.streams;
   }, [playback]);
+  const initialPlaybackTime =
+    playback && requestedPageCid !== null && playback.cid === requestedPageCid
+      ? requestedResumeTime
+      : 0;
 
   return (
     <div className="relative h-[calc(100vh-2rem)] min-h-0 w-full overflow-hidden bg-black">
@@ -1379,10 +1637,20 @@ export default function VideoView() {
               error={error}
               streamIndex={streamIndex}
               availableStreams={availableStreams}
+              initialTime={initialPlaybackTime}
+              isFavorite={Boolean(favorite)}
+              favoriteBusy={favoriteBusy || favoriteLoading}
               onStreamIndexChange={setStreamIndex}
               onCurrentTimeChange={setCurrentTime}
+              onFavorite={() => void toggleFavorite()}
+              onFavoriteHint={() =>
+                toastInfo("Video.actions.unfavoriteHint", {
+                  id: "video-favorite-unfavorite-hint",
+                  duration: 2200,
+                })
+              }
               onPlaybackError={handlePlaybackError}
-              onBack={() => navigator("/")}
+              onBack={() => navigator(backPath)}
               onRetry={() => void load()}
               onLogin={() => openLogin()}
             />
@@ -1396,7 +1664,16 @@ export default function VideoView() {
             active
             ready={false}
             currentTime={0}
-            onBack={() => navigator("/")}
+            isFavorite={Boolean(favorite)}
+            favoriteBusy={favoriteBusy || favoriteLoading}
+            onBack={() => navigator(backPath)}
+            onFavorite={() => void toggleFavorite()}
+            onFavoriteHint={() =>
+              toastInfo("Video.actions.unfavoriteHint", {
+                id: "video-favorite-unfavorite-hint",
+                duration: 2200,
+              })
+            }
             onRetry={() => void load()}
             onLogin={() => openLogin()}
           />

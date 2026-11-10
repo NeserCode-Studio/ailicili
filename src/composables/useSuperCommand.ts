@@ -57,6 +57,22 @@ export function createBuiltinCommands(ctx: {
       },
     },
     {
+      id: "navigate.favorites",
+      keywords: ["收藏", "favorites", "saved", "navigate"],
+      action: () => {
+        navigate("/favorites");
+        return { success: true, message: "Navigated to favorites" };
+      },
+    },
+    {
+      id: "navigate.history",
+      keywords: ["历史", "history", "recent", "continue", "navigate"],
+      action: () => {
+        navigate("/history");
+        return { success: true, message: "Navigated to history" };
+      },
+    },
+    {
       id: "navigate.software",
       keywords: ["软件", "software"],
       action: () => {

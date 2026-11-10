@@ -60,6 +60,20 @@ export default function Titlebar() {
             </MenubarItem>
             <MenubarItem
               onSelect={() => {
+                navigator("/favorites");
+              }}
+            >
+              {t("Titlebar.menu.turnto.favorites")}
+            </MenubarItem>
+            <MenubarItem
+              onSelect={() => {
+                navigator("/history");
+              }}
+            >
+              {t("Titlebar.menu.turnto.history")}
+            </MenubarItem>
+            <MenubarItem
+              onSelect={() => {
                 openSettings();
               }}
             >

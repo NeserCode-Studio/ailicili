@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertCircle,
   Flame,
+  History,
   LayoutGrid,
   Loader2,
   LogIn,
@@ -9,6 +10,7 @@ import {
   Search,
   Settings2,
   Sparkles,
+  Star,
   X,
 } from "lucide-react";
 
@@ -36,6 +38,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useI18n } from "@/composables";
 import { useAccount } from "@/contexts/account-context";
+import { useNavigatorContext } from "@/contexts/navigator";
 import { useSettingsDialog } from "@/contexts/settings";
 import {
   BILIBILI_REGIONS,
@@ -103,6 +106,7 @@ function FeedSkeleton() {
 export default function Home() {
   const { t, lang } = useI18n();
   const { account, loading: accountLoading, openLogin } = useAccount();
+  const { navigator } = useNavigatorContext();
   const { openSettings } = useSettingsDialog();
   const recommendationPriority = useRecommendationPriority();
 
@@ -362,6 +366,27 @@ export default function Home() {
             <p className="text-muted-xs mt-0.5 truncate">
               {t(`Home.feed.${mode}`)}
             </p>
+          </div>
+
+          <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => navigator("/favorites")}
+            >
+              <Star />
+              {t("Library.favorites.title")}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => navigator("/history")}
+            >
+              <History />
+              {t("Library.history.title")}
+            </Button>
           </div>
 
           <form

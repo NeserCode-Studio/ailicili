@@ -106,6 +106,25 @@ export interface HistoryEntry {
   updatedAt: number;
 }
 
+export type FavoriteKind = "video" | "liveRoom";
+
+export interface FavoriteTarget {
+  platform: Platform;
+  kind: FavoriteKind;
+  targetId: string;
+}
+
+export interface FavoriteDraft {
+  target: FavoriteTarget;
+  title: string;
+  coverUrl?: string;
+  ownerName?: string;
+}
+
+export interface FavoriteEntry extends FavoriteDraft {
+  savedAt: number;
+}
+
 export async function getPopularVideos(page = 1): Promise<PagedVideos> {
   return invoke("get_popular_videos", { page });
 }
@@ -158,4 +177,20 @@ export async function saveLocalHistory(
     progressSeconds,
     durationSeconds,
   });
+}
+
+export async function listLocalFavorites(): Promise<FavoriteEntry[]> {
+  return invoke("list_local_favorites");
+}
+
+export async function addLocalFavorite(
+  favorite: FavoriteDraft
+): Promise<FavoriteEntry[]> {
+  return invoke("add_local_favorite", { favorite });
+}
+
+export async function removeLocalFavorite(
+  target: FavoriteTarget
+): Promise<FavoriteEntry[]> {
+  return invoke("remove_local_favorite", { target });
 }

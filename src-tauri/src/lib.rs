@@ -261,6 +261,79 @@ async fn save_local_history(
         .map_err(storage_error)
 }
 
+#[tauri::command]
+async fn list_local_favorites() -> Result<Vec<domain::FavoriteEntry>, domain::CommandError> {
+    tauri::async_runtime::spawn_blocking(storage::list_favorites)
+        .await
+        .map_err(|err| storage_error(err.to_string()))?
+        .map_err(storage_error)
+}
+
+#[tauri::command]
+async fn add_local_favorite(
+    favorite: domain::FavoriteDraft,
+) -> Result<Vec<domain::FavoriteEntry>, domain::CommandError> {
+    let entry = favorite_entry(favorite)?;
+    tauri::async_runtime::spawn_blocking(move || storage::save_favorite(entry))
+        .await
+        .map_err(|err| storage_error(err.to_string()))?
+        .map_err(storage_error)
+}
+
+#[tauri::command]
+async fn remove_local_favorite(
+    target: domain::FavoriteTarget,
+) -> Result<Vec<domain::FavoriteEntry>, domain::CommandError> {
+    let target = normalize_favorite_target(target)?;
+    tauri::async_runtime::spawn_blocking(move || storage::remove_favorite(target))
+        .await
+        .map_err(|err| storage_error(err.to_string()))?
+        .map_err(storage_error)
+}
+
+fn favorite_entry(
+    favorite: domain::FavoriteDraft,
+) -> Result<domain::FavoriteEntry, domain::CommandError> {
+    let target = normalize_favorite_target(favorite.target)?;
+    let title = favorite.title.trim();
+    if title.is_empty() {
+        return Err(invalid_favorite_error());
+    }
+
+    Ok(domain::FavoriteEntry {
+        target,
+        title: title.to_string(),
+        cover_url: normalize_optional_text(favorite.cover_url),
+        owner_name: normalize_optional_text(favorite.owner_name),
+        saved_at: chrono::Utc::now().timestamp(),
+    })
+}
+
+fn normalize_favorite_target(
+    target: domain::FavoriteTarget,
+) -> Result<domain::FavoriteTarget, domain::CommandError> {
+    let target_id = target.target_id.trim();
+    if target_id.is_empty() {
+        return Err(invalid_favorite_error());
+    }
+
+    Ok(domain::FavoriteTarget {
+        platform: target.platform,
+        kind: target.kind,
+        target_id: target_id.to_string(),
+    })
+}
+
+fn normalize_optional_text(value: Option<String>) -> Option<String> {
+    value
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+}
+
+fn invalid_favorite_error() -> domain::CommandError {
+    domain::CommandError::new("invalidFavorite", "收藏目标或标题不能为空。")
+}
+
 fn storage_error(_detail: String) -> domain::CommandError {
     domain::CommandError::new("storageError", "本地数据读写失败，请检查应用数据目录权限。")
 }
@@ -415,6 +488,9 @@ pub fn run() {
             get_search_videos,
             list_local_history,
             save_local_history,
+            list_local_favorites,
+            add_local_favorite,
+            remove_local_favorite,
             get_bilibili_login_capabilities,
             get_bilibili_account,
             refresh_bilibili_account,

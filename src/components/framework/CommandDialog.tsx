@@ -1,5 +1,12 @@
 import * as React from "react";
-import { Home, Settings, RefreshCcw, Sparkles } from "lucide-react";
+import {
+  History,
+  Home,
+  RefreshCcw,
+  Settings,
+  Sparkles,
+  Star,
+} from "lucide-react";
 import { useMemoizedFn } from "ahooks";
 
 import {
@@ -42,7 +49,12 @@ export default function CommandMenu() {
   // cmdk 搜索值
   const [cmdkSearch, setCmdkSearch] = React.useState("");
 
-  const superCmd = useSuperCommand({ navigate: navigator, setLang, setTheme, openSettings });
+  const superCmd = useSuperCommand({
+    navigate: navigator,
+    setLang,
+    setTheme,
+    openSettings,
+  });
 
   // ── Super 模式判定 ────────────────────────────────────────
   const isSuperMode = cmdkSearch.startsWith(SUPER_PREFIX + " ");
@@ -57,7 +69,7 @@ export default function CommandMenu() {
       ? superCmd.commands.filter(
           (cmd) =>
             cmd.id.toLowerCase().includes(superQuery) ||
-            cmd.keywords.some((k) => k.toLowerCase().includes(superQuery)),
+            cmd.keywords.some((k) => k.toLowerCase().includes(superQuery))
         )
       : superCmd.commands
     : [];
@@ -77,6 +89,18 @@ export default function CommandMenu() {
       label: t("Command.turnto.settings"),
       shortcut: "⌘S",
       keywords: ["settings", "设置", "配置", "选项", "preferences"],
+    },
+    {
+      value: "navigate::/favorites",
+      icon: Star,
+      label: t("Command.turnto.favorites"),
+      keywords: ["favorites", "收藏", "saved"],
+    },
+    {
+      value: "navigate::/history",
+      icon: History,
+      label: t("Command.turnto.history"),
+      keywords: ["history", "历史", "recent", "continue"],
     },
     {
       value: "reload",

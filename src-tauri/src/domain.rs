@@ -264,6 +264,44 @@ pub struct HistoryEntry {
     pub updated_at: i64,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum FavoriteKind {
+    Video,
+    LiveRoom,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FavoriteTarget {
+    pub platform: Platform,
+    pub kind: FavoriteKind,
+    pub target_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FavoriteDraft {
+    pub target: FavoriteTarget,
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FavoriteEntry {
+    pub target: FavoriteTarget,
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_name: Option<String>,
+    pub saved_at: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PagedVideos {

@@ -37,6 +37,8 @@ const log = createLogger("App");
 
 const Home = lazy(() => import("@/views/Home"));
 const VideoView = lazy(() => import("@/views/Video"));
+const Favorites = lazy(() => import("@/views/Favorites"));
+const HistoryView = lazy(() => import("@/views/History"));
 const Software = lazy(() => import("@/views/Software"));
 const Framework = lazy(() => import("@/views/Framework"));
 const TrayMenu = lazy(() => import("@/views/TrayMenu"));
@@ -188,6 +190,8 @@ function App() {
                               path="/video/:videoId"
                               element={<VideoView />}
                             />
+                            <Route path="/favorites" element={<Favorites />} />
+                            <Route path="/history" element={<HistoryView />} />
                             <Route path="/software" element={<Software />} />
                             <Route path="/framework" element={<Framework />} />
                           </Routes>
