@@ -262,6 +262,14 @@ async fn save_local_history(
 }
 
 #[tauri::command]
+async fn clear_local_history() -> Result<Vec<domain::HistoryEntry>, domain::CommandError> {
+    tauri::async_runtime::spawn_blocking(storage::clear_history)
+        .await
+        .map_err(|err| storage_error(err.to_string()))?
+        .map_err(storage_error)
+}
+
+#[tauri::command]
 async fn list_local_favorites() -> Result<Vec<domain::FavoriteEntry>, domain::CommandError> {
     tauri::async_runtime::spawn_blocking(storage::list_favorites)
         .await
@@ -488,6 +496,7 @@ pub fn run() {
             get_search_videos,
             list_local_history,
             save_local_history,
+            clear_local_history,
             list_local_favorites,
             add_local_favorite,
             remove_local_favorite,

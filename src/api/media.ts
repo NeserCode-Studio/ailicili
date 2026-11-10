@@ -179,6 +179,10 @@ export async function saveLocalHistory(
   });
 }
 
+export async function clearLocalHistory(): Promise<HistoryEntry[]> {
+  return invoke("clear_local_history");
+}
+
 export async function listLocalFavorites(): Promise<FavoriteEntry[]> {
   return invoke("list_local_favorites");
 }

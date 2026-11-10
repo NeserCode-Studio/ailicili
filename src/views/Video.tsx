@@ -60,6 +60,7 @@ import {
 
 const log = createLogger("Media/Video");
 const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
+const HISTORY_SAVE_THROTTLE_MS = 5000;
 const CONTROL_BUTTON_CLASS =
   "size-8 rounded-sm text-white hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-white/80";
 const QUALITY_LABELS: Record<number, string> = {
@@ -1442,6 +1443,8 @@ export default function VideoView() {
   const [error, setError] = useState<CommandError | null>(null);
   const loadRequestIdRef = useRef(0);
   const favoriteRequestIdRef = useRef(0);
+  const historySaveKeyRef = useRef<string | null>(null);
+  const lastHistorySaveAtRef = useRef(0);
 
   const handlePlaybackError = useCallback((message: string) => {
     setError({ code: "playbackError", message });
@@ -1594,26 +1597,40 @@ export default function VideoView() {
 
   useEffect(() => {
     if (!detail || !playback || currentTime <= 5) return;
-    const timer = window.setTimeout(() => {
-      const pageTitle =
-        detail.pages.find((page) => page.cid === playback.cid)?.title ??
-        detail.card.title;
-      void saveLocalHistory(
-        detail,
-        playback.cid,
-        pageTitle,
-        Math.floor(currentTime),
-        Math.round(playback.durationMs / 1000)
+    const historyKey = `${detail.card.platform}:${detail.card.videoId}:${playback.cid}`;
+    if (historySaveKeyRef.current !== historyKey) {
+      historySaveKeyRef.current = historyKey;
+      lastHistorySaveAtRef.current = 0;
+    }
+
+    const now = Date.now();
+    if (now - lastHistorySaveAtRef.current < HISTORY_SAVE_THROTTLE_MS) {
+      return;
+    }
+    lastHistorySaveAtRef.current = now;
+
+    const progressSeconds = Math.floor(currentTime);
+    const pageTitle =
+      detail.pages.find((page) => page.cid === playback.cid)?.title ??
+      detail.card.title;
+    void saveLocalHistory(
+      detail,
+      playback.cid,
+      pageTitle,
+      progressSeconds,
+      Math.round(playback.durationMs / 1000)
+    )
+      .then(() =>
+        log.debug("history saved", {
+          videoId: detail.card.videoId,
+          cid: playback.cid,
+          progressSeconds,
+        })
       )
-        .then(() =>
-          log.debug("history saved", {
-            videoId: detail.card.videoId,
-            cid: playback.cid,
-          })
-        )
-        .catch((err) => log.warn("history save failed", err));
-    }, 1000);
-    return () => window.clearTimeout(timer);
+      .catch((err) => {
+        lastHistorySaveAtRef.current = 0;
+        log.warn("history save failed", err);
+      });
   }, [currentTime, detail, playback]);
 
   const availableStreams = useMemo(() => {

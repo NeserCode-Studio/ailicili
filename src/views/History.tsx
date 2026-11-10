@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, History } from "lucide-react";
+import { ArrowLeft, History, Loader2, Trash2 } from "lucide-react";
 
-import { listLocalHistory, type HistoryEntry } from "@/api/media";
+import {
+  clearLocalHistory,
+  listLocalHistory,
+  type HistoryEntry,
+} from "@/api/media";
 import { asCommandError, type CommandError } from "@/api/account";
 import HistoryCard from "@/components/library/HistoryCard";
 import {
@@ -9,8 +13,19 @@ import {
   LibraryErrorAlert,
   LibraryLoadingGrid,
 } from "@/components/library/LibraryStates";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { useI18n } from "@/composables";
+import { useI18n, useToast } from "@/composables";
 import { useNavigatorContext } from "@/contexts/navigator";
 import { historyResumePath } from "@/lib/library";
 import { createLogger } from "@/lib/logger";
@@ -20,8 +35,10 @@ const log = createLogger("Library/History");
 export default function HistoryView() {
   const { t, lang } = useI18n();
   const { navigator } = useNavigatorContext();
+  const { success: toastSuccess, error: toastError } = useToast();
   const [items, setItems] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [clearing, setClearing] = useState(false);
   const [error, setError] = useState<CommandError | null>(null);
   const requestIdRef = useRef(0);
 
@@ -60,6 +77,25 @@ export default function HistoryView() {
     navigator(historyResumePath(entry));
   };
 
+  const clear = useCallback(async () => {
+    if (clearing || items.length === 0) return;
+
+    setClearing(true);
+    try {
+      const entries = await clearLocalHistory();
+      setItems(entries);
+      toastSuccess("Library.history.cleared");
+      log.info("history cleared");
+    } catch (reason) {
+      toastError("Library.history.clearFailed");
+      log.error("history clear failed", {
+        code: asCommandError(reason).code,
+      });
+    } finally {
+      setClearing(false);
+    }
+  }, [clearing, items.length, toastError, toastSuccess]);
+
   return (
     <div className="flex h-full w-full flex-col">
       <header className="border-border/60 border-b">
@@ -74,16 +110,55 @@ export default function HistoryView() {
               </p>
             ) : null}
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="ml-auto"
-            onClick={() => navigator("/")}
-          >
-            <ArrowLeft />
-            {t("Library.backHome")}
-          </Button>
+          <div className="ml-auto flex items-center gap-2">
+            {!loading && !error && items.length > 0 ? (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={clearing}
+                  >
+                    {clearing ? (
+                      <Loader2 className="animate-spin" />
+                    ) : (
+                      <Trash2 />
+                    )}
+                    {t("Library.history.clear")}
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>
+                      {t("Library.history.clearTitle")}
+                    </AlertDialogTitle>
+                    <AlertDialogDescription>
+                      {t("Library.history.clearDescription")}
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>{t("Library.cancel")}</AlertDialogCancel>
+                    <AlertDialogAction
+                      className="bg-destructive hover:bg-destructive/90 text-white"
+                      onClick={() => void clear()}
+                    >
+                      {t("Library.history.clearConfirm")}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => navigator("/")}
+            >
+              <ArrowLeft />
+              {t("Library.backHome")}
+            </Button>
+          </div>
         </div>
       </header>
 

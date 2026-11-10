@@ -70,6 +70,10 @@ pub fn save_history_entry(entry: HistoryEntry) -> Result<Vec<HistoryEntry>, Stri
     with_data_dir(move |root| save_history_entry_in(root, entry))
 }
 
+pub fn clear_history() -> Result<Vec<HistoryEntry>, String> {
+    with_data_dir(clear_history_in)
+}
+
 pub fn list_favorites() -> Result<Vec<FavoriteEntry>, String> {
     with_data_dir(|root| list_favorites_in(root))
 }
@@ -109,6 +113,16 @@ fn save_history_entry_in(root: &Path, entry: HistoryEntry) -> Result<Vec<History
     document.history.insert(0, entry);
     document.history.truncate(MAX_HISTORY_ENTRIES);
     write_library(root, &document)?;
+    Ok(document.history)
+}
+
+fn clear_history_in(root: &Path) -> Result<Vec<HistoryEntry>, String> {
+    let mut document = load_library(root)?;
+    let changed = !document.history.is_empty();
+    document.history.clear();
+    if changed {
+        write_library(root, &document)?;
+    }
     Ok(document.history)
 }
 
@@ -414,6 +428,20 @@ mod tests {
     }
 
     #[test]
+    fn clear_history_preserves_favorites_and_persists() {
+        let test_dir = TestDir::new();
+        let favorite = favorite_entry(FavoriteKind::Video, "BV1", "Favorite", 10);
+        save_history_entry_in(&test_dir.0, history_entry("BV1", 30)).unwrap();
+        save_favorite_in(&test_dir.0, favorite.clone()).unwrap();
+
+        let history = clear_history_in(&test_dir.0).unwrap();
+
+        assert!(history.is_empty());
+        assert!(list_history_in(&test_dir.0).unwrap().is_empty());
+        assert_eq!(list_favorites_in(&test_dir.0).unwrap(), vec![favorite]);
+    }
+
+    #[test]
     fn concurrent_history_and_favorite_writes_are_serialized() {
         let test_dir = TestDir::new();
         let history_root = test_dir.0.clone();
@@ -456,5 +484,18 @@ mod tests {
         assert_eq!(entries[0].card.video_id, "BV1");
         assert_eq!(list_favorites_in(&test_dir.0).unwrap(), vec![favorite]);
         assert!(read_document(&test_dir.0.join(LIBRARY_FILE)).is_ok());
+    }
+
+    #[test]
+    fn corrupt_library_without_backup_fails_without_overwriting() {
+        let test_dir = TestDir::new();
+        let path = test_dir.0.join(LIBRARY_FILE);
+        save_history_entry_in(&test_dir.0, history_entry("BV1", 10)).unwrap();
+        fs::write(&path, b"{broken").unwrap();
+
+        let error = list_history_in(&test_dir.0).unwrap_err();
+
+        assert!(!error.is_empty());
+        assert_eq!(fs::read(&path).unwrap(), b"{broken");
     }
 }
