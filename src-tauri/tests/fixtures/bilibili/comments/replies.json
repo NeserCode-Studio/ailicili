@@ -1,0 +1,52 @@
+{
+  "code": 0,
+  "message": "0",
+  "data": {
+    "upper": {
+      "mid": 900
+    },
+    "page": {
+      "count": 2,
+      "num": 1,
+      "size": 20
+    },
+    "replies": [
+      {
+        "rpid": 201,
+        "mid": 904,
+        "like": "40",
+        "ctime": 1762142900,
+        "rcount": 0,
+        "member": {
+          "mid": 904,
+          "uname": "Reply page fixture",
+          "avatar": "//example.invalid/avatar-reply.jpg",
+          "level_info": {
+            "current_level": 4
+          }
+        },
+        "content": {
+          "message": "First reply page item"
+        }
+      },
+      {
+        "rpid": 202,
+        "mid": 900,
+        "like": 2,
+        "ctime": 1762143000,
+        "rcount": 0,
+        "member": {
+          "mid": 900,
+          "uname": "Fixture uploader",
+          "avatar": "//example.invalid/avatar-up.jpg",
+          "level_info": {
+            "current_level": 6
+          }
+        },
+        "content": {
+          "message": "Uploader reply page item"
+        }
+      }
+    ]
+  }
+}

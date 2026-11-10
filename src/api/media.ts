@@ -93,6 +93,7 @@ export interface VideoPage {
 
 export interface VideoDetail {
   card: VideoCard;
+  aid: number;
   description: string;
   pages: VideoPage[];
 }

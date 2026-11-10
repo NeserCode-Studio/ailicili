@@ -41,6 +41,7 @@ import {
   type VideoDetail,
 } from "@/api/media";
 import { asCommandError, type CommandError } from "@/api/account";
+import { CommentsSidebar } from "@/components/comments/CommentsSidebar";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { useI18n, useToast } from "@/composables";
@@ -50,6 +51,12 @@ import { formatCount } from "@/lib/format";
 import { createLogger } from "@/lib/logger";
 import { commandErrorMessage } from "@/lib/command-error";
 import { favoriteMatches, favoriteTargetForVideo } from "@/lib/library";
+import {
+  PLAYBACK_RATES,
+  readPlayerPreferences,
+  savePlayerPreferences,
+  type PlaybackRate,
+} from "@/lib/player-preferences";
 import { Container } from "@videojs/react";
 import { Video, VideoPlayer, usePlayer } from "@videojs/react/video";
 import {
@@ -59,10 +66,9 @@ import {
 } from "@videojs/react/audio";
 
 const log = createLogger("Media/Video");
-const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
 const HISTORY_SAVE_THROTTLE_MS = 5000;
 const CONTROL_BUTTON_CLASS =
-  "size-8 rounded-sm text-white hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-white/80";
+  "size-8 rounded-sm text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring";
 const QUALITY_LABELS: Record<number, string> = {
   16: "360P",
   32: "480P",
@@ -132,14 +138,13 @@ class PlayerErrorBoundary extends Component<
   render() {
     if (this.state.failed) {
       return (
-        <div className="grid h-full w-full place-items-center bg-black text-white">
+        <div className="bg-background text-foreground grid h-full w-full place-items-center">
           <div className="flex flex-col items-center gap-3">
             <span className="text-sm">播放器初始化失败</span>
             <Button
               type="button"
               variant="secondary"
               size="sm"
-              className="border-white/30 bg-white text-black hover:bg-white/90"
               onClick={this.retry}
             >
               重新尝试
@@ -167,6 +172,8 @@ interface PlayerPausePanelProps {
   onFavoriteHint: () => void;
   onRetry: () => void;
   onLogin: () => void;
+  onComments: () => void;
+  commentsEnabled: boolean;
 }
 
 const PAUSE_BLUR_MASK =
@@ -187,14 +194,34 @@ function PlayerPausePanel({
   onFavoriteHint,
   onRetry,
   onLogin,
+  onComments,
+  commentsEnabled,
 }: PlayerPausePanelProps) {
   const { t } = useI18n();
   const canContinue = ready && !error && Boolean(onContinue);
   const showResume = ready && currentTime > 0.5;
-  const placeholderActions = [
-    { label: t("Video.actions.like"), icon: ThumbsUp },
-    { label: t("Video.actions.comment"), icon: MessageCircle },
-    { label: t("Video.actions.share"), icon: Share2 },
+  const secondaryActions = [
+    {
+      id: "like",
+      label: t("Video.actions.like"),
+      icon: ThumbsUp,
+      disabled: true,
+      onClick: undefined,
+    },
+    {
+      id: "comment",
+      label: t("Comments.open"),
+      icon: MessageCircle,
+      disabled: !commentsEnabled,
+      onClick: onComments,
+    },
+    {
+      id: "share",
+      label: t("Video.actions.share"),
+      icon: Share2,
+      disabled: true,
+      onClick: undefined,
+    },
   ];
 
   return (
@@ -202,20 +229,20 @@ function PlayerPausePanel({
       aria-label={t("Video.panelLabel")}
       aria-hidden={!active}
       inert={!active}
-      className={`absolute inset-0 z-20 overflow-hidden text-white transition-[opacity,transform,visibility] duration-200 ease-out motion-reduce:transition-none ${
+      className={`text-foreground absolute inset-0 z-20 overflow-hidden transition-[opacity,transform,visibility] duration-200 ease-out motion-reduce:transition-none ${
         active
           ? "visible translate-y-0 scale-100 opacity-100"
           : "pointer-events-none invisible translate-y-1 scale-[0.995] opacity-0"
       }`}
     >
       <div
-        className="pointer-events-none absolute inset-0 bg-black/45 backdrop-blur-[21.6px]"
+        className="bg-background/55 pointer-events-none absolute inset-0 backdrop-blur-[28px]"
         style={{
           maskImage: PAUSE_BLUR_MASK,
           WebkitMaskImage: PAUSE_BLUR_MASK,
         }}
       />
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/75 via-black/25 to-transparent" />
+      <div className="from-background/95 via-background/55 to-background/10 pointer-events-none absolute inset-0 bg-gradient-to-t" />
 
       <div className="relative mx-auto flex h-full w-full max-w-[1440px] flex-col px-5 pt-5 pb-28 sm:px-8 sm:pb-32 lg:px-12 lg:pt-8">
         <div className="flex items-center justify-between gap-4">
@@ -223,7 +250,7 @@ function PlayerPausePanel({
             type="button"
             aria-label={t("Video.back")}
             title={t("Video.back")}
-            className="inline-flex size-10 items-center justify-center rounded-full border border-white/15 bg-black/25 text-white/90 transition-[background-color,color,transform] duration-150 hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:ring-white/80 focus-visible:outline-none active:scale-95"
+            className="border-border bg-background/60 text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring inline-flex size-10 items-center justify-center rounded-full border transition-[background-color,color,transform] duration-150 focus-visible:ring-2 focus-visible:outline-none active:scale-95"
             onClick={onBack}
           >
             <ArrowLeft className="size-4" />
@@ -232,8 +259,8 @@ function PlayerPausePanel({
 
         <div className="mt-auto grid min-w-0 gap-6 md:grid-cols-[minmax(0,1fr)_minmax(16rem,22rem)] md:items-end lg:gap-10">
           <div className="min-w-0">
-            <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-sm text-white/70">
-              <span className="max-w-full truncate font-medium text-white/90">
+            <div className="text-muted-foreground flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+              <span className="text-foreground/90 max-w-full truncate font-medium">
                 {detail?.card.owner?.name ?? "Bilibili UGC"}
               </span>
               {detail ? (
@@ -254,19 +281,19 @@ function PlayerPausePanel({
             </h1>
 
             {detail?.description ? (
-              <p className="mt-3 line-clamp-2 max-w-3xl text-sm leading-6 text-white/70">
+              <p className="text-muted-foreground mt-3 line-clamp-2 max-w-3xl text-sm leading-6">
                 {detail.description}
               </p>
             ) : null}
 
             {qualityNotice && qualityNotice.kind !== "none" ? (
-              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-white/65">
+              <div className="text-muted-foreground mt-3 flex flex-wrap items-center gap-2 text-xs">
                 <span>{t(`Quality.notice.${qualityNotice.messageCode}`)}</span>
                 {qualityNotice.kind === "loginRequired" ||
                 qualityNotice.kind === "accountExpired" ? (
                   <button
                     type="button"
-                    className="font-medium text-white underline underline-offset-4 hover:text-white/80 focus-visible:ring-2 focus-visible:ring-white/80 focus-visible:outline-none"
+                    className="text-foreground hover:text-foreground/75 focus-visible:ring-ring font-medium underline underline-offset-4 focus-visible:ring-2 focus-visible:outline-none"
                     onClick={onLogin}
                   >
                     {t("Account.titlebar.login")}
@@ -276,15 +303,15 @@ function PlayerPausePanel({
             ) : null}
 
             {error ? (
-              <div className="mt-4 max-w-3xl border-l-2 border-red-300/60 pl-3">
-                <p className="text-sm leading-5 text-red-100">
+              <div className="border-destructive/60 mt-4 max-w-3xl border-l-2 pl-3">
+                <p className="text-destructive text-sm leading-5">
                   {commandErrorMessage(error, t)}
                 </p>
                 <Button
                   type="button"
                   variant="secondary"
                   size="sm"
-                  className="mt-2 bg-white text-black hover:bg-white/90"
+                  className="mt-2"
                   onClick={
                     error.code === "authRequired" ||
                     error.code === "loginExpired"
@@ -306,7 +333,7 @@ function PlayerPausePanel({
               type="button"
               size="lg"
               disabled={!canContinue}
-              className="h-11 w-full rounded-full bg-white px-5 text-black hover:bg-white/90 focus-visible:ring-white/80 disabled:bg-white/70"
+              className="focus-visible:ring-ring disabled:bg-primary/60 h-11 w-full rounded-full px-5"
               onClick={() => onContinue?.()}
             >
               {error ? (
@@ -340,10 +367,10 @@ function PlayerPausePanel({
                     ? t("Video.actions.unfavoriteHint")
                     : t("Video.actions.favorite")
                 }
-                className={`inline-flex h-11 min-w-0 items-center justify-center rounded-full border transition-[background-color,color,transform] duration-150 focus-visible:ring-2 focus-visible:ring-white/80 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60 ${
+                className={`focus-visible:ring-ring inline-flex h-11 min-w-0 items-center justify-center rounded-full border transition-[background-color,color,transform] duration-150 focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60 ${
                   isFavorite
-                    ? "border-white bg-white text-black hover:bg-white/90"
-                    : "border-white/15 bg-white/10 text-white/85 hover:bg-white/20 hover:text-white"
+                    ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90"
+                    : "border-border bg-background/55 text-foreground hover:bg-accent hover:text-accent-foreground"
                 }`}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -376,18 +403,32 @@ function PlayerPausePanel({
                   />
                 )}
               </button>
-              {placeholderActions.map(({ label, icon: Icon }) => (
-                <button
-                  key={label}
-                  type="button"
-                  disabled
-                  aria-label={`${label} (${t("Video.actions.pending")})`}
-                  title={`${label} (${t("Video.actions.pending")})`}
-                  className="inline-flex h-11 min-w-0 items-center justify-center rounded-full border border-white/15 bg-white/10 text-white/85 transition-[background-color,color,transform] duration-150 hover:bg-white/20 hover:text-white focus-visible:ring-2 focus-visible:ring-white/80 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <Icon className="size-4" />
-                </button>
-              ))}
+              {secondaryActions.map(
+                ({ id, label, icon: Icon, disabled, onClick }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    disabled={disabled}
+                    aria-label={
+                      disabled
+                        ? `${label} (${t("Video.actions.pending")})`
+                        : label
+                    }
+                    title={
+                      disabled
+                        ? `${label} (${t("Video.actions.pending")})`
+                        : label
+                    }
+                    className="border-border bg-background/55 text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring inline-flex h-11 min-w-0 items-center justify-center rounded-full border transition-[background-color,color,transform] duration-150 focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onClick?.();
+                    }}
+                  >
+                    <Icon className="size-4" />
+                  </button>
+                )
+              )}
             </div>
           </div>
         </div>
@@ -490,10 +531,12 @@ interface VideoStageProps {
   initialTime: number;
   isFavorite: boolean;
   favoriteBusy: boolean;
+  commentsOpen: boolean;
   onStreamIndexChange: (index: number) => void;
   onCurrentTimeChange: (time: number) => void;
   onFavorite: () => void;
   onFavoriteHint: () => void;
+  onCommentsOpenChange: (open: boolean) => void;
   onPlaybackError: (message: string) => void;
   onBack: () => void;
   onRetry: () => void;
@@ -509,10 +552,12 @@ function VideoStage({
   initialTime,
   isFavorite,
   favoriteBusy,
+  commentsOpen,
   onStreamIndexChange,
   onCurrentTimeChange,
   onFavorite,
   onFavoriteHint,
+  onCommentsOpenChange,
   onPlaybackError,
   onBack,
   onRetry,
@@ -577,9 +622,12 @@ function VideoStage({
   const [speedMenuOpen, setSpeedMenuOpen] = useState(false);
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
   const [volumePanelOpen, setVolumePanelOpen] = useState(false);
-  const [volume, setVolume] = useState(1);
-  const [userMuted, setUserMuted] = useState(false);
-  const [playbackRate, setPlaybackRate] = useState(1);
+  const [initialPlayerPreferences] = useState(readPlayerPreferences);
+  const [volume, setVolume] = useState(initialPlayerPreferences.volume);
+  const [userMuted, setUserMuted] = useState(initialPlayerPreferences.muted);
+  const [playbackRate, setPlaybackRate] = useState(
+    initialPlayerPreferences.playbackRate
+  );
   const hideTimer = useRef<number | null>(null);
   const surfaceClickTimer = useRef<number | null>(null);
   const handledMediaErrorKeyRef = useRef<string | null>(null);
@@ -611,17 +659,33 @@ function VideoStage({
       window.clearTimeout(hideTimer.current);
       hideTimer.current = null;
     }
-    if (paused || speedMenuOpen || qualityMenuOpen || volumePanelOpen) return;
+    if (
+      paused ||
+      commentsOpen ||
+      speedMenuOpen ||
+      qualityMenuOpen ||
+      volumePanelOpen
+    ) {
+      return;
+    }
     hideTimer.current = window.setTimeout(() => {
       hideTimer.current = null;
       setControlsVisible(false);
     }, 2400);
-  }, [paused, qualityMenuOpen, speedMenuOpen, volumePanelOpen]);
+  }, [commentsOpen, paused, qualityMenuOpen, speedMenuOpen, volumePanelOpen]);
 
   const revealControls = useCallback(() => {
     setControlsVisible(true);
     scheduleHideControls();
   }, [scheduleHideControls]);
+
+  const openComments = useCallback(() => {
+    onCommentsOpenChange(true);
+  }, [onCommentsOpenChange]);
+
+  const closeComments = useCallback(() => {
+    onCommentsOpenChange(false);
+  }, [onCommentsOpenChange]);
 
   useEffect(() => {
     if (isSwitchingQuality || isSeeking) return;
@@ -629,13 +693,13 @@ function VideoStage({
   }, [currentTime, isSeeking, isSwitchingQuality, onCurrentTimeChange]);
 
   useEffect(() => {
-    if (!paused) return;
+    if (!paused && !commentsOpen) return;
     if (hideTimer.current) {
       window.clearTimeout(hideTimer.current);
       hideTimer.current = null;
     }
     setControlsVisible(true);
-  }, [paused]);
+  }, [commentsOpen, paused]);
 
   useEffect(() => {
     if (!mediaReady || initialSetupAppliedRef.current) return;
@@ -864,6 +928,14 @@ function VideoStage({
   ]);
 
   useEffect(() => {
+    savePlayerPreferences({
+      volume,
+      muted: userMuted,
+      playbackRate,
+    });
+  }, [playbackRate, userMuted, volume]);
+
+  useEffect(() => {
     const audioStore = audioStoreRef.current;
     if (
       !audioStore ||
@@ -1069,10 +1141,21 @@ function VideoStage({
     }
   };
 
-  const changePlaybackRate = (rate: number) => {
+  const changePlaybackRate = (rate: PlaybackRate) => {
     setPlaybackRate(rate);
     setSpeedMenuOpen(false);
     log.info("playback rate changed", { rate });
+  };
+
+  const toggleMuted = () => {
+    if (!userMuted && volume > 0) {
+      setUserMuted(true);
+      return;
+    }
+    if (volume === 0) {
+      setVolume(0.5);
+    }
+    setUserMuted(false);
   };
 
   const cancelPendingSurfaceClick = () => {
@@ -1143,6 +1226,16 @@ function VideoStage({
           />
         ) : null}
 
+        {detail?.aid ? (
+          <CommentsSidebar
+            key={detail.card.videoId}
+            aid={detail.aid}
+            open={commentsOpen}
+            onClose={closeComments}
+            onLogin={onLogin}
+          />
+        ) : null}
+
         {!isSwitchingQuality ? (
           <PlayerPausePanel
             detail={detail}
@@ -1159,12 +1252,14 @@ function VideoStage({
             onFavoriteHint={onFavoriteHint}
             onRetry={onRetry}
             onLogin={onLogin}
+            onComments={openComments}
+            commentsEnabled={Boolean(detail?.aid)}
           />
         ) : null}
 
         {isSwitchingQuality ? (
-          <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center bg-black/35 backdrop-blur-sm">
-            <div className="flex flex-col items-center gap-2 text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.75)]">
+          <div className="bg-background/55 pointer-events-none absolute inset-0 z-20 grid place-items-center backdrop-blur-sm">
+            <div className="text-foreground flex flex-col items-center gap-2">
               <Pause className="size-8 fill-current" />
               <span className="text-sm font-medium">
                 {`正在切换至${qualityLabel || playback.currentQuality.label}清晰度`}
@@ -1194,11 +1289,11 @@ function VideoStage({
             onClick={(event) => event.stopPropagation()}
             onDoubleClick={(event) => event.stopPropagation()}
           >
-            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-black/35 to-transparent" />
+            <div className="from-background/95 via-background/55 pointer-events-none absolute inset-0 bg-gradient-to-t to-transparent" />
             <div className="relative flex flex-col gap-2 px-3 pb-3 sm:px-4">
               <Slider
                 aria-label="播放进度"
-                className="h-4 w-full [&_[data-slot=slider-range]]:bg-[var(--player-accent)] [&_[data-slot=slider-thumb]]:size-2 [&_[data-slot=slider-thumb]]:border-[var(--player-accent)] [&_[data-slot=slider-thumb]]:bg-white [&_[data-slot=slider-track]]:h-[3px] [&_[data-slot=slider-track]]:rounded-none [&_[data-slot=slider-track]]:bg-white/25"
+                className="[&_[data-slot=slider-thumb]]:bg-background [&_[data-slot=slider-track]]:bg-foreground/20 h-4 w-full [&_[data-slot=slider-range]]:bg-[var(--player-accent)] [&_[data-slot=slider-thumb]]:size-2 [&_[data-slot=slider-thumb]]:border-[var(--player-accent)] [&_[data-slot=slider-track]]:h-[3px] [&_[data-slot=slider-track]]:rounded-none"
                 value={[Math.min(displayedTime, duration)]}
                 max={duration || 1}
                 step={1}
@@ -1206,7 +1301,7 @@ function VideoStage({
                 onValueCommit={([value]) => void seekTo(value)}
               />
 
-              <div className="flex h-10 items-center gap-2 rounded-md border border-white/10 bg-black/60 px-2 backdrop-blur-md sm:gap-3">
+              <div className="border-border bg-background/80 text-foreground flex h-10 items-center gap-2 rounded-md border px-2 backdrop-blur-xl sm:gap-3">
                 <Button
                   type="button"
                   size="icon"
@@ -1223,7 +1318,7 @@ function VideoStage({
                     <Play className="fill-current" />
                   )}
                 </Button>
-                <span className="text-xs font-medium whitespace-nowrap text-white/90 tabular-nums">
+                <span className="text-foreground/90 text-xs font-medium whitespace-nowrap tabular-nums">
                   {formatPlayerTime(displayedTime)} /{" "}
                   {formatPlayerTime(duration)}
                 </span>
@@ -1232,7 +1327,7 @@ function VideoStage({
                   <div className="relative">
                     <button
                       type="button"
-                      className="flex h-8 items-center gap-1 rounded-sm px-1 text-xs font-medium text-white/90 hover:text-white focus-visible:ring-2 focus-visible:ring-white/80 focus-visible:outline-none"
+                      className="text-foreground/90 hover:text-foreground focus-visible:ring-ring flex h-8 items-center gap-1 rounded-sm px-1 text-xs font-medium focus-visible:ring-2 focus-visible:outline-none"
                       aria-label="清晰度"
                       aria-haspopup="menu"
                       aria-expanded={qualityMenuOpen}
@@ -1246,9 +1341,9 @@ function VideoStage({
                       <div
                         role="menu"
                         aria-label="清晰度"
-                        className="absolute right-0 bottom-full z-40 mb-2 w-32 rounded-md border border-white/10 bg-black/95 p-1.5 text-white shadow-2xl backdrop-blur-md"
+                        className="border-border bg-popover/95 text-popover-foreground absolute right-0 bottom-full z-40 mb-2 w-32 rounded-md border p-1.5 shadow-2xl backdrop-blur-md"
                       >
-                        <div className="px-2 py-1 text-xs text-white/60">
+                        <div className="text-muted-foreground px-2 py-1 text-xs">
                           清晰度
                         </div>
                         <div className="grid gap-1">
@@ -1260,7 +1355,7 @@ function VideoStage({
                               aria-checked={
                                 playback.streams.indexOf(stream) === streamIndex
                               }
-                              className="flex h-8 items-center justify-between rounded-md px-2 text-xs text-white/85 hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-white/80 focus-visible:outline-none"
+                              className="text-popover-foreground/85 hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring flex h-8 items-center justify-between rounded-md px-2 text-xs focus-visible:ring-2 focus-visible:outline-none"
                               onClick={() =>
                                 changeQuality(playback.streams.indexOf(stream))
                               }
@@ -1283,7 +1378,7 @@ function VideoStage({
                   <div className="relative">
                     <button
                       type="button"
-                      className="h-8 rounded-sm px-0.5 text-xs font-medium text-white/90 tabular-nums hover:text-white focus-visible:ring-2 focus-visible:ring-white/80 focus-visible:outline-none"
+                      className="text-foreground/90 hover:text-foreground focus-visible:ring-ring h-8 rounded-sm px-0.5 text-xs font-medium tabular-nums focus-visible:ring-2 focus-visible:outline-none"
                       aria-label={`播放速度 ${formatPlaybackRate(playbackRate)}`}
                       aria-haspopup="menu"
                       aria-expanded={speedMenuOpen}
@@ -1298,9 +1393,9 @@ function VideoStage({
                       <div
                         role="menu"
                         aria-label="播放速度"
-                        className="absolute right-0 bottom-full z-40 mb-2 w-40 rounded-md border border-white/10 bg-black/95 p-1.5 text-white shadow-2xl backdrop-blur-md"
+                        className="border-border bg-popover/95 text-popover-foreground absolute right-0 bottom-full z-40 mb-2 w-40 rounded-md border p-1.5 shadow-2xl backdrop-blur-md"
                       >
-                        <div className="px-2 py-1 text-xs text-white/60">
+                        <div className="text-muted-foreground px-2 py-1 text-xs">
                           播放速度
                         </div>
                         <div className="grid grid-cols-2 gap-1">
@@ -1310,7 +1405,7 @@ function VideoStage({
                               type="button"
                               role="menuitemradio"
                               aria-checked={rate === playbackRate}
-                              className="flex h-8 items-center justify-between rounded-md px-2 text-xs text-white/85 tabular-nums hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-white/80 focus-visible:outline-none"
+                              className="text-popover-foreground/85 hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring flex h-8 items-center justify-between rounded-md px-2 text-xs tabular-nums focus-visible:ring-2 focus-visible:outline-none"
                               onClick={() => changePlaybackRate(rate)}
                             >
                               <span>{formatPlaybackRate(rate)}</span>
@@ -1348,19 +1443,24 @@ function VideoStage({
                         userMuted || volume === 0 ? "取消静音" : "静音"
                       }
                       title={userMuted || volume === 0 ? "取消静音" : "静音"}
-                      onClick={() => setUserMuted((muted) => !muted)}
+                      onClick={toggleMuted}
                     >
                       {userMuted || volume === 0 ? <VolumeX /> : <Volume2 />}
                     </Button>
                     {volumePanelOpen ? (
-                      <div className="absolute right-0 bottom-full z-40 pb-2">
-                        <div className="flex items-center rounded-md border border-white/10 bg-black/90 p-2 shadow-xl">
+                      <div className="absolute bottom-full left-1/2 z-40 -translate-x-1/2 pb-2">
+                        <div className="border-border bg-popover/95 flex w-10 flex-col items-center gap-2 rounded-md border px-1 py-2.5 shadow-xl backdrop-blur-xl">
+                          <span className="text-foreground/80 text-[11px] font-medium tabular-nums">
+                            {Math.round((userMuted ? 0 : volume) * 100)}
+                          </span>
                           <Slider
                             aria-label="音量"
-                            className="flex w-24 [&_[data-slot=slider-range]]:bg-white [&_[data-slot=slider-thumb]]:size-3 [&_[data-slot=slider-thumb]]:border-white [&_[data-slot=slider-thumb]]:bg-white [&_[data-slot=slider-track]]:bg-white/25"
+                            aria-valuetext={`${Math.round((userMuted ? 0 : volume) * 100)}%`}
+                            orientation="vertical"
+                            className="[&_[data-slot=slider-thumb]]:bg-background [&_[data-slot=slider-track]]:bg-foreground/20 data-[orientation=vertical]:h-28 data-[orientation=vertical]:min-h-28 data-[orientation=vertical]:w-6 [&_[data-slot=slider-range]]:bg-[var(--player-accent)] [&_[data-slot=slider-thumb]]:size-3 [&_[data-slot=slider-thumb]]:border-[var(--player-accent)]"
                             value={[userMuted ? 0 : volume]}
                             max={1}
-                            step={0.05}
+                            step={0.02}
                             onValueChange={([value]) => {
                               setVolume(value);
                               setUserMuted(value === 0);
@@ -1440,6 +1540,7 @@ export default function VideoView() {
   const [favorite, setFavorite] = useState<FavoriteEntry | null>(null);
   const [favoriteBusy, setFavoriteBusy] = useState(false);
   const [favoriteLoading, setFavoriteLoading] = useState(true);
+  const [commentsOpen, setCommentsOpen] = useState(false);
   const [error, setError] = useState<CommandError | null>(null);
   const loadRequestIdRef = useRef(0);
   const favoriteRequestIdRef = useRef(0);
@@ -1510,6 +1611,10 @@ export default function VideoView() {
       loadRequestIdRef.current += 1;
     };
   }, [load]);
+
+  useEffect(() => {
+    setCommentsOpen(false);
+  }, [videoId]);
 
   useEffect(() => {
     if (!detail) {
@@ -1644,7 +1749,7 @@ export default function VideoView() {
       : 0;
 
   return (
-    <div className="relative h-[calc(100vh-2rem)] min-h-0 w-full overflow-hidden bg-black">
+    <div className="bg-background text-foreground relative h-[calc(100vh-2rem)] min-h-0 w-full overflow-hidden">
       {playback ? (
         <PlayerErrorBoundary key={videoId}>
           <VideoPlayer defaultPlaybackRates={PLAYBACK_RATES}>
@@ -1657,6 +1762,7 @@ export default function VideoView() {
               initialTime={initialPlaybackTime}
               isFavorite={Boolean(favorite)}
               favoriteBusy={favoriteBusy || favoriteLoading}
+              commentsOpen={commentsOpen}
               onStreamIndexChange={setStreamIndex}
               onCurrentTimeChange={setCurrentTime}
               onFavorite={() => void toggleFavorite()}
@@ -1670,11 +1776,12 @@ export default function VideoView() {
               onBack={() => navigator(backPath)}
               onRetry={() => void load()}
               onLogin={() => openLogin()}
+              onCommentsOpenChange={setCommentsOpen}
             />
           </VideoPlayer>
         </PlayerErrorBoundary>
       ) : (
-        <div className="relative h-full w-full overflow-hidden bg-black">
+        <div className="bg-background relative h-full w-full overflow-hidden">
           <PlayerPausePanel
             detail={detail}
             error={error}
@@ -1693,7 +1800,18 @@ export default function VideoView() {
             }
             onRetry={() => void load()}
             onLogin={() => openLogin()}
+            onComments={() => setCommentsOpen(true)}
+            commentsEnabled={Boolean(detail?.aid)}
           />
+          {detail?.aid ? (
+            <CommentsSidebar
+              key={detail.card.videoId}
+              aid={detail.aid}
+              open={commentsOpen}
+              onClose={() => setCommentsOpen(false)}
+              onLogin={() => openLogin()}
+            />
+          ) : null}
         </div>
       )}
     </div>

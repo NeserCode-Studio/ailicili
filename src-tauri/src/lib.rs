@@ -86,6 +86,34 @@ async fn get_video_detail(
 }
 
 #[tauri::command]
+async fn get_video_comments(
+    state: tauri::State<'_, AppState>,
+    aid: i64,
+    sort: domain::CommentSort,
+    next: Option<String>,
+) -> Result<domain::CommentPage, domain::CommandError> {
+    state
+        .bilibili
+        .video_comments(aid, sort, next.as_deref())
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn get_comment_replies(
+    state: tauri::State<'_, AppState>,
+    aid: i64,
+    root_rpid: i64,
+    page: u32,
+) -> Result<domain::CommentReplyPage, domain::CommandError> {
+    state
+        .bilibili
+        .comment_replies(aid, root_rpid, page)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
 async fn get_search_videos(
     state: tauri::State<'_, AppState>,
     keyword: String,
@@ -493,6 +521,8 @@ pub fn run() {
             get_region_videos,
             get_video_playback,
             get_video_detail,
+            get_video_comments,
+            get_comment_replies,
             get_search_videos,
             list_local_history,
             save_local_history,

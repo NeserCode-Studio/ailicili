@@ -249,8 +249,87 @@ pub struct VideoPage {
 #[serde(rename_all = "camelCase")]
 pub struct VideoDetail {
     pub card: VideoCard,
+    #[serde(default)]
+    pub aid: i64,
     pub description: String,
     pub pages: Vec<VideoPage>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum CommentSort {
+    Hot,
+    Time,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentAuthor {
+    pub id: i64,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level: Option<i64>,
+    #[serde(default)]
+    pub is_up: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentPicture {
+    pub url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentEmote {
+    pub text: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoComment {
+    pub id: i64,
+    pub author: CommentAuthor,
+    pub message: String,
+    #[serde(default)]
+    pub pictures: Vec<CommentPicture>,
+    #[serde(default)]
+    pub emotes: Vec<CommentEmote>,
+    pub created_at: i64,
+    pub like_count: i64,
+    pub reply_count: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub location: Option<String>,
+    #[serde(default)]
+    pub replies: Vec<VideoComment>,
+    #[serde(default)]
+    pub is_pinned: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentPage {
+    pub total: i64,
+    pub items: Vec<VideoComment>,
+    pub has_more: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentReplyPage {
+    pub items: Vec<VideoComment>,
+    pub has_more: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_page: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

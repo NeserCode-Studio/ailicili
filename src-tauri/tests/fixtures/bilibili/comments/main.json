@@ -1,0 +1,169 @@
+{
+  "code": 0,
+  "message": "0",
+  "data": {
+    "cursor": {
+      "all_count": 7,
+      "next": 20,
+      "is_end": false,
+      "mode": 3
+    },
+    "upper": {
+      "mid": 900
+    },
+    "top": {
+      "upper": {
+        "rpid": 100,
+        "mid": 900,
+        "like": 12.0,
+        "ctime": 1762142400,
+        "rcount": 1,
+        "member": {
+          "mid": 900,
+          "uname": "Fixture uploader",
+          "avatar": "//example.invalid/avatar-up.jpg",
+          "level_info": {
+            "current_level": 6
+          }
+        },
+        "content": {
+          "message": "Pinned fixture comment"
+        },
+        "reply_control": {
+          "location": "IP属地：上海"
+        },
+        "replies": [
+          {
+            "rpid": 110,
+            "mid": 901,
+            "like": 1,
+            "ctime": 1762142500,
+            "rcount": 0,
+            "member": {
+              "mid": 901,
+              "uname": "Reply fixture",
+              "avatar": "",
+              "level_info": {
+                "current_level": 2
+              }
+            },
+            "content": {
+              "message": "Nested reply fixture"
+            }
+          }
+        ]
+      },
+      "admin": null
+    },
+    "replies": [
+      {
+        "rpid": 100,
+        "mid": 900,
+        "like": 12.0,
+        "ctime": 1762142400,
+        "rcount": 1,
+        "member": {
+          "mid": 900,
+          "uname": "Fixture uploader",
+          "avatar": "//example.invalid/avatar-up.jpg",
+          "level_info": {
+            "current_level": 6
+          }
+        },
+        "content": {
+          "message": "Pinned fixture comment"
+        }
+      },
+      {
+        "rpid": 101,
+        "mid": 902,
+        "like": "34",
+        "ctime": 1762142600,
+        "rcount": "2",
+        "member": {
+          "mid": 902,
+          "uname": "Comment fixture",
+          "avatar": "https://example.invalid/avatar-user.jpg",
+          "level_info": {
+            "current_level": 3.0
+          }
+        },
+        "content": {
+          "message": "Second fixture comment [fixture_emote] [invalid_emote]",
+          "emote": {
+            "[fixture_emote]": {
+              "text": "[fixture_emote]",
+              "url": "//example.invalid/fixture-emote.png",
+              "type": 1
+            },
+            "[invalid_emote]": {
+              "text": "[invalid_emote]",
+              "url": "javascript:alert(1)",
+              "type": 1
+            }
+          },
+          "pictures": [
+            {
+              "img_src": "//example.invalid/comment-vertical.png",
+              "img_width": 1024,
+              "img_height": 1956,
+              "img_size": 2785.76
+            },
+            {
+              "img_src": "http://example.invalid/comment-wide.png",
+              "img_width": "1920",
+              "img_height": "1080"
+            },
+            {
+              "img_src": "javascript:alert(1)",
+              "img_width": 1,
+              "img_height": 1
+            }
+          ]
+        },
+        "replies": [
+          {
+            "rpid": 111,
+            "mid": 903,
+            "like": 0,
+            "ctime": 1762142700,
+            "rcount": 0,
+            "member": {
+              "mid": 903,
+              "uname": "Inline reply fixture",
+              "avatar": "http://example.invalid/avatar-inline.jpg"
+            },
+            "content": {
+              "message": "Inline reply fixture",
+              "pictures": [
+                {
+                  "img_src": "https://example.invalid/reply-image.png",
+                  "img_width": 640,
+                  "img_height": 360
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "rpid": 102,
+        "mid": 900,
+        "like": 5,
+        "ctime": 1762142800,
+        "rcount": 0,
+        "member": {
+          "mid": 900,
+          "uname": "Fixture uploader",
+          "avatar": "",
+          "level_info": {
+            "current_level": 6
+          }
+        },
+        "content": {
+          "message": "Uploader reply fixture"
+        }
+      }
+    ]
+  }
+}

@@ -1,6 +1,7 @@
 use crate::domain::{
+    CommentAuthor, CommentEmote, CommentPage, CommentPicture, CommentReplyPage, CommentSort,
     PagedVideos, PlaybackInfo, QualityNotice, QualityNoticeKind, QualityOption, StreamProtocol,
-    StreamSource, VideoCard, VideoDetail, VideoPage, VideoSourceKind, VideoStats,
+    StreamSource, VideoCard, VideoComment, VideoDetail, VideoPage, VideoSourceKind, VideoStats,
 };
 use crate::{
     account::{SessionCookies, SharedSession},
@@ -21,6 +22,8 @@ const API_BASE: &str = "https://api.bilibili.com";
 const PASSPORT_BASE: &str = "https://passport.bilibili.com";
 const BILIBILI_WEB_URL: &str = "https://www.bilibili.com";
 const WBI_CACHE_TTL: Duration = Duration::from_secs(12 * 60 * 60);
+const COMMENT_PAGE_SIZE: usize = 4;
+const COMMENT_REPLY_PAGE_SIZE: u32 = 20;
 
 #[derive(Debug, thiserror::Error)]
 pub enum BiliError {
@@ -202,6 +205,39 @@ impl BilibiliClient {
             .await
             .map_err(|_| BiliError::Invalid("invalid JSON response".to_string()))?;
         Ok(root)
+    }
+
+    async fn comment_api_root(
+        &self,
+        path: &str,
+        query: &[(String, String)],
+    ) -> Result<Value, BiliError> {
+        let session = self.session_snapshot()?;
+        let cookie = if session
+            .as_ref()
+            .is_some_and(SessionCookies::is_authenticated)
+        {
+            self.cookie_header(session.as_ref()).await
+        } else {
+            String::new()
+        };
+        let mut request = self
+            .http
+            .get(format!("{API_BASE}{path}"))
+            .header("referer", "https://www.bilibili.com/")
+            .header("origin", "https://www.bilibili.com")
+            .query(query);
+        if !cookie.is_empty() {
+            request = request.header("cookie", cookie);
+        }
+        let response = request.send().await?;
+        if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(BiliError::RateLimited);
+        }
+        response
+            .json()
+            .await
+            .map_err(|_| BiliError::Invalid("invalid JSON response".to_string()))
     }
 
     async fn wbi_json(&self, path: &str, query: Vec<(String, String)>) -> Result<Value, BiliError> {
@@ -689,6 +725,11 @@ impl BilibiliClient {
         let data = root
             .get("data")
             .ok_or_else(|| BiliError::Invalid("missing detail data".to_string()))?;
+        let aid = data
+            .get("aid")
+            .and_then(Value::as_i64)
+            .filter(|value| *value > 0)
+            .ok_or_else(|| BiliError::Invalid("missing detail aid".to_string()))?;
         let mut card = parse_card(data)
             .ok_or_else(|| BiliError::Invalid("invalid detail card".to_string()))?;
         card.source_kind = VideoSourceKind::Detail;
@@ -736,6 +777,7 @@ impl BilibiliClient {
 
         Ok(VideoDetail {
             card,
+            aid,
             description: data
                 .get("desc")
                 .and_then(Value::as_str)
@@ -743,6 +785,57 @@ impl BilibiliClient {
                 .to_string(),
             pages,
         })
+    }
+
+    pub async fn video_comments(
+        &self,
+        aid: i64,
+        sort: CommentSort,
+        next: Option<&str>,
+    ) -> Result<CommentPage, BiliError> {
+        if aid <= 0 {
+            return Err(BiliError::Invalid("invalid comment aid".to_string()));
+        }
+        let mut query = vec![
+            ("oid".to_string(), aid.to_string()),
+            ("type".to_string(), "1".to_string()),
+            ("mode".to_string(), comment_sort_mode(sort).to_string()),
+            ("ps".to_string(), COMMENT_PAGE_SIZE.to_string()),
+        ];
+        if let Some(next) = next.map(str::trim).filter(|value| !value.is_empty()) {
+            query.push(("next".to_string(), next.to_string()));
+        }
+        let root = self.comment_api_root("/x/v2/reply/main", &query).await?;
+        ensure_api_success(&root)?;
+        parse_comment_page(&root)
+    }
+
+    pub async fn comment_replies(
+        &self,
+        aid: i64,
+        root_rpid: i64,
+        page: u32,
+    ) -> Result<CommentReplyPage, BiliError> {
+        if aid <= 0 || root_rpid <= 0 {
+            return Err(BiliError::Invalid(
+                "invalid comment reply target".to_string(),
+            ));
+        }
+        let page = page.max(1);
+        let root = self
+            .comment_api_root(
+                "/x/v2/reply/reply",
+                &[
+                    ("oid".to_string(), aid.to_string()),
+                    ("type".to_string(), "1".to_string()),
+                    ("root".to_string(), root_rpid.to_string()),
+                    ("ps".to_string(), COMMENT_REPLY_PAGE_SIZE.to_string()),
+                    ("pn".to_string(), page.to_string()),
+                ],
+            )
+            .await?;
+        ensure_api_success(&root)?;
+        parse_comment_reply_page(&root, page)
     }
 
     pub async fn search(&self, keyword: &str, page: u32) -> Result<PagedVideos, BiliError> {
@@ -1600,6 +1693,285 @@ fn recommendation_counter(data: &Value, key: &str) -> u32 {
         .unwrap_or_default()
 }
 
+fn comment_sort_mode(sort: CommentSort) -> &'static str {
+    match sort {
+        CommentSort::Hot => "3",
+        CommentSort::Time => "2",
+    }
+}
+
+fn parse_comment_page(root: &Value) -> Result<CommentPage, BiliError> {
+    let data = root
+        .get("data")
+        .ok_or_else(|| BiliError::Invalid("missing comment data".to_string()))?;
+    let upper_mid = data
+        .pointer("/upper/mid")
+        .and_then(|value| parse_json_integer(Some(value)))
+        .unwrap_or_default();
+    let cursor = data.get("cursor");
+    let total = cursor
+        .and_then(|value| value.get("all_count"))
+        .and_then(|value| parse_json_integer(Some(value)))
+        .unwrap_or_default()
+        .max(0);
+    let next_cursor = cursor
+        .and_then(|value| value.get("next"))
+        .and_then(|value| parse_json_integer(Some(value)))
+        .filter(|value| *value > 0)
+        .map(|value| value.to_string());
+    let is_end = cursor
+        .and_then(|value| value.get("is_end"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let mut items = Vec::new();
+    for key in ["upper", "admin"] {
+        let Some(comment) = data
+            .get("top")
+            .and_then(|top| top.get(key))
+            .and_then(|value| parse_comment(value, upper_mid, true))
+        else {
+            continue;
+        };
+        items.push(comment);
+    }
+    if let Some(replies) = data.get("replies").and_then(Value::as_array) {
+        items.extend(
+            replies
+                .iter()
+                .filter_map(|value| parse_comment(value, upper_mid, false)),
+        );
+    }
+
+    let mut seen = BTreeSet::new();
+    items.retain(|comment| seen.insert(comment.id));
+    items.truncate(COMMENT_PAGE_SIZE);
+    Ok(CommentPage {
+        total,
+        items,
+        has_more: !is_end && next_cursor.is_some(),
+        next_cursor,
+    })
+}
+
+fn parse_comment_reply_page(
+    root: &Value,
+    requested_page: u32,
+) -> Result<CommentReplyPage, BiliError> {
+    let data = root
+        .get("data")
+        .ok_or_else(|| BiliError::Invalid("missing comment reply data".to_string()))?;
+    let upper_mid = data
+        .pointer("/upper/mid")
+        .and_then(|value| parse_json_integer(Some(value)))
+        .unwrap_or_default();
+    let mut items = data
+        .get("replies")
+        .and_then(Value::as_array)
+        .map(|replies| {
+            replies
+                .iter()
+                .filter_map(|value| parse_comment(value, upper_mid, false))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let mut seen = BTreeSet::new();
+    items.retain(|comment| seen.insert(comment.id));
+
+    let page_number = data
+        .pointer("/page/num")
+        .and_then(|value| parse_json_integer(Some(value)))
+        .filter(|value| *value > 0)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(requested_page.max(1));
+    let page_size = data
+        .pointer("/page/size")
+        .and_then(|value| parse_json_integer(Some(value)))
+        .filter(|value| *value > 0)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(COMMENT_REPLY_PAGE_SIZE);
+    let total = data
+        .pointer("/page/count")
+        .and_then(|value| parse_json_integer(Some(value)))
+        .filter(|value| *value > 0);
+    let has_more = total.map_or(items.len() >= page_size as usize, |total| {
+        i64::from(page_number) * i64::from(page_size) < total
+    });
+
+    Ok(CommentReplyPage {
+        items,
+        has_more,
+        next_page: has_more.then(|| page_number.saturating_add(1)),
+    })
+}
+
+fn parse_comment(value: &Value, upper_mid: i64, is_pinned: bool) -> Option<VideoComment> {
+    parse_comment_at_depth(value, upper_mid, is_pinned, 0)
+}
+
+fn parse_comment_at_depth(
+    value: &Value,
+    upper_mid: i64,
+    is_pinned: bool,
+    depth: u8,
+) -> Option<VideoComment> {
+    let id = parse_json_integer(value.get("rpid")).filter(|value| *value > 0)?;
+    let member = value.get("member")?;
+    let author_id = parse_json_integer(member.get("mid")).unwrap_or_default();
+    let name = member
+        .get("uname")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let replies = if depth < 1 {
+        value
+            .get("replies")
+            .and_then(Value::as_array)
+            .map(|replies| {
+                replies
+                    .iter()
+                    .filter_map(|reply| {
+                        parse_comment_at_depth(reply, upper_mid, false, depth.saturating_add(1))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    Some(VideoComment {
+        id,
+        author: CommentAuthor {
+            id: author_id,
+            name,
+            avatar_url: member
+                .get("avatar")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(normalize_url),
+            level: member
+                .pointer("/level_info/current_level")
+                .and_then(|value| parse_json_integer(Some(value))),
+            is_up: upper_mid > 0 && author_id == upper_mid,
+        },
+        message: value
+            .pointer("/content/message")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        pictures: parse_comment_pictures(value),
+        emotes: parse_comment_emotes(value),
+        created_at: parse_json_integer(value.get("ctime"))
+            .unwrap_or_default()
+            .max(0),
+        like_count: parse_json_integer(value.get("like"))
+            .unwrap_or_default()
+            .max(0),
+        reply_count: parse_json_integer(value.get("rcount"))
+            .unwrap_or_default()
+            .max(0),
+        location: value
+            .pointer("/reply_control/location")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+        replies,
+        is_pinned,
+    })
+}
+
+fn parse_comment_pictures(comment: &Value) -> Vec<CommentPicture> {
+    let Some(pictures) = comment
+        .pointer("/content/pictures")
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    let mut seen = BTreeSet::new();
+    pictures
+        .iter()
+        .filter_map(parse_comment_picture)
+        .filter(|picture| seen.insert(picture.url.clone()))
+        .collect()
+}
+
+fn parse_comment_picture(value: &Value) -> Option<CommentPicture> {
+    let source = value
+        .get("img_src")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let url = normalize_url(source);
+    if !url.starts_with("https://") {
+        return None;
+    }
+
+    Some(CommentPicture {
+        url,
+        width: parse_json_integer(value.get("img_width")).filter(|value| *value > 0),
+        height: parse_json_integer(value.get("img_height")).filter(|value| *value > 0),
+    })
+}
+
+fn parse_comment_emotes(comment: &Value) -> Vec<CommentEmote> {
+    let Some(emotes) = comment.pointer("/content/emote").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    let mut seen = BTreeSet::new();
+    emotes
+        .iter()
+        .filter_map(|(key, value)| {
+            let text = key.trim();
+            if text.is_empty() {
+                return None;
+            }
+            let url = value
+                .get("url")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(normalize_url)?;
+            if !url.starts_with("https://") {
+                return None;
+            }
+            if !seen.insert(text.to_string()) {
+                return None;
+            }
+            Some(CommentEmote {
+                text: text.to_string(),
+                url,
+            })
+        })
+        .collect()
+}
+
+fn parse_json_integer(value: Option<&Value>) -> Option<i64> {
+    let value = value?;
+    if let Some(number) = value.as_i64() {
+        return Some(number);
+    }
+    if let Some(number) = value.as_u64() {
+        return i64::try_from(number).ok();
+    }
+    if let Some(number) = value.as_f64() {
+        return float_to_i64(number);
+    }
+    let text = value.as_str()?.trim();
+    text.parse::<i64>()
+        .ok()
+        .or_else(|| text.parse::<f64>().ok().and_then(float_to_i64))
+}
+
+fn float_to_i64(value: f64) -> Option<i64> {
+    if value.is_finite() && value >= i64::MIN as f64 && value <= i64::MAX as f64 {
+        Some(value.trunc() as i64)
+    } else {
+        None
+    }
+}
+
 fn parse_card(value: &Value) -> Option<VideoCard> {
     parse_card_with_source(value, VideoSourceKind::Popular)
 }
@@ -1806,6 +2178,264 @@ mod tests {
         assert_eq!(search_card.title, "Search fixture");
         assert_eq!(search_card.duration, Some(365));
         assert_eq!(search_card.source_kind, VideoSourceKind::Search);
+    }
+
+    #[test]
+    fn comment_fixture_maps_pinned_replies_and_numeric_variants() {
+        let main: Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/bilibili/comments/main.json"
+        ))
+        .unwrap();
+        let page = parse_comment_page(&main).unwrap();
+
+        assert_eq!(page.total, 7);
+        assert_eq!(page.items.len(), 3);
+        assert_eq!(page.next_cursor.as_deref(), Some("20"));
+        assert!(page.has_more);
+
+        let pinned = &page.items[0];
+        assert_eq!(pinned.id, 100);
+        assert!(pinned.is_pinned);
+        assert!(pinned.author.is_up);
+        assert_eq!(pinned.like_count, 12);
+        assert_eq!(pinned.replies.len(), 1);
+        assert_eq!(
+            pinned.author.avatar_url.as_deref(),
+            Some("https://example.invalid/avatar-up.jpg")
+        );
+        assert_eq!(pinned.location.as_deref(), Some("IP属地：上海"));
+
+        let ordinary = &page.items[1];
+        assert_eq!(ordinary.like_count, 34);
+        assert_eq!(ordinary.reply_count, 2);
+        assert_eq!(ordinary.author.level, Some(3));
+        assert_eq!(ordinary.pictures.len(), 2);
+        assert_eq!(
+            ordinary.pictures[0].url,
+            "https://example.invalid/comment-vertical.png"
+        );
+        assert_eq!(ordinary.pictures[0].width, Some(1024));
+        assert_eq!(ordinary.pictures[0].height, Some(1956));
+        assert_eq!(
+            ordinary.pictures[1].url,
+            "https://example.invalid/comment-wide.png"
+        );
+        assert_eq!(ordinary.pictures[1].width, Some(1920));
+        assert_eq!(ordinary.emotes.len(), 1);
+        assert_eq!(ordinary.emotes[0].text, "[fixture_emote]");
+        assert_eq!(
+            ordinary.emotes[0].url,
+            "https://example.invalid/fixture-emote.png"
+        );
+        assert_eq!(ordinary.replies.len(), 1);
+        assert_eq!(ordinary.replies[0].pictures.len(), 1);
+        assert_eq!(
+            ordinary.replies[0].pictures[0].url,
+            "https://example.invalid/reply-image.png"
+        );
+        assert_eq!(
+            ordinary.replies[0].author.avatar_url.as_deref(),
+            Some("https://example.invalid/avatar-inline.jpg")
+        );
+        assert!(!ordinary.author.is_up);
+        assert!(page.items[2].author.is_up);
+    }
+
+    #[test]
+    fn comment_fixtures_preserve_reply_pagination() {
+        let replies: Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/bilibili/comments/replies.json"
+        ))
+        .unwrap();
+        let page = parse_comment_reply_page(&replies, 1).unwrap();
+
+        assert_eq!(page.items.len(), 2);
+        assert!(!page.has_more);
+        assert!(page.next_page.is_none());
+        assert_eq!(page.items[0].like_count, 40);
+        assert_eq!(
+            page.items[0].author.avatar_url.as_deref(),
+            Some("https://example.invalid/avatar-reply.jpg")
+        );
+        assert!(page.items[1].author.is_up);
+    }
+
+    #[test]
+    fn comment_reply_pages_advance_until_the_reported_total() {
+        let first_page = json!({
+            "data": {
+                "page": {
+                    "count": 25,
+                    "num": 1,
+                    "size": 10
+                },
+                "replies": []
+            }
+        });
+        let page = parse_comment_reply_page(&first_page, 1).unwrap();
+
+        assert!(page.has_more);
+        assert_eq!(page.next_page, Some(2));
+
+        let last_page = json!({
+            "data": {
+                "page": {
+                    "count": 25,
+                    "num": 3,
+                    "size": 10
+                },
+                "replies": []
+            }
+        });
+        let page = parse_comment_reply_page(&last_page, 3).unwrap();
+
+        assert!(!page.has_more);
+        assert!(page.next_page.is_none());
+    }
+
+    #[test]
+    fn comment_reply_pages_continue_when_page_metadata_is_missing() {
+        let replies = (1..=20)
+            .map(|id| {
+                json!({
+                    "rpid": id,
+                    "member": {
+                        "mid": 1000 + id,
+                        "uname": format!("Reply {id}")
+                    },
+                    "content": {
+                        "message": format!("Reply body {id}")
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        let root = json!({
+            "data": {
+                "replies": replies
+            }
+        });
+        let page = parse_comment_reply_page(&root, 1).unwrap();
+
+        assert_eq!(page.items.len(), COMMENT_REPLY_PAGE_SIZE as usize);
+        assert!(page.has_more);
+        assert_eq!(page.next_page, Some(2));
+    }
+
+    #[test]
+    fn comment_reply_first_page_includes_more_than_ten_items() {
+        let replies = (1..=12)
+            .map(|id| {
+                json!({
+                    "rpid": id,
+                    "member": {
+                        "mid": 1000 + id,
+                        "uname": format!("Reply {id}")
+                    },
+                    "content": {
+                        "message": format!("Reply body {id}")
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        let root = json!({
+            "data": {
+                "page": {
+                    "count": 12,
+                    "num": 1,
+                    "size": 20
+                },
+                "replies": replies
+            }
+        });
+        let page = parse_comment_reply_page(&root, 1).unwrap();
+
+        assert_eq!(page.items.len(), 12);
+        assert!(!page.has_more);
+        assert!(page.next_page.is_none());
+    }
+
+    #[test]
+    fn comments_always_serialize_an_empty_replies_array() {
+        let comment = parse_comment(
+            &json!({
+                "rpid": 99,
+                "member": {
+                    "mid": 1000,
+                    "uname": "No replies"
+                },
+                "content": {
+                    "message": "Nothing below this comment"
+                },
+                "rcount": 0
+            }),
+            0,
+            false,
+        )
+        .unwrap();
+        let value = serde_json::to_value(comment).unwrap();
+
+        assert_eq!(value.get("replies"), Some(&json!([])));
+        assert_eq!(value.get("pictures"), Some(&json!([])));
+        assert_eq!(value.get("emotes"), Some(&json!([])));
+    }
+
+    #[test]
+    fn comment_cursor_end_and_sort_contract_are_stable() {
+        let root = json!({
+            "data": {
+                "cursor": {
+                    "all_count": 0,
+                    "next": 0,
+                    "is_end": true
+                },
+                "replies": []
+            }
+        });
+        let page = parse_comment_page(&root).unwrap();
+
+        assert!(page.items.is_empty());
+        assert!(!page.has_more);
+        assert!(page.next_cursor.is_none());
+        assert_eq!(comment_sort_mode(CommentSort::Hot), "3");
+        assert_eq!(comment_sort_mode(CommentSort::Time), "2");
+    }
+
+    #[test]
+    fn comment_pages_render_at_most_four_top_level_items() {
+        let replies = (1..=6)
+            .map(|id| {
+                json!({
+                    "rpid": id,
+                    "mid": 1000 + id,
+                    "like": 0,
+                    "ctime": 1762142400,
+                    "rcount": 0,
+                    "member": {
+                        "mid": 1000 + id,
+                        "uname": format!("User {id}")
+                    },
+                    "content": {
+                        "message": format!("Comment {id}")
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        let root = json!({
+            "data": {
+                "cursor": {
+                    "all_count": 6,
+                    "next": 4,
+                    "is_end": false
+                },
+                "replies": replies
+            }
+        });
+        let page = parse_comment_page(&root).unwrap();
+
+        assert_eq!(COMMENT_PAGE_SIZE, 4);
+        assert_eq!(COMMENT_REPLY_PAGE_SIZE, 20);
+        assert_eq!(page.items.len(), 4);
+        assert!(page.has_more);
     }
 
     #[test]

@@ -181,7 +181,10 @@ function App() {
                     <Titlebar />
                     <CommandDialog />
 
-                    <div id="container" className="app-body">
+                    <div
+                      id="container"
+                      className="app-body isolate overflow-hidden"
+                    >
                       <ScrollArea className="h-[calc(100vh-2rem)] w-full">
                         <Suspense fallback={null}>
                           <Routes>
