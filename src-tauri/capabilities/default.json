@@ -37,6 +37,15 @@
         },
         {
           "url": "https://*.douyinpic.com/**"
+        },
+        {
+          "url": "https://huyaimg.msstatic.com/**"
+        },
+        {
+          "url": "https://anchorpost.msstatic.com/**"
+        },
+        {
+          "url": "https://live-cover.msstatic.com/**"
         }
       ],
       "deny": [

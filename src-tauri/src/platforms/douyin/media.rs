@@ -8,7 +8,7 @@ use reqwest::{
 use super::DouyinError;
 
 const MAX_MEDIA_REDIRECTS: usize = 4;
-const ALLOWED_MEDIA_HOST_SUFFIXES: [&str; 13] = [
+const ALLOWED_MEDIA_HOST_SUFFIXES: [&str; 14] = [
     "100ycdn.com",
     "ctcdn.com.cn",
     "douyin.com",
@@ -17,6 +17,7 @@ const ALLOWED_MEDIA_HOST_SUFFIXES: [&str; 13] = [
     "bytefcdn.com",
     "bytefcdnrd.com",
     "livehwc4.com",
+    "ksyungslb.com",
     "mediaainet.com",
     "pstatp.com",
     "smtcdns.net",
@@ -156,6 +157,7 @@ mod tests {
             "https://fixture.100ycdn.com/live/segment.ts",
             "https://fixture.ctcdn.com.cn/live/segment.ts",
             "https://fixture.livehwc4.com/live/segment.ts",
+            "https://fixture.ksyungslb.com/live/stream.flv",
             "https://fixture.mediaainet.com/live/stream.flv",
             "https://fixture.v.smtcdns.net/live/stream.flv",
             "https://8.8.8.8/live/segment.ts",
@@ -182,6 +184,8 @@ mod tests {
             "https://100ycdn.com.evil.example/live/segment.ts",
             "https://evillivehwc4.com/live/segment.ts",
             "https://livehwc4.com.evil.example/live/segment.ts",
+            "https://evilksyungslb.com/live/segment.ts",
+            "https://ksyungslb.com.evil.example/live/segment.ts",
         ] {
             assert!(validate_media_url(value).is_err(), "{value}");
         }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   ArrowLeft,
+  Hash,
   Lock,
   Loader2,
   Radio,
@@ -98,6 +99,7 @@ export default function Live() {
   const [selectedPlatformId, setSelectedPlatformId] =
     useState<PlatformId | null>(getSelectedLivePlatformId);
   const [keyword, setKeyword] = useState("");
+  const [roomIdInput, setRoomIdInput] = useState("");
   const [query, setQuery] = useState("");
   const [discovery, setDiscovery] = useState<LiveDiscovery | null>(null);
   const [items, setItems] = useState<LiveRoomCardModel[]>([]);
@@ -143,6 +145,7 @@ export default function Live() {
       setSelectedPlatformId(fallbackPlatformId);
       setSelectedLivePlatformId(fallbackPlatformId);
       setKeyword("");
+      setRoomIdInput("");
       setQuery("");
       setMode("discovery");
     }
@@ -321,6 +324,12 @@ export default function Live() {
     setReloadToken((value) => value + 1);
   };
 
+  const openDirectRoom = () => {
+    const roomId = roomIdInput.trim();
+    if (!selectedPlatformId || !roomId) return;
+    navigator(liveRoomPath(selectedPlatformId, roomId));
+  };
+
   const clearSearch = () => {
     setKeyword("");
     setQuery("");
@@ -338,6 +347,7 @@ export default function Live() {
     setSelectedLivePlatformId(platformId);
     setSelectedPlatformId(platformId);
     setKeyword("");
+    setRoomIdInput("");
     setQuery("");
     setMode("discovery");
   };
@@ -393,7 +403,11 @@ export default function Live() {
             className="ml-auto flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2"
             onSubmit={(event) => {
               event.preventDefault();
-              submitSearch();
+              if (searchSupported) {
+                submitSearch();
+              } else {
+                openDirectRoom();
+              }
             }}
           >
             {searchSupported ? (
@@ -426,17 +440,23 @@ export default function Live() {
             ) : (
               <>
                 <div className="relative min-w-40 flex-1 sm:max-w-80">
-                  <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
+                  <Hash className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
                   <Input
-                    value={keyword}
-                    placeholder={t("Live.search.placeholder")}
+                    value={roomIdInput}
+                    onChange={(event) => setRoomIdInput(event.target.value)}
+                    placeholder={t("Live.direct.placeholder")}
                     className="w-full pl-9"
-                    disabled
+                    autoComplete="off"
                   />
                 </div>
-                <Button type="button" variant="outline" size="sm" disabled>
-                  <Search />
-                  {t("Live.search")}
+                <Button
+                  type="submit"
+                  variant="outline"
+                  size="sm"
+                  disabled={!selectedPlatformId || !roomIdInput.trim()}
+                >
+                  <Hash />
+                  {t("Live.direct")}
                 </Button>
                 {selectedPlatformId ? (
                   <span className="text-muted-xs inline-flex items-center gap-1.5">

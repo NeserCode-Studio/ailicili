@@ -1,8 +1,11 @@
 use std::{
+    collections::HashMap,
     future::Future,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
+use log::info;
 use reqwest::{
     header::{HeaderMap, ACCEPT, COOKIE, REFERER},
     Response,
@@ -23,6 +26,8 @@ const LIVE_CATEGORY_URL: &str = "https://live.douyin.com/category/1";
 const LIVE_ENTER_API: &str = "https://live.douyin.com/webcast/room/web/enter/";
 const TTWID_REGISTER_URL: &str = "https://ttwid.bytedance.com/ttwid/union/register/";
 const TTWID_CACHE_TTL: Duration = Duration::from_secs(2 * 60 * 60);
+const ENTER_CACHE_TTL: Duration = Duration::from_secs(2);
+const DISCOVERY_FALLBACK_TTL: Duration = Duration::from_secs(2 * 60);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const MEDIA_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_JSON_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
@@ -34,6 +39,9 @@ pub(crate) struct DouyinClient {
     http: reqwest::Client,
     media_http: reqwest::Client,
     ttwid: TtwidCache,
+    enter: Mutex<HashMap<String, CachedEnter>>,
+    enter_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    discovery: Mutex<Option<CachedDiscovery>>,
 }
 
 impl DouyinClient {
@@ -52,6 +60,9 @@ impl DouyinClient {
             http,
             media_http,
             ttwid: TtwidCache::default(),
+            enter: Mutex::new(HashMap::new()),
+            enter_locks: Mutex::new(HashMap::new()),
+            discovery: Mutex::new(None),
         })
     }
 
@@ -60,20 +71,40 @@ impl DouyinClient {
             .get_ttwid_page(LIVE_CATEGORY_URL, "text/html,application/xhtml+xml")
             .await;
         if let Ok(html) = category {
-            if let Ok(discovery) = mapper::parse_discovery(&html) {
-                return Ok(discovery);
+            if let Ok(snapshot) = mapper::parse_discovery_snapshot(&html) {
+                self.store_discovery(&snapshot).await;
+                return Ok(snapshot.discovery);
             }
         }
 
         let homepage = self
             .get_ttwid_page(LIVE_HOME_URL, "text/html,application/xhtml+xml")
             .await?;
-        mapper::parse_discovery(&homepage)
+        let snapshot = mapper::parse_discovery_snapshot(&homepage)?;
+        self.store_discovery(&snapshot).await;
+        Ok(snapshot.discovery)
     }
 
     pub(crate) async fn room_info(&self, room_id: &str) -> Result<LiveRoomInfo, DouyinError> {
         let web_rid = normalize_web_rid(room_id)?;
-        let root = self.enter_room(&web_rid).await?;
+        let root = match self.enter_room(&web_rid).await {
+            Ok(root) => root,
+            Err(error) if discovery_fallback_applies(&error) => {
+                let Some(discovered) = self.discovered_room(&web_rid).await else {
+                    return Err(error);
+                };
+                info!(
+                    target: "Douyin/Live",
+                    "using recent discovery room info fallback room={} enter_error={error}",
+                    web_rid,
+                );
+                return Ok(mapper::parse_discovered_room_info(
+                    &discovered.card,
+                    &discovered.room,
+                ));
+            }
+            Err(error) => return Err(error),
+        };
         mapper::parse_room_info(&root, &web_rid)
     }
 
@@ -83,7 +114,21 @@ impl DouyinClient {
         quality: i64,
     ) -> Result<LivePlaybackInfo, DouyinError> {
         let web_rid = normalize_web_rid(room_id)?;
-        let root = self.enter_room(&web_rid).await?;
+        let root = match self.enter_room(&web_rid).await {
+            Ok(root) => root,
+            Err(error) if discovery_fallback_applies(&error) => {
+                let Some(discovered) = self.discovered_room(&web_rid).await else {
+                    return Err(error);
+                };
+                info!(
+                    target: "Douyin/Live",
+                    "using recent discovery playback fallback room={} enter_error={error}",
+                    web_rid,
+                );
+                return mapper::parse_discovered_playback(&discovered.room, &web_rid, quality);
+            }
+            Err(error) => return Err(error),
+        };
         mapper::parse_playback(&root, &web_rid, quality)
     }
 
@@ -97,6 +142,26 @@ impl DouyinClient {
     }
 
     async fn enter_room(&self, web_rid: &str) -> Result<Value, DouyinError> {
+        if let Some(result) = self.cached_enter(web_rid).await {
+            return result;
+        }
+
+        let room_lock = self.enter_room_lock(web_rid).await;
+        let guard = room_lock.lock().await;
+        if let Some(result) = self.cached_enter(web_rid).await {
+            drop(guard);
+            self.release_enter_room_lock(web_rid, &room_lock).await;
+            return result;
+        }
+
+        let result = self.fetch_enter_room(web_rid).await;
+        drop(guard);
+        self.store_enter_result(web_rid, &result).await;
+        self.release_enter_room_lock(web_rid, &room_lock).await;
+        result
+    }
+
+    async fn fetch_enter_room(&self, web_rid: &str) -> Result<Value, DouyinError> {
         let ttwid = self.acquire_ttwid().await?;
         match self.enter_room_once(web_rid, &ttwid).await {
             Ok(root) => Ok(root),
@@ -107,6 +172,70 @@ impl DouyinClient {
             }
             Err(error) => Err(error),
         }
+    }
+
+    async fn cached_enter(&self, web_rid: &str) -> Option<Result<Value, DouyinError>> {
+        let mut cached = self.enter.lock().await;
+        let now = Instant::now();
+        cached.retain(|_, entry| now < entry.expires_at);
+        cached.get(web_rid).map(|entry| entry.outcome.to_result())
+    }
+
+    async fn store_enter_result(&self, web_rid: &str, result: &Result<Value, DouyinError>) {
+        let outcome = match result {
+            Ok(root) => CachedEnterOutcome::Success(root.clone()),
+            Err(error) => {
+                let Some(error) = CachedEnterFailure::from_error(error) else {
+                    return;
+                };
+                CachedEnterOutcome::Failure(error)
+            }
+        };
+        self.enter.lock().await.insert(
+            web_rid.to_string(),
+            CachedEnter {
+                outcome,
+                expires_at: Instant::now() + ENTER_CACHE_TTL,
+            },
+        );
+    }
+
+    async fn enter_room_lock(&self, web_rid: &str) -> Arc<Mutex<()>> {
+        let mut locks = self.enter_locks.lock().await;
+        locks
+            .entry(web_rid.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
+
+    async fn release_enter_room_lock(&self, web_rid: &str, room_lock: &Arc<Mutex<()>>) {
+        let mut locks = self.enter_locks.lock().await;
+        let can_remove = Arc::strong_count(room_lock) == 2
+            && locks
+                .get(web_rid)
+                .is_some_and(|current| Arc::ptr_eq(current, room_lock));
+        if can_remove {
+            locks.remove(web_rid);
+        }
+    }
+
+    async fn store_discovery(&self, snapshot: &mapper::DiscoverySnapshot) {
+        *self.discovery.lock().await = Some(CachedDiscovery {
+            rooms: snapshot.rooms.clone(),
+            expires_at: Instant::now() + DISCOVERY_FALLBACK_TTL,
+        });
+    }
+
+    async fn discovered_room(&self, web_rid: &str) -> Option<mapper::DiscoveredRoom> {
+        let mut cached = self.discovery.lock().await;
+        let now = Instant::now();
+        if cached.as_ref().is_some_and(|cache| now >= cache.expires_at) {
+            *cached = None;
+            return None;
+        }
+        cached
+            .as_ref()
+            .and_then(|cache| cache.rooms.get(web_rid).cloned())
     }
 
     async fn enter_room_once(&self, web_rid: &str, ttwid: &str) -> Result<Value, DouyinError> {
@@ -204,6 +333,56 @@ struct CachedTtwid {
     expires_at: Instant,
 }
 
+struct CachedEnter {
+    outcome: CachedEnterOutcome,
+    expires_at: Instant,
+}
+
+enum CachedEnterOutcome {
+    Success(Value),
+    Failure(CachedEnterFailure),
+}
+
+impl CachedEnterOutcome {
+    fn to_result(&self) -> Result<Value, DouyinError> {
+        match self {
+            Self::Success(root) => Ok(root.clone()),
+            Self::Failure(error) => Err(error.to_error()),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum CachedEnterFailure {
+    EmptyResponse,
+    RoomNotFound,
+    Api(i64),
+}
+
+impl CachedEnterFailure {
+    fn from_error(error: &DouyinError) -> Option<Self> {
+        match error {
+            DouyinError::EmptyResponse => Some(Self::EmptyResponse),
+            DouyinError::RoomNotFound => Some(Self::RoomNotFound),
+            DouyinError::Api(30003) => Some(Self::Api(30003)),
+            _ => None,
+        }
+    }
+
+    fn to_error(self) -> DouyinError {
+        match self {
+            Self::EmptyResponse => DouyinError::EmptyResponse,
+            Self::RoomNotFound => DouyinError::RoomNotFound,
+            Self::Api(code) => DouyinError::Api(code),
+        }
+    }
+}
+
+struct CachedDiscovery {
+    rooms: HashMap<String, mapper::DiscoveredRoom>,
+    expires_at: Instant,
+}
+
 impl TtwidCache {
     async fn get_or_fetch<F, Fut>(&self, now: Instant, fetch: F) -> Result<String, DouyinError>
     where
@@ -269,6 +448,13 @@ fn validate_enter_response(root: &Value) -> Result<(), DouyinError> {
         return Err(DouyinError::RoomNotFound);
     }
     Ok(())
+}
+
+fn discovery_fallback_applies(error: &DouyinError) -> bool {
+    matches!(
+        error,
+        DouyinError::EmptyResponse | DouyinError::RoomNotFound | DouyinError::Api(30003)
+    )
 }
 
 fn normalize_web_rid(value: &str) -> Result<String, DouyinError> {
@@ -469,6 +655,24 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn discovery_fallback_only_covers_transient_enter_failures() {
+        for error in [
+            DouyinError::EmptyResponse,
+            DouyinError::RoomNotFound,
+            DouyinError::Api(30003),
+        ] {
+            assert!(discovery_fallback_applies(&error), "{error}");
+        }
+        for error in [
+            DouyinError::ContentUnavailable,
+            DouyinError::RiskControl,
+            DouyinError::Http(503),
+        ] {
+            assert!(!discovery_fallback_applies(&error), "{error}");
+        }
+    }
+
     #[tokio::test]
     async fn ttwid_cache_coalesces_concurrent_fetches() {
         let cache = TtwidCache::default();
@@ -540,6 +744,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn enter_cache_keeps_rooms_independent() {
+        let client = DouyinClient::new().unwrap();
+        let first = json!({ "data": { "data": [{ "id_str": "first" }] } });
+        let second = json!({ "data": { "data": [{ "id_str": "second" }] } });
+
+        client
+            .store_enter_result("100001", &Ok(first.clone()))
+            .await;
+        client
+            .store_enter_result("100002", &Ok(second.clone()))
+            .await;
+
+        assert_eq!(client.cached_enter("100001").await.unwrap().unwrap(), first);
+        assert_eq!(
+            client.cached_enter("100002").await.unwrap().unwrap(),
+            second
+        );
+        assert!(client.cached_enter("100003").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn enter_cache_shares_discovery_fallback_failures() {
+        let client = DouyinClient::new().unwrap();
+        client
+            .store_enter_result("100001", &Err(DouyinError::Api(30003)))
+            .await;
+        client
+            .store_enter_result("100002", &Err(DouyinError::Api(500)))
+            .await;
+
+        assert!(matches!(
+            client.cached_enter("100001").await.unwrap(),
+            Err(DouyinError::Api(30003))
+        ));
+        assert!(client.cached_enter("100002").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn enter_room_locks_are_shared_per_room_and_released() {
+        let client = DouyinClient::new().unwrap();
+        let first = client.enter_room_lock("100001").await;
+        let same = client.enter_room_lock("100001").await;
+        let other = client.enter_room_lock("100002").await;
+
+        assert!(Arc::ptr_eq(&first, &same));
+        assert!(!Arc::ptr_eq(&first, &other));
+
+        drop(same);
+        client.release_enter_room_lock("100001", &first).await;
+        assert!(!client.enter_locks.lock().await.contains_key("100001"));
+
+        client.release_enter_room_lock("100002", &other).await;
+        assert!(client.enter_locks.lock().await.is_empty());
+    }
+
+    #[tokio::test]
     #[ignore = "requires live Douyin network access and a currently live public room"]
     async fn live_discovery_and_room_smoke() {
         let client = DouyinClient::new().expect("HTTP client");
@@ -548,34 +808,64 @@ mod tests {
             .sections
             .iter()
             .flat_map(|section| section.rooms.iter())
-            .take(5)
+            .take(20)
             .collect::<Vec<_>>();
-        assert!(!rooms.is_empty());
+        let sample_count = rooms.len();
+        assert!(
+            rooms.len() >= 10,
+            "Douyin discovery should provide a representative live sample"
+        );
         assert!(
             rooms.iter().any(|room| room.cover_url.is_some()),
             "live discovery did not expose any cover URLs"
         );
 
-        let mut checked = 0;
-        for room in rooms {
-            let info = match client.room_info(&room.room_id).await {
-                Ok(info) => info,
+        let mut info_ok = 0;
+        let mut playback_ok = 0;
+        let mut live_rooms = 0;
+        let mut hls_manifest_ok = 0;
+        let mut hls_media_ok = 0;
+        let mut flv_ok = 0;
+        let mut end_to_end = 0;
+        for room in &rooms {
+            let (info, playback) = tokio::join!(
+                client.room_info(&room.room_id),
+                client.room_playback(&room.room_id, 10_000)
+            );
+            let info = match info {
+                Ok(info) => {
+                    info_ok += 1;
+                    info
+                }
                 Err(error) => {
-                    eprintln!("room {} info failed: {error}", room.room_id);
+                    eprintln!(
+                        "sample room={} stage=info result=fail error={error}",
+                        room.room_id
+                    );
                     continue;
                 }
             };
-            let playback = match client.room_playback(&room.room_id, 10_000).await {
-                Ok(playback) => playback,
+            let playback = match playback {
+                Ok(playback) => {
+                    playback_ok += 1;
+                    playback
+                }
                 Err(error) => {
-                    eprintln!("room {} playback failed: {error}", room.room_id);
+                    eprintln!(
+                        "sample room={} stage=playback result=fail error={error}",
+                        room.room_id
+                    );
                     continue;
                 }
             };
             if info.live_status != crate::domain::LiveStatus::Live {
-                eprintln!("room {} is not live: {:?}", room.room_id, info.live_status);
+                eprintln!(
+                    "sample room={} stage=status result=skip status={:?}",
+                    room.room_id, info.live_status
+                );
                 continue;
             }
+            live_rooms += 1;
             let hls = playback
                 .streams
                 .iter()
@@ -586,7 +876,7 @@ mod tests {
                 .find(|stream| stream.protocol == crate::domain::StreamProtocol::Flv);
             let (Some(hls), Some(flv)) = (hls, flv) else {
                 eprintln!(
-                    "room {} is missing HLS or FLV; protocols={:?}",
+                    "sample room={} stage=sources result=fail protocols={:?}",
                     room.room_id,
                     playback
                         .streams
@@ -602,48 +892,59 @@ mod tests {
                 Ok(response) if response.status().is_success() => response,
                 Ok(response) => {
                     eprintln!(
-                        "room {} HLS returned HTTP {}",
+                        "sample room={} stage=hls-manifest result=fail http={}",
                         room.room_id,
                         response.status()
                     );
                     continue;
                 }
                 Err(error) => {
-                    eprintln!("room {} HLS request failed: {error}", room.room_id);
+                    eprintln!(
+                        "sample room={} stage=hls-manifest result=fail error={error}",
+                        room.room_id
+                    );
                     continue;
                 }
             };
             let hls_body = hls_response.bytes().await.expect("HLS manifest body");
             if !hls_body.starts_with(b"#EXTM3U") {
                 eprintln!(
-                    "room {} HLS body was not a manifest ({} bytes)",
+                    "sample room={} stage=hls-manifest result=fail bytes={}",
                     room.room_id,
                     hls_body.len()
                 );
                 continue;
             }
+            hls_manifest_ok += 1;
             let (media_content_type, media_length) =
                 match fetch_hls_media_segment(&client, &hls.url, hls_body.to_vec(), &empty_headers)
                     .await
                 {
                     Ok(media) => media,
                     Err(error) => {
-                        eprintln!("room {} HLS media validation failed: {error}", room.room_id);
+                        eprintln!(
+                            "sample room={} stage=hls-media result=fail error={error}",
+                            room.room_id
+                        );
                         continue;
                     }
                 };
+            hls_media_ok += 1;
             let flv_response = match client.media_response(&flv.url, &empty_headers).await {
                 Ok(response) if response.status().is_success() => response,
                 Ok(response) => {
                     eprintln!(
-                        "room {} FLV returned HTTP {}",
+                        "sample room={} stage=flv result=fail http={}",
                         room.room_id,
                         response.status()
                     );
                     continue;
                 }
                 Err(error) => {
-                    eprintln!("room {} FLV request failed: {error}", room.room_id);
+                    eprintln!(
+                        "sample room={} stage=flv result=fail error={error}",
+                        room.room_id
+                    );
                     continue;
                 }
             };
@@ -652,18 +953,26 @@ mod tests {
                 .get(reqwest::header::CONTENT_TYPE)
                 .and_then(|value| value.to_str().ok());
             if flv_content_type.is_some_and(|value| value.contains("video/x-flv")) {
+                flv_ok += 1;
+                end_to_end += 1;
                 eprintln!(
-                    "room {} HLS media passed content_type={media_content_type:?} bytes={media_length}",
+                    "sample room={} stage=end-to-end result=pass hls_type={media_content_type:?} hls_bytes={media_length}",
                     room.room_id
                 );
-                checked += 1;
-                break;
+            } else {
+                eprintln!(
+                    "sample room={} stage=flv result=fail content_type={flv_content_type:?}",
+                    room.room_id
+                );
             }
-            eprintln!(
-                "room {} FLV content type was {:?}",
-                room.room_id, flv_content_type
-            );
         }
-        assert!(checked > 0, "no live room yielded HLS and FLV sources");
+        eprintln!(
+            "sample summary rooms={} info_ok={info_ok} playback_ok={playback_ok} live={live_rooms} hls_manifest_ok={hls_manifest_ok} hls_media_ok={hls_media_ok} flv_ok={flv_ok} end_to_end={end_to_end}",
+            sample_count
+        );
+        assert!(
+            end_to_end > 0,
+            "no live room yielded a complete HLS and FLV media chain"
+        );
     }
 }

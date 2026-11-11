@@ -938,12 +938,14 @@ export default function LiveStreamPlayer({
       const token = attemptToken;
       sourceSwitchingRef.current = true;
       destroySource();
+      sourceReachedReady = false;
       setActiveProtocol(candidate.protocol);
       setPlaying(false);
       setReady(false);
       setLoading(true);
       setPlayerError(null);
 
+      let sourceReadyAnnounced = false;
       const sourceMetadata = () => {
         if (cancelled || token !== attemptToken) return;
         if (playRequestedRef.current && video.paused) {
@@ -951,12 +953,21 @@ export default function LiveStreamPlayer({
         }
       };
       const sourceReady = () => {
-        if (cancelled || token !== attemptToken) return;
+        if (cancelled || token !== attemptToken || sourceReadyAnnounced) {
+          return;
+        }
+        sourceReadyAnnounced = true;
         clearAttemptTimeout();
         sourceSwitchingRef.current = false;
         sourceReachedReady = true;
         lastProgressAtRef.current = performance.now();
         setReady(true);
+        log.info("live source ready", {
+          roomId,
+          protocol: candidate.protocol,
+          sourceIndex: index,
+          sourceHost: sourceHost(candidate.url),
+        });
         if (playRequestedRef.current && video.paused) {
           playVideo();
         }
@@ -1026,8 +1037,14 @@ export default function LiveStreamPlayer({
                 sourceHost: sourceHost(candidate.url),
                 type: data.type,
                 details: data.details,
+                errorName: playbackErrorName(data.error),
+                errorMessage: playbackErrorMessage(data.error),
+                reason: data.reason,
                 responseCode: data.response?.code,
                 responseText: data.response?.text,
+                responseUrlHost: data.response?.url
+                  ? sourceHost(data.response.url)
+                  : undefined,
               });
               nextSource(data.type);
             });

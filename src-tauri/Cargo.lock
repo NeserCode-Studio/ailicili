@@ -104,6 +104,7 @@ dependencies = [
  "chrono",
  "dirs 5.0.1",
  "env_logger",
+ "flate2",
  "keyring",
  "log",
  "md-5",

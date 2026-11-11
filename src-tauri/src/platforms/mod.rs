@@ -13,6 +13,7 @@ use crate::{
 
 pub(crate) mod bilibili;
 pub(crate) mod douyin;
+pub(crate) mod huya;
 
 pub(crate) type PlatformFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, PlatformError>> + Send + 'a>>;
@@ -235,7 +236,11 @@ struct PlatformRegistryInner {
 
 impl PlatformRegistry {
     pub(crate) fn register_builtins(client: BilibiliClient) -> Result<Self, String> {
-        Self::new(vec![bilibili::register(client)?, douyin::register()?])
+        Self::new(vec![
+            bilibili::register(client)?,
+            douyin::register()?,
+            huya::register()?,
+        ])
     }
 
     fn new(platforms: Vec<RegisteredPlatform>) -> Result<Self, String> {

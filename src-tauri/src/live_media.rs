@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use log::warn;
+use log::{info, warn};
 use reqwest::{
     header::{HeaderMap, HeaderName, HeaderValue},
     Response,
@@ -55,13 +55,48 @@ pub async fn open_live_media_stream(
     let request_headers = media_request_headers(headers.as_ref())?;
     let platform_id = crate::requested_platform_id(platform_id)?;
     let adapter = state.platforms.live_adapter(&platform_id)?;
-    let response = tokio::time::timeout(
+    let (scheme, request_host, request_query_keys) = media_url_diagnostic(&url);
+    info!(
+        target: "LiveMedia",
+        "live media request platform={} scheme={} host={} url_length={} query_keys={request_query_keys:?}",
+        platform_id,
+        scheme,
+        request_host,
+        url.len(),
+    );
+    let response = match tokio::time::timeout(
         LIVE_MEDIA_HEADER_TIMEOUT,
         adapter.media_response(&url, &request_headers),
     )
     .await
-    .map_err(|_| media_error("直播媒体请求超时。"))?
-    .map_err(CommandError::from)?;
+    {
+        Ok(Ok(response)) => response,
+        Ok(Err(error)) => {
+            let error = CommandError::from(error);
+            warn!(
+                target: "LiveMedia",
+                "live media request rejected platform={} scheme={} host={} code={} message={} action={:?}",
+                platform_id,
+                scheme,
+                request_host,
+                error.code,
+                error.message,
+                error.action,
+            );
+            return Err(error);
+        }
+        Err(_) => {
+            warn!(
+                target: "LiveMedia",
+                "live media request timed out platform={} scheme={} host={} url_length={}",
+                platform_id,
+                scheme,
+                request_host,
+                url.len(),
+            );
+            return Err(media_error("直播媒体请求超时。"));
+        }
+    };
 
     let status = response.status();
     let status_text = status.canonical_reason().unwrap_or_default().to_string();
@@ -229,6 +264,21 @@ fn media_request_headers(
         request_headers.insert(header_name, header_value);
     }
     Ok(request_headers)
+}
+
+fn media_url_diagnostic(value: &str) -> (String, String, Vec<String>) {
+    let Ok(url) = reqwest::Url::parse(value) else {
+        return ("<invalid>".to_string(), "<invalid>".to_string(), Vec::new());
+    };
+    let scheme = url.scheme().to_string();
+    let host = url.host_str().unwrap_or("<missing>").to_string();
+    let mut query_keys = url
+        .query_pairs()
+        .map(|(key, _)| key.into_owned())
+        .collect::<Vec<_>>();
+    query_keys.sort();
+    query_keys.dedup();
+    (scheme, host, query_keys)
 }
 
 fn response_headers(headers: &HeaderMap) -> BTreeMap<String, String> {

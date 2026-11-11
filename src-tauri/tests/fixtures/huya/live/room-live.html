@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+  <body>
+    <script>
+      var TT_ROOM_DATA = {
+        "type": "MATCH",
+        "state": "ON",
+        "isOn": true,
+        "isOff": false,
+        "isReplay": false,
+        "id": "1199652774074",
+        "gameFullName": "CS2",
+        "startTime": 1794360924,
+        "totalCount": 1767456,
+        "isBluRay": 1,
+        "screenshot": "https://anchorpost.msstatic.com/fixture-room-cover.jpg",
+        "introduction": "Fixture introduction",
+        "profileRoom": 321123
+      };
+      var TT_PROFILE_INFO = {
+        "nick": "Fixture anchor",
+        "avatar": "https://huyaimg.msstatic.com/fixture-room-avatar.jpg",
+        "profileRoom": 321123
+      };
+      var hyPlayerConfig = {
+        html5: 1,
+        stream: {
+          "data": [
+            {
+              "gameLiveInfo": {
+                "uid": "1199652774074",
+                "bitRate": 30000,
+                "nick": "Fixture anchor",
+                "avatar180": "https://huyaimg.msstatic.com/fixture-room-avatar.jpg",
+                "introduction": "Fixture introduction",
+                "profileRoom": 321123
+              },
+              "gameStreamInfoList": [
+                {
+                  "sCdnType": "AL",
+                  "sStreamName": "fixture-stream",
+                  "sFlvUrl": "http://al.flv.huya.com/src",
+                  "sFlvUrlSuffix": "flv",
+                  "sFlvAntiCode": "token=fixture-al",
+                  "sHlsUrl": "http://al.hls.huya.com/src",
+                  "sHlsUrlSuffix": "m3u8",
+                  "sHlsAntiCode": "token=fixture-al",
+                  "iWebPriorityRate": 5
+                },
+                {
+                  "sCdnType": "TX",
+                  "sStreamName": "fixture-stream",
+                  "sFlvUrl": "http://tx.flv.huya.com/src",
+                  "sFlvUrlSuffix": "flv",
+                  "sFlvAntiCode": "token=fixture-tx",
+                  "sHlsUrl": "http://tx.hls.huya.com/src",
+                  "sHlsUrlSuffix": "m3u8",
+                  "sHlsAntiCode": "token=fixture-tx",
+                  "iWebPriorityRate": 50
+                },
+                {
+                  "sCdnType": "HS",
+                  "sStreamName": "fixture-stream",
+                  "sFlvUrl": "http://hs.flv.huya.com/src",
+                  "sFlvUrlSuffix": "flv",
+                  "sFlvAntiCode": "token=fixture-hs",
+                  "sHlsUrl": "http://hs.hls.huya.com/src",
+                  "sHlsUrlSuffix": "m3u8",
+                  "sHlsAntiCode": "token=fixture-hs",
+                  "iWebPriorityRate": 45
+                }
+              ]
+            }
+          ]
+        }
+      };
+    </script>
+  </body>
+</html>

@@ -212,6 +212,8 @@ export const I18nTexts = {
     "Live.search.unavailable":
       "Live search is not available for this platform yet.",
     "Live.search.empty": "No live rooms matched this search.",
+    "Live.direct.placeholder": "Enter a room ID to open directly...",
+    "Live.direct": "Open room",
     "Live.clearSearch": "Back to discovery",
     "Live.backHome": "Back to home",
     "Live.refresh": "Refresh",
@@ -666,6 +668,8 @@ export const I18nTexts = {
     "Live.search": "搜索",
     "Live.search.unavailable": "当前平台的直播搜索尚未开放。",
     "Live.search.empty": "没有找到匹配的直播间。",
+    "Live.direct.placeholder": "输入房间号直达...",
+    "Live.direct": "直达",
     "Live.clearSearch": "返回推荐",
     "Live.backHome": "返回首页",
     "Live.refresh": "刷新",

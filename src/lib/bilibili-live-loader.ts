@@ -1,8 +1,4 @@
-import {
-  BaseLoader,
-  type LoaderConfiguration,
-  type LoaderResponse,
-} from "hls.js";
+import { BaseLoader, type HlsConfig, type LoaderResponse } from "hls.js";
 import mpegts from "mpegts.js";
 
 import { openLiveMediaStream, type LiveMediaStream } from "@/api/live";
@@ -28,6 +24,10 @@ interface FlvLoaderConfig {
   headers?: Record<string, string>;
   livePlatformId?: PlatformId;
 }
+
+type HlsLoaderConfig = HlsConfig & {
+  livePlatformId?: unknown;
+};
 
 interface FlvDataSource {
   url?: string;
@@ -64,11 +64,74 @@ function headersToRecord(headers: Headers): Record<string, string> {
   return result;
 }
 
+interface LiveMediaErrorDetails {
+  name?: string;
+  code?: string;
+  message: string;
+  action?: string;
+}
+
+function stringField(value: object, key: string) {
+  if (!(key in value)) return undefined;
+  const field = (value as Record<string, unknown>)[key];
+  return typeof field === "string" && field.trim().length > 0
+    ? field
+    : undefined;
+}
+
+function liveMediaErrorDetails(error: unknown): LiveMediaErrorDetails {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message || "Live media request failed",
+    };
+  }
+  if (typeof error === "object" && error !== null) {
+    return {
+      code: stringField(error, "code"),
+      message:
+        stringField(error, "message") ??
+        stringField(error, "msg") ??
+        "Live media request failed",
+      action: stringField(error, "action"),
+    };
+  }
+  return {
+    message:
+      typeof error === "string" && error.trim().length > 0
+        ? error
+        : "Live media request failed",
+  };
+}
+
 function streamErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Live media request failed";
+  const details = liveMediaErrorDetails(error);
+  return details.code ? `${details.code}: ${details.message}` : details.message;
+}
+
+function urlDiagnostic(value: string) {
+  try {
+    const parsed = new URL(value);
+    return {
+      scheme: parsed.protocol.replace(/:$/, ""),
+      host: parsed.host,
+      urlLength: value.length,
+      queryKeys: Array.from(new Set(parsed.searchParams.keys())).sort(),
+      pathLength: parsed.pathname.length,
+    };
+  } catch {
+    return {
+      scheme: "<invalid>",
+      host: "<invalid>",
+      urlLength: value.length,
+      queryKeys: [],
+      pathLength: 0,
+    };
+  }
 }
 
 function logLiveMediaStart(start: LiveMediaStream["start"]) {
+  const diagnostic = urlDiagnostic(start.url);
   let host = "<invalid>";
   let queryKeys: string[] = [];
   try {
@@ -83,16 +146,15 @@ function logLiveMediaStart(start: LiveMediaStream["start"]) {
     statusText: start.statusText,
     httpVersion: start.httpVersion,
     host,
+    scheme: diagnostic.scheme,
+    urlLength: diagnostic.urlLength,
     queryKeys,
     headerNames: Object.keys(start.headers).sort(),
     requestIdPresent: Boolean(start.requestId),
   });
 }
 
-function hlsPlatformId(config: LoaderConfiguration): PlatformId {
-  const platformId = (
-    config as LoaderConfiguration & { livePlatformId?: unknown }
-  ).livePlatformId;
+function requiredPlatformId(platformId: unknown): PlatformId {
   if (typeof platformId !== "string" || platformId.length === 0) {
     throw new Error("Live platform id is missing from the HLS loader config");
   }
@@ -131,6 +193,7 @@ function responseData(
 // The playback API is authenticated, while media is fetched anonymously with
 // the signed URL and Bilibili live request headers, matching active recorders.
 export class LiveHlsLoader extends BaseLoader {
+  private readonly platformId: PlatformId | undefined;
   private stream: LiveMediaStream | null = null;
   private requestToken: object | null = null;
   private timedOut = false;
@@ -141,6 +204,16 @@ export class LiveHlsLoader extends BaseLoader {
   private responseCode = 0;
   private responseUrl = "";
   private responseHeaders = new Headers();
+
+  constructor(config: HlsLoaderConfig) {
+    super();
+    // HLS.js replaces this.config with the request-level loader config.
+    this.platformId =
+      typeof config.livePlatformId === "string" &&
+      config.livePlatformId.length > 0
+        ? (config.livePlatformId as PlatformId)
+        : undefined;
+  }
 
   protected loadInternal(): void {
     const { context, config, callbacks } = this;
@@ -173,6 +246,11 @@ export class LiveHlsLoader extends BaseLoader {
       : REQUEST_TIMEOUT_MS;
     this.requestTimeout = window.setTimeout(() => {
       if (this.requestToken !== token) return;
+      const requestDiagnostic = urlDiagnostic(context.url);
+      liveLog.warn("live media request timed out", {
+        platformId: this.platformId ?? "<missing>",
+        ...requestDiagnostic,
+      });
       this.timedOut = true;
       this.requestToken = null;
       this.stream?.cancel();
@@ -229,9 +307,15 @@ export class LiveHlsLoader extends BaseLoader {
 
     const readStream = async () => {
       let stream: LiveMediaStream | null = null;
+      const requestDiagnostic = urlDiagnostic(context.url);
       try {
+        liveLog.debug("live media request started", {
+          platformId: this.platformId ?? "<missing>",
+          ...requestDiagnostic,
+          headerNames: Object.keys(headersToRecord(headers)).sort(),
+        });
         stream = await openLiveMediaStream(
-          hlsPlatformId(config),
+          requiredPlatformId(this.platformId),
           context.url,
           headersToRecord(headers)
         );
@@ -262,6 +346,11 @@ export class LiveHlsLoader extends BaseLoader {
         }
         succeed();
       } catch (error) {
+        liveLog.warn("live media request failed", {
+          platformId: this.platformId ?? "<missing>",
+          ...requestDiagnostic,
+          error: liveMediaErrorDetails(error),
+        });
         fail(0, streamErrorMessage(error));
       }
     };

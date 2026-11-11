@@ -11,8 +11,19 @@ use crate::domain::{
 const DISCOVERY_SECTION_TITLE: &str = "推荐直播";
 const LIVE_HOME_PREFIX: &str = "https://live.douyin.com/";
 
-pub(super) fn parse_discovery(html: &str) -> Result<LiveDiscovery, DouyinError> {
-    let visuals = parse_flight_visuals(html);
+pub(super) struct DiscoverySnapshot {
+    pub(super) discovery: LiveDiscovery,
+    pub(super) rooms: HashMap<String, DiscoveredRoom>,
+}
+
+#[derive(Clone)]
+pub(super) struct DiscoveredRoom {
+    pub(super) card: LiveRoomCard,
+    pub(super) room: Value,
+}
+
+pub(super) fn parse_discovery_snapshot(html: &str) -> Result<DiscoverySnapshot, DouyinError> {
+    let (visuals, flight_rooms) = parse_flight_data(html);
     let mut rooms = Vec::new();
     let mut seen = HashSet::new();
     let mut cursor = 0;
@@ -50,6 +61,12 @@ pub(super) fn parse_discovery(html: &str) -> Result<LiveDiscovery, DouyinError> 
             .unwrap_or_default();
         let visual = visuals.get(room_id);
 
+        let live_status = flight_rooms
+            .get(room_id)
+            .and_then(|room| room.get("status"))
+            .and_then(known_live_status)
+            .unwrap_or(LiveStatus::Live);
+
         rooms.push(LiveRoomCard {
             platform: douyin_id(),
             room_id: room_id.to_string(),
@@ -60,7 +77,7 @@ pub(super) fn parse_discovery(html: &str) -> Result<LiveDiscovery, DouyinError> 
             area_name: None,
             parent_area_name: None,
             online,
-            live_status: LiveStatus::Live,
+            live_status,
         });
     }
 
@@ -70,12 +87,30 @@ pub(super) fn parse_discovery(html: &str) -> Result<LiveDiscovery, DouyinError> 
         ));
     }
 
-    Ok(LiveDiscovery {
-        sections: vec![LiveSection {
-            id: "douyin-live-recommended".to_string(),
-            title: DISCOVERY_SECTION_TITLE.to_string(),
-            rooms,
-        }],
+    let discovered_rooms = rooms
+        .iter()
+        .filter_map(|card| {
+            flight_rooms.get(&card.room_id).cloned().map(|room| {
+                (
+                    card.room_id.clone(),
+                    DiscoveredRoom {
+                        card: card.clone(),
+                        room,
+                    },
+                )
+            })
+        })
+        .collect();
+
+    Ok(DiscoverySnapshot {
+        discovery: LiveDiscovery {
+            sections: vec![LiveSection {
+                id: "douyin-live-recommended".to_string(),
+                title: DISCOVERY_SECTION_TITLE.to_string(),
+                rooms,
+            }],
+        },
+        rooms: discovered_rooms,
     })
 }
 
@@ -85,10 +120,11 @@ struct FlightVisual {
     avatar_url: Option<String>,
 }
 
-fn parse_flight_visuals(html: &str) -> HashMap<String, FlightVisual> {
+fn parse_flight_data(html: &str) -> (HashMap<String, FlightVisual>, HashMap<String, Value>) {
     const MARKER: &str = "self.__pace_f.push(";
 
     let mut visuals = HashMap::new();
+    let mut rooms = HashMap::new();
     let mut cursor = 0;
     while let Some(offset) = html[cursor..].find(MARKER) {
         cursor += offset + MARKER.len();
@@ -111,20 +147,24 @@ fn parse_flight_visuals(html: &str) -> HashMap<String, FlightVisual> {
         let Ok(flight) = serde_json::from_str::<Value>(payload) else {
             continue;
         };
-        collect_flight_visuals(&flight, &mut visuals);
+        collect_flight_data(&flight, &mut visuals, &mut rooms);
     }
-    visuals
+    (visuals, rooms)
 }
 
-fn collect_flight_visuals(value: &Value, visuals: &mut HashMap<String, FlightVisual>) {
+fn collect_flight_data(
+    value: &Value,
+    visuals: &mut HashMap<String, FlightVisual>,
+    rooms: &mut HashMap<String, Value>,
+) {
     match value {
         Value::Object(object) => {
-            if let Some(rooms) = object
+            if let Some(room_items) = object
                 .get("roomsData")
                 .and_then(|value| value.get("data"))
                 .and_then(Value::as_array)
             {
-                for room in rooms {
+                for room in room_items {
                     let Some(web_rid) = room.get("web_rid").and_then(value_id) else {
                         continue;
                     };
@@ -141,22 +181,25 @@ fn collect_flight_visuals(value: &Value, visuals: &mut HashMap<String, FlightVis
                         .or_else(|| first_url(room.pointer("/owner/avatar_thumb")));
                     if cover_url.is_some() || avatar_url.is_some() {
                         visuals.insert(
-                            web_rid,
+                            web_rid.clone(),
                             FlightVisual {
                                 cover_url,
                                 avatar_url,
                             },
                         );
                     }
+                    if let Some(room) = room.get("room").filter(|value| value.is_object()) {
+                        rooms.entry(web_rid).or_insert_with(|| room.clone());
+                    }
                 }
             }
             for child in object.values() {
-                collect_flight_visuals(child, visuals);
+                collect_flight_data(child, visuals, rooms);
             }
         }
         Value::Array(items) => {
             for child in items {
-                collect_flight_visuals(child, visuals);
+                collect_flight_data(child, visuals, rooms);
             }
         }
         _ => {}
@@ -240,6 +283,41 @@ pub(super) fn parse_playback(
 ) -> Result<LivePlaybackInfo, DouyinError> {
     let room = room_entry(root)?;
     let live_status = parse_live_status(room.get("status"));
+    playback_from_room(room, requested_room_id, live_status, requested_quality)
+}
+
+pub(super) fn parse_discovered_room_info(card: &LiveRoomCard, room: &Value) -> LiveRoomInfo {
+    LiveRoomInfo {
+        platform: douyin_id(),
+        room_id: card.room_id.clone(),
+        title: card.title.clone(),
+        anchor_name: card.anchor_name.clone(),
+        anchor_id: None,
+        cover_url: card.cover_url.clone(),
+        avatar_url: card.avatar_url.clone(),
+        area_name: card.area_name.clone(),
+        parent_area_name: card.parent_area_name.clone(),
+        tags: Vec::new(),
+        live_status: parse_live_status(room.get("status")),
+        started_at: None,
+    }
+}
+
+pub(super) fn parse_discovered_playback(
+    room: &Value,
+    requested_room_id: &str,
+    requested_quality: i64,
+) -> Result<LivePlaybackInfo, DouyinError> {
+    let live_status = parse_live_status(room.get("status"));
+    playback_from_room(room, requested_room_id, live_status, requested_quality)
+}
+
+fn playback_from_room(
+    room: &Value,
+    requested_room_id: &str,
+    live_status: LiveStatus,
+    requested_quality: i64,
+) -> Result<LivePlaybackInfo, DouyinError> {
     let room_id = room_id(room).unwrap_or_else(|| requested_room_id.to_string());
     if live_status != LiveStatus::Live {
         return Ok(LivePlaybackInfo {
@@ -455,10 +533,16 @@ fn quality_slug(value: &str) -> String {
 }
 
 fn parse_live_status(value: Option<&Value>) -> LiveStatus {
-    match value.and_then(value_i64) {
-        Some(2) => LiveStatus::Live,
-        Some(4) => LiveStatus::Offline,
-        _ => LiveStatus::Unknown,
+    value
+        .and_then(known_live_status)
+        .unwrap_or(LiveStatus::Unknown)
+}
+
+fn known_live_status(value: &Value) -> Option<LiveStatus> {
+    match value_i64(value) {
+        Some(2) => Some(LiveStatus::Live),
+        Some(4) => Some(LiveStatus::Offline),
+        _ => None,
     }
 }
 
@@ -632,7 +716,8 @@ mod tests {
     #[test]
     fn discovery_parses_server_rendered_cards() {
         let html = include_str!("../../../tests/fixtures/douyin/live/discovery.html");
-        let discovery = parse_discovery(html).unwrap();
+        let snapshot = parse_discovery_snapshot(html).unwrap();
+        let discovery = snapshot.discovery;
 
         assert_eq!(discovery.sections.len(), 1);
         assert_eq!(discovery.sections[0].rooms.len(), 2);
@@ -647,6 +732,50 @@ mod tests {
             discovery.sections[0].rooms[0].avatar_url.as_deref(),
             Some("https://p3.douyinpic.com/fixture-avatar.jpeg")
         );
+        assert_eq!(snapshot.rooms.len(), 2);
+    }
+
+    #[test]
+    fn discovery_snapshot_supplies_room_info_and_playback_fallback() {
+        let html = include_str!("../../../tests/fixtures/douyin/live/discovery.html");
+        let snapshot = parse_discovery_snapshot(html).unwrap();
+        let discovered = snapshot.rooms.get("100001").unwrap();
+        let info = parse_discovered_room_info(&discovered.card, &discovered.room);
+        let playback = parse_discovered_playback(&discovered.room, "100001", 10_000).unwrap();
+
+        assert_eq!(info.room_id, "100001");
+        assert_eq!(info.title, "Fixture & live");
+        assert_eq!(playback.live_status, LiveStatus::Live);
+        assert_eq!(playback.streams.len(), 2);
+        assert_eq!(playback.streams[0].protocol, StreamProtocol::Hls);
+        assert_eq!(playback.streams[1].protocol, StreamProtocol::Flv);
+        assert_eq!(
+            playback.current_quality.as_ref().map(|value| value.id),
+            Some(250)
+        );
+    }
+
+    #[test]
+    fn discovery_snapshot_never_exposes_streams_for_ended_or_unknown_rooms() {
+        let html = include_str!("../../../tests/fixtures/douyin/live/discovery.html");
+        let mut snapshot = parse_discovery_snapshot(html).unwrap();
+        let discovered = snapshot.rooms.get_mut("100002").unwrap();
+        discovered.room["status"] = Value::from(4);
+
+        let info = parse_discovered_room_info(&discovered.card, &discovered.room);
+        let playback = parse_discovered_playback(&discovered.room, "100002", 10_000).unwrap();
+
+        assert_eq!(info.live_status, LiveStatus::Offline);
+        assert_eq!(playback.live_status, LiveStatus::Offline);
+        assert!(playback.streams.is_empty());
+        assert!(playback.current_quality.is_none());
+
+        snapshot.rooms.get_mut("100002").unwrap().room["status"] = Value::from(9);
+        let discovered = snapshot.rooms.get("100002").unwrap();
+        let playback = parse_discovered_playback(&discovered.room, "100002", 10_000).unwrap();
+
+        assert_eq!(playback.live_status, LiveStatus::Unknown);
+        assert!(playback.streams.is_empty());
     }
 
     #[test]
