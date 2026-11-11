@@ -99,6 +99,15 @@ function mediaSourceUrls(primaryUrl?: string, backupUrls?: string[]) {
   );
 }
 
+function isPlaybackAbort(error: unknown) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    error.name === "AbortError"
+  );
+}
+
 interface PlaybackMediaError {
   code?: number;
   message?: string;
@@ -1007,13 +1016,21 @@ function VideoStage({
         });
       } catch (err) {
         if (cancelled) return;
+        setIsSwitchingQuality(false);
+        if (isPlaybackAbort(err)) {
+          log.debug("quality switch playback interrupted", {
+            videoId: playback.videoId,
+            quality: selectedStream.qualityId,
+            targetTime: targetTimeRef.current,
+          });
+          return;
+        }
         log.error("quality switch failed", {
           videoId: playback.videoId,
           quality: selectedStream.qualityId,
           targetTime: targetTimeRef.current,
           err,
         });
-        setIsSwitchingQuality(false);
         reportPlaybackError("切换播放线路失败，请重试");
       }
     };
@@ -1103,6 +1120,12 @@ function VideoStage({
         }
       }
     } catch (err) {
+      if (isPlaybackAbort(err)) {
+        log.debug("playback toggle interrupted", {
+          videoId: playback.videoId,
+        });
+        return;
+      }
       log.error("playback toggle failed", {
         videoId: playback.videoId,
         err,

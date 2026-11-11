@@ -22,7 +22,8 @@
         "resizable": true,
         "maximizable": true,
         "visible": true,
-        "focus": true
+        "focus": true,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-accelerated-video-decode"
       },
       {
         "label": "tray",
@@ -36,7 +37,8 @@
         "resizable": false,
         "width": 220,
         "height": 280,
-        "shadow": true
+        "shadow": true,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-accelerated-video-decode"
       }
     ],
     "security": {
