@@ -582,7 +582,8 @@ export default function LiveStreamPlayer({
 
   const reloadForRecovery = useCallback(
     (reason: string) => {
-      if (!playRequestedRef.current || tearingDownRef.current) return;
+      if (offline || !playRequestedRef.current || tearingDownRef.current)
+        return;
       if (sourceSwitchingRef.current) return;
       const now = Date.now();
       consecutiveRecoveryRef.current =
@@ -610,7 +611,7 @@ export default function LiveStreamPlayer({
       setPlayerError(null);
       setReloadKey((current) => current + 1);
     },
-    [activeProtocol, availableProtocols, roomId]
+    [activeProtocol, availableProtocols, offline, roomId]
   );
 
   useEffect(() => {
@@ -630,6 +631,7 @@ export default function LiveStreamPlayer({
     const schedulePauseRecovery = () => {
       if (
         !hasStreams ||
+        offline ||
         !playRequestedRef.current ||
         tearingDownRef.current ||
         sourceSwitchingRef.current ||
@@ -665,6 +667,7 @@ export default function LiveStreamPlayer({
     const scheduleStallRecovery = () => {
       if (
         !hasStreams ||
+        offline ||
         !playRequestedRef.current ||
         tearingDownRef.current ||
         sourceSwitchingRef.current ||
@@ -737,6 +740,7 @@ export default function LiveStreamPlayer({
     const watchdog = window.setInterval(() => {
       if (
         !playRequestedRef.current ||
+        offline ||
         tearingDownRef.current ||
         sourceSwitchingRef.current
       ) {
@@ -781,23 +785,27 @@ export default function LiveStreamPlayer({
       video.removeEventListener("error", handleError);
       video.removeEventListener("loadstart", handleLoadStart);
     };
-  }, [hasStreams, reloadForRecovery, roomId]);
+  }, [hasStreams, offline, reloadForRecovery, roomId]);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
 
-    if (streams.length === 0) {
-      tearingDownRef.current = true;
+    if (offline) {
+      playRequestedRef.current = false;
+      log.info("live playback stopped because room is offline", {
+        roomId,
+        liveStatus,
+      });
+    }
+
+    if (offline || streams.length === 0) {
       sourceSwitchingRef.current = false;
-      video.pause();
-      video.removeAttribute("src");
-      video.load();
-      tearingDownRef.current = false;
       setPlaying(false);
       setRecovering(false);
       setReady(false);
       setLoading(false);
+      setPlayerError(null);
       return;
     }
 
@@ -1105,7 +1113,7 @@ export default function LiveStreamPlayer({
       sourceSwitchingRef.current = false;
       destroySource();
     };
-  }, [availableProtocols, reloadKey, roomId, streams, t]);
+  }, [availableProtocols, liveStatus, offline, reloadKey, roomId, streams, t]);
 
   useEffect(() => {
     if (protocolMenuOpen || qualityMenuOpen || volumePanelOpen) {

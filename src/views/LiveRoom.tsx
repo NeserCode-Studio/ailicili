@@ -1,5 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Component,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ErrorInfo,
+  type ReactNode,
+} from "react";
 import { useParams, useSearchParams } from "react-router";
+import { CircleAlert } from "lucide-react";
 
 import { asCommandError, type CommandError } from "@/api/account";
 import {
@@ -15,6 +25,7 @@ import {
   type FavoriteEntry,
 } from "@/api/media";
 import LiveStreamPlayer from "@/components/live/LiveStreamPlayer";
+import { Button } from "@/components/ui/button";
 import { useI18n, useToast } from "@/composables";
 import { useAccount } from "@/contexts/account-context";
 import { useNavigatorContext } from "@/contexts/navigator";
@@ -37,6 +48,71 @@ const LIVE_QUALITY_LABELS: Record<number, string> = {
   30_000: "Live.quality.dolbyVision",
 };
 const EMPTY_LIVE_STREAMS: LivePlaybackInfo["streams"] = [];
+
+interface LivePlayerErrorBoundaryProps {
+  children: ReactNode;
+  roomId: string;
+  title: string;
+  retryLabel: string;
+  backLabel: string;
+  onBack: () => void;
+}
+
+interface LivePlayerErrorBoundaryState {
+  failed: boolean;
+}
+
+class LivePlayerErrorBoundary extends Component<
+  LivePlayerErrorBoundaryProps,
+  LivePlayerErrorBoundaryState
+> {
+  state: LivePlayerErrorBoundaryState = { failed: false };
+
+  static getDerivedStateFromError(): LivePlayerErrorBoundaryState {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    log.error("live player render failed", {
+      roomId: this.props.roomId,
+      error,
+      componentStack: info.componentStack,
+    });
+  }
+
+  retry = () => {
+    this.setState({ failed: false });
+  };
+
+  render() {
+    if (this.state.failed) {
+      return (
+        <div className="bg-background text-foreground grid h-full w-full place-items-center px-6">
+          <div className="flex max-w-md flex-col items-center gap-4 text-center">
+            <div className="border-border bg-muted/45 text-muted-foreground grid size-11 place-items-center rounded-full border">
+              <CircleAlert className="size-5" />
+            </div>
+            <p className="text-sm">{this.props.title}</p>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <Button type="button" size="sm" onClick={this.retry}>
+                {this.props.retryLabel}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={this.props.onBack}
+              >
+                {this.props.backLabel}
+              </Button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export default function LiveRoom() {
   const { roomId = "" } = useParams();
@@ -95,11 +171,20 @@ export default function LiveRoom() {
 
     let succeeded = true;
     if (infoResult.status === "fulfilled") {
-      setInfo(infoResult.value);
+      const playbackStatus =
+        playbackResult.status === "fulfilled"
+          ? playbackResult.value.liveStatus
+          : "unknown";
+      const nextInfo =
+        playbackStatus === "unknown"
+          ? infoResult.value
+          : { ...infoResult.value, liveStatus: playbackStatus };
+      setInfo(nextInfo);
       log.info("live room info loaded", {
         roomId,
-        status: infoResult.value.liveStatus,
-        hasCover: Boolean(infoResult.value.coverUrl),
+        status: nextInfo.liveStatus,
+        infoStatus: infoResult.value.liveStatus,
+        hasCover: Boolean(nextInfo.coverUrl),
       });
     } else {
       const normalized = asCommandError(infoResult.reason);
@@ -197,6 +282,13 @@ export default function LiveRoom() {
         if (requestId !== requestIdRef.current) return false;
         setLoadedRoomId(roomId);
         setPlayback(nextPlayback);
+        if (nextPlayback.liveStatus !== "unknown") {
+          setInfo((current) =>
+            current && current.liveStatus !== nextPlayback.liveStatus
+              ? { ...current, liveStatus: nextPlayback.liveStatus }
+              : current
+          );
+        }
         setSelectedQuality(
           nextPlayback.currentQuality?.id ??
             nextPlayback.advertisedQualities[0]?.id ??
@@ -205,6 +297,7 @@ export default function LiveRoom() {
         log.info("live playback refreshed", {
           roomId,
           quality: nextPlayback.currentQuality?.id ?? quality,
+          status: nextPlayback.liveStatus,
           protocols: nextPlayback.streams.map((stream) => stream.protocol),
         });
         return true;
@@ -246,7 +339,9 @@ export default function LiveRoom() {
     qualityOptions.find((quality) => quality.id === selectedQuality) ??
     currentPlayback?.currentQuality;
   const liveStatus =
-    currentInfo?.liveStatus ?? currentPlayback?.liveStatus ?? "unknown";
+    currentPlayback && currentPlayback.liveStatus !== "unknown"
+      ? currentPlayback.liveStatus
+      : (currentInfo?.liveStatus ?? "unknown");
   const startedAt = formatTimestamp(currentInfo?.startedAt, lang);
   const qualityLocked = account?.status !== "authenticated";
   const stageError = playbackError ?? roomError;
@@ -312,30 +407,39 @@ export default function LiveRoom() {
 
   return (
     <div className="bg-background text-foreground relative h-[calc(100vh-2rem)] min-h-0 w-full overflow-hidden">
-      <LiveStreamPlayer
+      <LivePlayerErrorBoundary
+        key={roomId}
         roomId={roomId}
-        info={currentInfo}
-        streams={currentPlayback?.streams ?? EMPTY_LIVE_STREAMS}
-        poster={cover.src}
-        avatarSrc={avatar.src}
-        startedAt={startedAt}
-        liveStatus={liveStatus}
-        roomLoading={loading}
-        refreshing={switching}
-        playbackError={stageError}
-        qualityOptions={qualityOptions}
-        currentQualityId={currentQuality?.id}
-        currentQualityLabel={currentQuality?.label}
-        qualityLocked={qualityLocked}
-        favorite={Boolean(favorite)}
-        favoriteBusy={favoriteBusy}
-        favoriteLoading={favoriteLoading}
+        title={t("Live.player.renderError")}
+        retryLabel={t("Live.retry")}
+        backLabel={t("Live.room.back")}
         onBack={() => navigator(backPath)}
-        onRefresh={refreshPlayback}
-        onFavorite={() => void toggleFavorite()}
-        onQualityChange={(quality) => void loadPlayback(quality)}
-        onQualityLocked={showQualityLoginHint}
-      />
+      >
+        <LiveStreamPlayer
+          roomId={roomId}
+          info={currentInfo}
+          streams={currentPlayback?.streams ?? EMPTY_LIVE_STREAMS}
+          poster={cover.src}
+          avatarSrc={avatar.src}
+          startedAt={startedAt}
+          liveStatus={liveStatus}
+          roomLoading={loading}
+          refreshing={switching}
+          playbackError={stageError}
+          qualityOptions={qualityOptions}
+          currentQualityId={currentQuality?.id}
+          currentQualityLabel={currentQuality?.label}
+          qualityLocked={qualityLocked}
+          favorite={Boolean(favorite)}
+          favoriteBusy={favoriteBusy}
+          favoriteLoading={favoriteLoading}
+          onBack={() => navigator(backPath)}
+          onRefresh={refreshPlayback}
+          onFavorite={() => void toggleFavorite()}
+          onQualityChange={(quality) => void loadPlayback(quality)}
+          onQualityLocked={showQualityLoginHint}
+        />
+      </LivePlayerErrorBoundary>
     </div>
   );
 }

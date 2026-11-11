@@ -202,6 +202,7 @@ export const I18nTexts = {
     "Live.status.round": "Replay",
     "Live.status.unknown": "Unknown",
     "Live.player.streamError": "The live stream could not be loaded.",
+    "Live.player.renderError": "The live player could not be displayed.",
     "Live.player.noStream": "No playable stream was returned.",
     "Live.player.hlsUnsupported":
       "HLS playback is not supported on this device.",
@@ -630,6 +631,7 @@ export const I18nTexts = {
     "Live.status.round": "轮播",
     "Live.status.unknown": "状态未知",
     "Live.player.streamError": "直播流加载失败。",
+    "Live.player.renderError": "直播播放器显示失败。",
     "Live.player.noStream": "接口没有返回可播放的直播流。",
     "Live.player.hlsUnsupported": "当前设备不支持 HLS 播放。",
     "Live.player.flvUnsupported": "当前设备不支持 FLV 播放。",
