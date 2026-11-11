@@ -60,6 +60,13 @@ export default function Titlebar() {
             </MenubarItem>
             <MenubarItem
               onSelect={() => {
+                navigator("/live");
+              }}
+            >
+              {t("Titlebar.menu.turnto.live")}
+            </MenubarItem>
+            <MenubarItem
+              onSelect={() => {
                 navigator("/favorites");
               }}
             >

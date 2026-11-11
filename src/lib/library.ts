@@ -13,6 +13,14 @@ export function favoriteTargetForVideo(video: VideoCard): FavoriteTarget {
   };
 }
 
+export function favoriteTargetForLiveRoom(roomId: string): FavoriteTarget {
+  return {
+    platform: "bilibili",
+    kind: "liveRoom",
+    targetId: roomId,
+  };
+}
+
 export function favoriteTargetKey(target: FavoriteTarget): string {
   return `${target.platform}:${target.kind}:${target.targetId}`;
 }
@@ -26,6 +34,16 @@ export function favoriteMatches(
 
 export function favoriteVideoPath(entry: FavoriteEntry): string {
   return `/video/${encodeURIComponent(entry.target.targetId)}?from=favorites`;
+}
+
+export function favoriteLiveRoomPath(entry: FavoriteEntry): string {
+  return `/live/${encodeURIComponent(entry.target.targetId)}?from=favorites`;
+}
+
+export function favoriteEntryPath(entry: FavoriteEntry): string {
+  return entry.target.kind === "liveRoom"
+    ? favoriteLiveRoomPath(entry)
+    : favoriteVideoPath(entry);
 }
 
 export function historyResumePath(entry: HistoryEntry): string {

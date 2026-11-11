@@ -1,0 +1,107 @@
+{
+  "code": 0,
+  "message": "OK",
+  "data": {
+    "room_id": 1001,
+    "live_status": 1,
+    "playurl_info": {
+      "playurl": {
+        "stream": [
+          {
+            "protocol_name": "http_stream",
+            "format": [
+              {
+                "format_name": "flv",
+                "codec": [
+                  {
+                    "codec_name": "hevc",
+                    "current_qn": 250,
+                    "accept_qn": [250, 10000],
+                    "base_url": "/live/stream.flv",
+                    "url_info": [
+                      {
+                        "host": "https://hevc.example.invalid",
+                        "extra": "?token=fixture"
+                      }
+                    ]
+                  },
+                  {
+                    "codec_name": "avc",
+                    "current_qn": 250,
+                    "accept_qn": [250, 10000],
+                    "base_url": "/live/stream.flv",
+                    "url_info": [
+                      {
+                        "host": "https://example.invalid",
+                        "extra": "?token=fixture"
+                      },
+                      {
+                        "host": "https://backup.example.invalid",
+                        "extra": "?token=fixture"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "protocol_name": "http_hls",
+            "format": [
+              {
+                "format_name": "fmp4",
+                "codec": [
+                  {
+                    "codec_name": "avc",
+                    "current_qn": 250,
+                    "accept_qn": [250],
+                    "base_url": "/live/index.m4s",
+                    "url_info": [
+                      {
+                        "host": "https://example.invalid",
+                        "extra": "?token=fixture"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "format_name": "ts",
+                "codec": [
+                  {
+                    "codec_name": "hevc",
+                    "current_qn": 250,
+                    "accept_qn": [250, 10000],
+                    "base_url": "/live/index.m3u8",
+                    "url_info": [
+                      {
+                        "host": "https://hevc.example.invalid",
+                        "extra": "?token=fixture"
+                      }
+                    ]
+                  },
+                  {
+                    "codec_name": "avc",
+                    "current_qn": 250,
+                    "accept_qn": [250, 10000],
+                    "base_url": "/live/index.m3u8",
+                    "url_info": [
+                      {
+                        "host": "https://example.invalid",
+                        "extra": "?token=fixture"
+                      },
+                      {
+                        "host": "https://backup.example.invalid",
+                        "extra": "?token=fixture"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

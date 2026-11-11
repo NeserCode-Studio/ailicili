@@ -2,6 +2,7 @@ import * as React from "react";
 import {
   History,
   Home,
+  Radio,
   RefreshCcw,
   Settings,
   Sparkles,
@@ -82,6 +83,12 @@ export default function CommandMenu() {
       label: t("Command.turnto.home"),
       shortcut: "⌘H",
       keywords: ["home", "index", "首页", "主页"],
+    },
+    {
+      value: "navigate::/live",
+      icon: Radio,
+      label: t("Command.turnto.live"),
+      keywords: ["live", "stream", "直播", "直播间"],
     },
     {
       value: "settings::open",

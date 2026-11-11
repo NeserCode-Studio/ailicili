@@ -9,6 +9,8 @@ mod account;
 mod bilibili;
 mod device;
 mod domain;
+mod live;
+mod live_media;
 mod storage;
 mod wbi;
 
@@ -122,6 +124,51 @@ async fn get_search_videos(
     state
         .bilibili
         .search(&keyword, page)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn get_live_discovery(
+    state: tauri::State<'_, AppState>,
+) -> Result<domain::LiveDiscovery, domain::CommandError> {
+    state.bilibili.live_discovery().await.map_err(Into::into)
+}
+
+#[tauri::command]
+async fn search_live_rooms(
+    state: tauri::State<'_, AppState>,
+    keyword: String,
+    page: u32,
+) -> Result<domain::PagedLiveRooms, domain::CommandError> {
+    state
+        .bilibili
+        .search_live_rooms(&keyword, page)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn get_live_room_info(
+    state: tauri::State<'_, AppState>,
+    room_id: String,
+) -> Result<domain::LiveRoomInfo, domain::CommandError> {
+    state
+        .bilibili
+        .live_room_info(&room_id)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn get_live_room_playback(
+    state: tauri::State<'_, AppState>,
+    room_id: String,
+    quality: i64,
+) -> Result<domain::LivePlaybackInfo, domain::CommandError> {
+    state
+        .bilibili
+        .live_room_playback(&room_id, quality)
         .await
         .map_err(Into::into)
 }
@@ -458,6 +505,7 @@ pub fn run() {
             let bilibili = bilibili::BilibiliClient::new(session.clone())?;
             let account = account::AccountManager::new(session);
             app.manage(AppState { bilibili, account });
+            app.manage(live_media::LiveMediaRequests::default());
 
             #[cfg(target_os = "windows")]
             if let Some(window) = app.get_webview_window("main") {
@@ -524,6 +572,13 @@ pub fn run() {
             get_video_comments,
             get_comment_replies,
             get_search_videos,
+            get_live_discovery,
+            search_live_rooms,
+            get_live_room_info,
+            get_live_room_playback,
+            live_media::open_live_media_stream,
+            live_media::read_live_media_stream,
+            live_media::close_live_media_stream,
             list_local_history,
             save_local_history,
             clear_local_history,

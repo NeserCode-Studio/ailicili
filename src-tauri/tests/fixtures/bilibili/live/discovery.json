@@ -1,0 +1,51 @@
+{
+  "code": 0,
+  "message": "OK",
+  "data": {
+    "room_list": [
+      {
+        "module_info": {
+          "id": 3,
+          "title": "推荐直播"
+        },
+        "list": [
+          {
+            "roomid": 1001,
+            "title": "Fixture live room",
+            "uname": "Fixture anchor",
+            "cover": "//example.invalid/live-cover.jpg",
+            "face": "https://example.invalid/anchor.jpg",
+            "online": 12345,
+            "status": true,
+            "area_v2_name": "英雄联盟",
+            "area_v2_parent_name": "网游"
+          },
+          {
+            "roomid": "1002",
+            "title": "Offline fixture",
+            "uname": "Offline anchor",
+            "keyframe": "https://example.invalid/offline.jpg",
+            "online": 0,
+            "status": false
+          }
+        ]
+      },
+      {
+        "module_info": {
+          "id": 4,
+          "title": "聊天室"
+        },
+        "list": [
+          {
+            "roomid": 2002,
+            "title": "Chat fixture",
+            "uname": "Chat anchor",
+            "cover": "https://example.invalid/chat.jpg",
+            "online": 20,
+            "status": true
+          }
+        ]
+      }
+    ]
+  }
+}

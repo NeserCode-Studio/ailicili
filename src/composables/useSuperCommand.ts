@@ -57,6 +57,14 @@ export function createBuiltinCommands(ctx: {
       },
     },
     {
+      id: "navigate.live",
+      keywords: ["直播", "live", "stream", "navigate"],
+      action: () => {
+        navigate("/live");
+        return { success: true, message: "Navigated to live rooms" };
+      },
+    },
+    {
       id: "navigate.favorites",
       keywords: ["收藏", "favorites", "saved", "navigate"],
       action: () => {

@@ -3,6 +3,7 @@ import {
   CalendarDays,
   Loader2,
   Play,
+  Radio,
   Star,
   Trash2,
   UserRound,
@@ -44,7 +45,8 @@ export default function FavoriteCard({
 }: FavoriteCardProps) {
   const { t } = useI18n();
   const [coverFailed, setCoverFailed] = useState(false);
-  const canOpen = entry.target.kind === "video";
+  const canOpen =
+    entry.target.kind === "video" || entry.target.kind === "liveRoom";
   const savedAt = formatTimestamp(entry.savedAt, locale);
 
   const cover = coverFailed ? null : (
@@ -61,6 +63,8 @@ export default function FavoriteCard({
     <div className="text-muted-foreground flex h-full w-full items-center justify-center">
       {entry.target.kind === "video" ? (
         <Play className="size-5" />
+      ) : entry.target.kind === "liveRoom" ? (
+        <Radio className="size-5" />
       ) : (
         <Star className="size-5" />
       )}

@@ -163,7 +163,7 @@ pub struct QualityNotice {
     pub message_code: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum StreamProtocol {
     Hls,
@@ -423,4 +423,92 @@ pub struct PlaybackInfo {
     pub current_quality: QualityOption,
     pub advertised_qualities: Vec<QualityOption>,
     pub quality_notice: QualityNotice,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum LiveStatus {
+    Live,
+    Offline,
+    Round,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveRoomCard {
+    pub platform: Platform,
+    pub room_id: String,
+    pub title: String,
+    pub anchor_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub area_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_area_name: Option<String>,
+    pub online: i64,
+    pub live_status: LiveStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveSection {
+    pub id: String,
+    pub title: String,
+    pub rooms: Vec<LiveRoomCard>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveDiscovery {
+    pub sections: Vec<LiveSection>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PagedLiveRooms {
+    pub page: u32,
+    pub items: Vec<LiveRoomCard>,
+    pub has_more: bool,
+    pub total: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveRoomInfo {
+    pub platform: Platform,
+    pub room_id: String,
+    pub title: String,
+    pub anchor_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchor_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub area_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_area_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    pub live_status: LiveStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LivePlaybackInfo {
+    pub room_id: String,
+    pub live_status: LiveStatus,
+    #[serde(default)]
+    pub streams: Vec<StreamSource>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_quality: Option<QualityOption>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub advertised_qualities: Vec<QualityOption>,
 }

@@ -1,0 +1,23 @@
+{
+  "code": 0,
+  "message": "OK",
+  "data": {
+    "room_info": {
+      "room_id": 1001,
+      "title": "Fixture live room",
+      "cover": "//example.invalid/live-cover.jpg",
+      "tags": "tag one,tag two",
+      "live_status": 1,
+      "live_start_time": 1700000000,
+      "area_name": "英雄联盟",
+      "parent_area_name": "网游"
+    },
+    "anchor_info": {
+      "base_info": {
+        "uid": 42,
+        "uname": "Fixture anchor",
+        "face": "https://example.invalid/anchor.jpg"
+      }
+    }
+  }
+}

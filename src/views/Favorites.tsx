@@ -16,7 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useI18n, useToast } from "@/composables";
 import { useNavigatorContext } from "@/contexts/navigator";
-import { favoriteTargetKey, favoriteVideoPath } from "@/lib/library";
+import { favoriteEntryPath, favoriteTargetKey } from "@/lib/library";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("Library/Favorites");
@@ -84,8 +84,10 @@ export default function Favorites() {
   );
 
   const open = (entry: FavoriteEntry) => {
-    if (entry.target.kind !== "video") return;
-    navigator(favoriteVideoPath(entry));
+    if (entry.target.kind !== "video" && entry.target.kind !== "liveRoom") {
+      return;
+    }
+    navigator(favoriteEntryPath(entry));
   };
 
   return (

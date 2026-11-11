@@ -1,7 +1,8 @@
 use crate::domain::{
     CommentAuthor, CommentEmote, CommentPage, CommentPicture, CommentReplyPage, CommentSort,
-    PagedVideos, PlaybackInfo, QualityNotice, QualityNoticeKind, QualityOption, StreamProtocol,
-    StreamSource, VideoCard, VideoComment, VideoDetail, VideoPage, VideoSourceKind, VideoStats,
+    LiveDiscovery, LivePlaybackInfo, LiveRoomInfo, PagedLiveRooms, PagedVideos, PlaybackInfo,
+    QualityNotice, QualityNoticeKind, QualityOption, StreamProtocol, StreamSource, VideoCard,
+    VideoComment, VideoDetail, VideoPage, VideoSourceKind, VideoStats,
 };
 use crate::{
     account::{SessionCookies, SharedSession},
@@ -19,9 +20,12 @@ use std::{
 
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 const API_BASE: &str = "https://api.bilibili.com";
+const LIVE_API_BASE: &str = "https://api.live.bilibili.com";
 const PASSPORT_BASE: &str = "https://passport.bilibili.com";
 const BILIBILI_WEB_URL: &str = "https://www.bilibili.com";
 const WBI_CACHE_TTL: Duration = Duration::from_secs(12 * 60 * 60);
+const LIVE_MEDIA_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+const LIVE_MEDIA_DIAGNOSTIC_REV: &str = "media-response-v1";
 const COMMENT_PAGE_SIZE: usize = 4;
 const COMMENT_REPLY_PAGE_SIZE: u32 = 20;
 
@@ -52,6 +56,7 @@ pub enum BiliError {
 #[derive(Clone)]
 pub struct BilibiliClient {
     http: reqwest::Client,
+    live_http: reqwest::Client,
     session: SharedSession,
     device: Arc<DeviceManager>,
     wbi_cache: Arc<Mutex<Option<WbiCache>>>,
@@ -152,9 +157,15 @@ impl BilibiliClient {
             .timeout(Duration::from_secs(15))
             .redirect(reqwest::redirect::Policy::none())
             .build()?;
+        let live_http = reqwest::Client::builder()
+            .user_agent(USER_AGENT)
+            .connect_timeout(LIVE_MEDIA_CONNECT_TIMEOUT)
+            .redirect(reqwest::redirect::Policy::limited(5))
+            .build()?;
         let device = DeviceManager::new(http.clone())?;
         Ok(Self {
             http,
+            live_http,
             session,
             device: Arc::new(device),
             wbi_cache: Arc::new(Mutex::new(None)),
@@ -240,6 +251,32 @@ impl BilibiliClient {
             .map_err(|_| BiliError::Invalid("invalid JSON response".to_string()))
     }
 
+    async fn live_api_root(
+        &self,
+        path: &str,
+        query: &[(String, String)],
+        session: Option<&SessionCookies>,
+    ) -> Result<Value, BiliError> {
+        let cookie = self.cookie_header(session).await;
+        let mut request = self
+            .http
+            .get(format!("{LIVE_API_BASE}{path}"))
+            .header("referer", "https://live.bilibili.com/")
+            .header("origin", "https://live.bilibili.com")
+            .query(query);
+        if !cookie.is_empty() {
+            request = request.header("cookie", cookie);
+        }
+        let response = request.send().await?;
+        if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(BiliError::RateLimited);
+        }
+        response
+            .json()
+            .await
+            .map_err(|_| BiliError::Invalid("invalid JSON response".to_string()))
+    }
+
     async fn wbi_json(&self, path: &str, query: Vec<(String, String)>) -> Result<Value, BiliError> {
         let session = self.session_snapshot()?;
         let mut key = self.wbi_mixin_key(false, session.as_ref()).await?;
@@ -257,6 +294,34 @@ impl BilibiliClient {
                 let timestamp = chrono::Utc::now().timestamp().max(0) as u64;
                 let signed = wbi::sign_params(query, &key, timestamp);
                 self.api_root(path, &signed, session.as_ref())
+                    .await
+                    .and_then(ensure_wbi_success)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    async fn live_wbi_json(
+        &self,
+        path: &str,
+        query: Vec<(String, String)>,
+    ) -> Result<Value, BiliError> {
+        let session = self.session_snapshot()?;
+        let mut key = self.wbi_mixin_key(false, session.as_ref()).await?;
+        let timestamp = chrono::Utc::now().timestamp().max(0) as u64;
+        let signed = wbi::sign_params(query.clone(), &key, timestamp);
+        let first = self
+            .live_api_root(path, &signed, session.as_ref())
+            .await
+            .and_then(ensure_wbi_success);
+        match first {
+            Ok(root) => Ok(root),
+            Err(BiliError::Api { code: -352, .. }) => {
+                warn!(target: "Bilibili", "live WBI rejected, refreshing key once");
+                key = self.wbi_mixin_key(true, session.as_ref()).await?;
+                let timestamp = chrono::Utc::now().timestamp().max(0) as u64;
+                let signed = wbi::sign_params(query, &key, timestamp);
+                self.live_api_root(path, &signed, session.as_ref())
                     .await
                     .and_then(ensure_wbi_success)
             }
@@ -886,6 +951,150 @@ impl BilibiliClient {
         })
     }
 
+    pub async fn live_discovery(&self) -> Result<LiveDiscovery, BiliError> {
+        let session = self.session_snapshot()?;
+        let root = self
+            .live_api_root(
+                "/xlive/web-interface/v1/index/getList",
+                &[("platform".to_string(), "web".to_string())],
+                session.as_ref(),
+            )
+            .await?;
+        ensure_api_success(&root)?;
+        crate::live::parse_discovery(&root).map_err(BiliError::Invalid)
+    }
+
+    pub async fn search_live_rooms(
+        &self,
+        keyword: &str,
+        page: u32,
+    ) -> Result<PagedLiveRooms, BiliError> {
+        let keyword = keyword.trim();
+        if keyword.is_empty() {
+            return Err(BiliError::Invalid(
+                "live search keyword is empty".to_string(),
+            ));
+        }
+        let page = page.max(1);
+        let root = self
+            .wbi_json(
+                "/x/web-interface/wbi/search/type",
+                vec![
+                    ("search_type".to_string(), "live_room".to_string()),
+                    ("keyword".to_string(), keyword.to_string()),
+                    ("page".to_string(), page.to_string()),
+                    ("page_size".to_string(), "20".to_string()),
+                    ("platform".to_string(), "web".to_string()),
+                ],
+            )
+            .await?;
+        crate::live::parse_search(&root, page).map_err(BiliError::Invalid)
+    }
+
+    pub async fn live_room_info(&self, room_id: &str) -> Result<LiveRoomInfo, BiliError> {
+        let room_id = Self::normalize_live_room_id(room_id)?;
+        let root = self
+            .live_wbi_json(
+                "/xlive/web-room/v1/index/getInfoByRoom",
+                vec![
+                    ("room_id".to_string(), room_id.clone()),
+                    ("web_location".to_string(), "444.8".to_string()),
+                ],
+            )
+            .await?;
+        crate::live::parse_room_info(&root, &room_id).map_err(BiliError::Invalid)
+    }
+
+    pub async fn live_room_playback(
+        &self,
+        room_id: &str,
+        quality: i64,
+    ) -> Result<LivePlaybackInfo, BiliError> {
+        let room_id = Self::normalize_live_room_id(room_id)?;
+        let quality = if quality > 0 { quality } else { 10_000 };
+        let root = self
+            .live_wbi_json(
+                "/xlive/web-room/v2/index/getRoomPlayInfo",
+                vec![
+                    ("room_id".to_string(), room_id.clone()),
+                    ("no_playurl".to_string(), "0".to_string()),
+                    ("mask".to_string(), "1".to_string()),
+                    ("qn".to_string(), quality.to_string()),
+                    ("platform".to_string(), "web".to_string()),
+                    ("protocol".to_string(), "0,1".to_string()),
+                    ("format".to_string(), "0,1,2".to_string()),
+                    ("codec".to_string(), "0,1,2".to_string()),
+                    ("dolby".to_string(), "5".to_string()),
+                    ("panorama".to_string(), "1".to_string()),
+                    ("hdr_type".to_string(), "0,1".to_string()),
+                    ("web_location".to_string(), "444.8".to_string()),
+                ],
+            )
+            .await?;
+        crate::live::parse_playback(&root, &room_id).map_err(BiliError::Invalid)
+    }
+
+    pub async fn live_media_response(
+        &self,
+        url: &str,
+        request_headers: &HeaderMap,
+    ) -> Result<reqwest::Response, BiliError> {
+        let url = validate_live_media_url(url)?;
+        let session = self.session_snapshot()?;
+        let cookie = self.cookie_header(session.as_ref()).await;
+        let cookie_present = !cookie.is_empty();
+        let mut request = self
+            .live_http
+            .get(url)
+            .header("accept", "*/*")
+            .header("accept-language", "zh-CN,zh;q=0.9,en;q=0.8")
+            .header("referer", "https://live.bilibili.com/")
+            .header("origin", "https://live.bilibili.com")
+            .headers(request_headers.clone());
+        if cookie_present {
+            request = request.header("cookie", cookie);
+        }
+        let response = request.send().await?;
+        let status = response.status();
+        let response_url = response.url();
+        let response_host = response_url.host_str().unwrap_or("<missing>");
+        let http_version = format!("{:?}", response.version()).to_ascii_lowercase();
+        let content_type = header_value(response.headers(), "content-type");
+        let content_length = header_value(response.headers(), "content-length");
+        let response_header_names = header_names(response.headers());
+        let query_keys = response_url
+            .query_pairs()
+            .map(|(key, _)| key.into_owned())
+            .collect::<BTreeSet<_>>();
+        let range_requested = request_headers.contains_key(reqwest::header::RANGE);
+        if status.is_success() {
+            info!(
+                target: "Bilibili/LiveMedia",
+                "live media response diag={LIVE_MEDIA_DIAGNOSTIC_REV} status={} host={response_host} http={http_version} content_type={content_type:?} content_length={content_length:?} cookie_present={} range_requested={range_requested} query_keys={query_keys:?} response_header_names={response_header_names:?}",
+                status.as_u16(),
+                cookie_present,
+            );
+        } else {
+            warn!(
+                target: "Bilibili/LiveMedia",
+                "live media response diag={LIVE_MEDIA_DIAGNOSTIC_REV} status={} host={response_host} http={http_version} content_type={content_type:?} content_length={content_length:?} cookie_present={} range_requested={range_requested} query_keys={query_keys:?} response_header_names={response_header_names:?}",
+                status.as_u16(),
+                cookie_present,
+            );
+        }
+        Ok(response)
+    }
+
+    fn normalize_live_room_id(room_id: &str) -> Result<String, BiliError> {
+        room_id
+            .trim()
+            .parse::<u64>()
+            .ok()
+            .filter(|room_id| *room_id > 0)
+            .map(|room_id| room_id.to_string())
+            .ok_or_else(|| BiliError::Invalid("invalid live room id".to_string()))
+    }
+
     pub async fn video_playback(
         &self,
         video_id: &str,
@@ -1316,6 +1525,29 @@ fn error_code(error: &BiliError) -> String {
         BiliError::Invalid(_) => "invalidResponse".to_string(),
         _ => "unavailable".to_string(),
     }
+}
+
+fn validate_live_media_url(value: &str) -> Result<reqwest::Url, BiliError> {
+    let url = reqwest::Url::parse(value)
+        .map_err(|_| BiliError::Invalid("invalid live media URL".into()))?;
+    let host = url
+        .host_str()
+        .map(str::to_ascii_lowercase)
+        .ok_or_else(|| BiliError::Invalid("missing live media host".into()))?;
+    let allowed_host = host == "bilivideo.com"
+        || host.ends_with(".bilivideo.com")
+        || host == "bilivideo.cn"
+        || host.ends_with(".bilivideo.cn");
+    if url.scheme() != "https"
+        || !allowed_host
+        || !url.path().starts_with("/live-bvc/")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some_and(|port| port != 443)
+    {
+        return Err(BiliError::Invalid("unsupported live media URL".into()));
+    }
+    Ok(url)
 }
 
 fn dash_audio_items(dash: &Value) -> Vec<&Value> {
@@ -2134,6 +2366,26 @@ mod tests {
     use super::*;
     use crate::domain::{CommandError, Platform};
     use serde_json::json;
+
+    #[test]
+    fn live_media_urls_are_limited_to_bilibili_cdn_paths() {
+        for value in [
+            "https://d1--cn-gotcha104.bilivideo.com/live-bvc/index.m3u8?token=fixture",
+            "https://d1--cn-gotcha08.bilivideo.cn/live-bvc/live.flv?token=fixture",
+        ] {
+            assert!(validate_live_media_url(value).is_ok());
+        }
+
+        for value in [
+            "http://d1--cn-gotcha104.bilivideo.com/live-bvc/index.m3u8",
+            "https://d1--cn-gotcha104.bilivideo.com/video/index.m3u8",
+            "https://d1--cn-gotcha104.bilivideo.com.evil.invalid/live-bvc/index.m3u8",
+            "https://bilivideo.com@evil.invalid/live-bvc/index.m3u8",
+            "https://d1--cn-gotcha104.bilivideo.com:8443/live-bvc/index.m3u8",
+        ] {
+            assert!(validate_live_media_url(value).is_err());
+        }
+    }
 
     #[test]
     fn feed_fixtures_map_to_the_unified_video_card() {

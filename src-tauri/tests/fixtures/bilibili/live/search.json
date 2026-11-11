@@ -1,0 +1,30 @@
+{
+  "code": 0,
+  "message": "OK",
+  "data": {
+    "page": 1,
+    "pagesize": 20,
+    "numResults": 35,
+    "numPages": 2,
+    "result": [
+      {
+        "roomid": 1001,
+        "title": "Fixture live room",
+        "uname": "Fixture anchor",
+        "user_cover": "https://example.invalid/search-cover.jpg",
+        "uface": "//example.invalid/search-avatar.jpg",
+        "online": 12345,
+        "live_status": 1,
+        "cate_name": "<em class=\"keyword\">英雄联盟</em>"
+      },
+      {
+        "roomid": 2002,
+        "title": "Second fixture",
+        "uname": "Second anchor",
+        "cover": "https://example.invalid/second.jpg",
+        "online": "7",
+        "live_status": "0"
+      }
+    ]
+  }
+}

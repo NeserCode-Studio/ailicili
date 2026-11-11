@@ -6,6 +6,7 @@ import {
   LayoutGrid,
   Loader2,
   LogIn,
+  Radio,
   RefreshCw,
   Search,
   Settings2,
@@ -369,6 +370,15 @@ export default function Home() {
           </div>
 
           <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => navigator("/live")}
+            >
+              <Radio />
+              {t("Home.live")}
+            </Button>
             <Button
               type="button"
               variant="ghost"
