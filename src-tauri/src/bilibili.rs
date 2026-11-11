@@ -1,12 +1,12 @@
 use crate::domain::{
-    CommentAuthor, CommentEmote, CommentPage, CommentPicture, CommentReplyPage, CommentSort,
-    LiveDiscovery, LivePlaybackInfo, LiveRoomInfo, PagedLiveRooms, PagedVideos, PlaybackInfo,
-    QualityNotice, QualityNoticeKind, QualityOption, StreamProtocol, StreamSource, VideoCard,
-    VideoComment, VideoDetail, VideoPage, VideoSourceKind, VideoStats,
+    CommandError, CommentAuthor, CommentEmote, CommentPage, CommentPicture, CommentReplyPage,
+    CommentSort, LiveDiscovery, LivePlaybackInfo, LiveRoomInfo, PagedLiveRooms, PagedVideos,
+    PlaybackInfo, QualityNotice, QualityNoticeKind, QualityOption, StreamProtocol, StreamSource,
+    VideoCard, VideoComment, VideoDetail, VideoPage, VideoSourceKind, VideoStats,
 };
 use crate::{
-    account::{SessionCookies, SharedSession},
     device::DeviceManager,
+    platforms::bilibili::{SessionCookies, SharedSession},
     wbi,
 };
 use log::{info, warn};
@@ -45,12 +45,61 @@ pub enum BiliError {
     RateLimited,
     #[error("no compatible stream")]
     NoCompatibleStream,
-    #[error("credential store locked")]
-    CredentialLocked,
-    #[error("credential store: {0}")]
-    CredentialStore(String),
     #[error("storage: {0}")]
     Storage(String),
+}
+
+impl From<BiliError> for CommandError {
+    fn from(error: BiliError) -> Self {
+        match &error {
+            BiliError::Network(_) => CommandError::with_action(
+                "networkError",
+                "网络请求失败，请检查网络后重试。",
+                "retry",
+            ),
+            BiliError::Api { code: -101, .. } | BiliError::LoginExpired => {
+                CommandError::with_action("loginExpired", "登录状态已失效，请重新登录。", "login")
+            }
+            BiliError::Api { code: 1006, .. } => {
+                CommandError::with_action("smsCodeInvalid", "短信验证码不正确。", "editCode")
+            }
+            BiliError::Api { code: 1007, .. } => CommandError::with_action(
+                "smsCodeExpired",
+                "短信验证码已过期，请重新获取。",
+                "refresh",
+            ),
+            BiliError::Api { code: -400, .. } => CommandError::with_action(
+                "smsRequestInvalid",
+                "短信请求参数无效，请检查区号和手机号。",
+                "editPhone",
+            ),
+            BiliError::Api { code: -352, .. } => CommandError::with_action(
+                "riskControl",
+                "平台风控校验未通过，请稍后重试或重新登录。",
+                "retryLater",
+            ),
+            BiliError::Api { code: -412, .. } | BiliError::RateLimited => {
+                CommandError::with_action("rateLimited", "请求过于频繁，请稍后再试。", "retryLater")
+            }
+            BiliError::Api { code, .. } => CommandError::new(
+                format!("bilibiliApiError:{code}"),
+                "平台返回了未处理的错误。",
+            ),
+            BiliError::AuthRequired => {
+                CommandError::with_action("authRequired", "此操作需要登录。", "login")
+            }
+            BiliError::NoCompatibleStream => CommandError::new(
+                "noCompatibleStream",
+                "当前账号或视频没有可播放的兼容 MP4 流。",
+            ),
+            BiliError::Storage(_) => {
+                CommandError::new("storageError", "本地数据读写失败，请检查应用数据目录权限。")
+            }
+            BiliError::Invalid(_) => {
+                CommandError::new("invalidResponse", "平台响应格式异常，请稍后重试。")
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -179,6 +228,35 @@ impl BilibiliClient {
         Ok(())
     }
 
+    pub(crate) fn invalidate_wbi_cache(&self) -> Result<(), BiliError> {
+        *self
+            .wbi_cache
+            .lock()
+            .map_err(|_| BiliError::Storage("WBI cache lock poisoned".to_string()))? = None;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn seed_wbi_cache_for_test(&self) {
+        *self.wbi_cache.lock().expect("WBI cache lock") = Some(WbiCache {
+            mixin_key: "cached-key".to_string(),
+            expires_at: Instant::now() + Duration::from_secs(60),
+        });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_wbi_cache_for_test(&self) -> bool {
+        self.wbi_cache.lock().expect("WBI cache lock").is_some()
+    }
+
+    pub(crate) fn replace_session(&self, session: Option<SessionCookies>) -> Result<(), BiliError> {
+        *self
+            .session
+            .write()
+            .map_err(|_| BiliError::Storage("session lock poisoned".to_string()))? = session;
+        Ok(())
+    }
+
     async fn get_json(&self, path: &str, query: &[(&str, String)]) -> Result<Value, BiliError> {
         let session = self.session_snapshot()?;
         let query = query
@@ -186,7 +264,7 @@ impl BilibiliClient {
             .map(|(key, value)| ((*key).to_string(), value.clone()))
             .collect::<Vec<_>>();
         let root = self.api_root(path, &query, session.as_ref()).await?;
-        ensure_api_success(&root)?;
+        self.clear_wbi_on_login_expired(ensure_api_success(&root))?;
         Ok(root)
     }
 
@@ -282,10 +360,11 @@ impl BilibiliClient {
         let mut key = self.wbi_mixin_key(false, session.as_ref()).await?;
         let timestamp = chrono::Utc::now().timestamp().max(0) as u64;
         let signed = wbi::sign_params(query.clone(), &key, timestamp);
-        let first = self
-            .api_root(path, &signed, session.as_ref())
-            .await
-            .and_then(ensure_wbi_success);
+        let first = self.clear_wbi_on_login_expired(
+            self.api_root(path, &signed, session.as_ref())
+                .await
+                .and_then(ensure_wbi_success),
+        );
         match first {
             Ok(root) => Ok(root),
             Err(BiliError::Api { code: -352, .. }) => {
@@ -293,9 +372,11 @@ impl BilibiliClient {
                 key = self.wbi_mixin_key(true, session.as_ref()).await?;
                 let timestamp = chrono::Utc::now().timestamp().max(0) as u64;
                 let signed = wbi::sign_params(query, &key, timestamp);
-                self.api_root(path, &signed, session.as_ref())
-                    .await
-                    .and_then(ensure_wbi_success)
+                self.clear_wbi_on_login_expired(
+                    self.api_root(path, &signed, session.as_ref())
+                        .await
+                        .and_then(ensure_wbi_success),
+                )
             }
             Err(err) => Err(err),
         }
@@ -310,10 +391,11 @@ impl BilibiliClient {
         let mut key = self.wbi_mixin_key(false, session.as_ref()).await?;
         let timestamp = chrono::Utc::now().timestamp().max(0) as u64;
         let signed = wbi::sign_params(query.clone(), &key, timestamp);
-        let first = self
-            .live_api_root(path, &signed, session.as_ref())
-            .await
-            .and_then(ensure_wbi_success);
+        let first = self.clear_wbi_on_login_expired(
+            self.live_api_root(path, &signed, session.as_ref())
+                .await
+                .and_then(ensure_wbi_success),
+        );
         match first {
             Ok(root) => Ok(root),
             Err(BiliError::Api { code: -352, .. }) => {
@@ -321,12 +403,22 @@ impl BilibiliClient {
                 key = self.wbi_mixin_key(true, session.as_ref()).await?;
                 let timestamp = chrono::Utc::now().timestamp().max(0) as u64;
                 let signed = wbi::sign_params(query, &key, timestamp);
-                self.live_api_root(path, &signed, session.as_ref())
-                    .await
-                    .and_then(ensure_wbi_success)
+                self.clear_wbi_on_login_expired(
+                    self.live_api_root(path, &signed, session.as_ref())
+                        .await
+                        .and_then(ensure_wbi_success),
+                )
             }
             Err(err) => Err(err),
         }
+    }
+
+    fn clear_wbi_on_login_expired<T>(&self, result: Result<T, BiliError>) -> Result<T, BiliError> {
+        if matches!(&result, Err(BiliError::LoginExpired)) {
+            warn!(target: "Bilibili", "login expired, clearing WBI cache");
+            self.invalidate_wbi_cache()?;
+        }
+        result
     }
 
     async fn wbi_mixin_key(
@@ -453,6 +545,7 @@ impl BilibiliClient {
             .and_then(Value::as_bool)
             .unwrap_or(false);
         if code == -101 || !is_login {
+            self.invalidate_wbi_cache()?;
             return Err(BiliError::LoginExpired);
         }
         if code != 0 {
@@ -871,7 +964,7 @@ impl BilibiliClient {
             query.push(("next".to_string(), next.to_string()));
         }
         let root = self.comment_api_root("/x/v2/reply/main", &query).await?;
-        ensure_api_success(&root)?;
+        self.clear_wbi_on_login_expired(ensure_api_success(&root))?;
         parse_comment_page(&root)
     }
 
@@ -899,7 +992,7 @@ impl BilibiliClient {
                 ],
             )
             .await?;
-        ensure_api_success(&root)?;
+        self.clear_wbi_on_login_expired(ensure_api_success(&root))?;
         parse_comment_reply_page(&root, page)
     }
 
@@ -960,7 +1053,7 @@ impl BilibiliClient {
                 session.as_ref(),
             )
             .await?;
-        ensure_api_success(&root)?;
+        self.clear_wbi_on_login_expired(ensure_api_success(&root))?;
         crate::live::parse_discovery(&root).map_err(BiliError::Invalid)
     }
 
@@ -2254,7 +2347,7 @@ fn parse_card_with_source(value: &Value, source_kind: VideoSourceKind) -> Option
     });
 
     Some(VideoCard {
-        platform: crate::domain::Platform::Bilibili,
+        platform: crate::domain::PlatformId::bilibili(),
         video_id,
         title,
         cover_url: value
@@ -2301,7 +2394,7 @@ fn parse_search_card(value: &Value) -> Option<VideoCard> {
     };
 
     Some(VideoCard {
-        platform: crate::domain::Platform::Bilibili,
+        platform: crate::domain::PlatformId::bilibili(),
         video_id,
         title,
         cover_url: value.get("pic").and_then(Value::as_str).map(normalize_url),
@@ -2364,7 +2457,7 @@ fn parse_duration_text(value: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{CommandError, Platform};
+    use crate::domain::{CommandError, PlatformId};
     use serde_json::json;
 
     #[test]
@@ -2393,7 +2486,7 @@ mod tests {
             serde_json::from_str(include_str!("../tests/fixtures/bilibili/feed/popular.json"))
                 .unwrap();
         let popular_card = parse_card(&popular["data"]["list"][0]).unwrap();
-        assert_eq!(popular_card.platform, Platform::Bilibili);
+        assert_eq!(popular_card.platform, PlatformId::bilibili());
         assert_eq!(popular_card.source_kind, VideoSourceKind::Popular);
         assert_eq!(popular_card.owner.unwrap().name, "Popular owner");
 
@@ -2849,6 +2942,21 @@ mod tests {
         }));
 
         assert!(matches!(result, Err(BiliError::Api { code: -352, .. })));
+    }
+
+    #[test]
+    fn login_expiry_clears_cached_wbi_key() {
+        let client = BilibiliClient::new(Arc::new(std::sync::RwLock::new(None))).expect("client");
+        *client.wbi_cache.lock().unwrap() = Some(WbiCache {
+            mixin_key: "cached-key".to_string(),
+            expires_at: Instant::now() + Duration::from_secs(60),
+        });
+
+        let result: Result<(), BiliError> =
+            client.clear_wbi_on_login_expired(Err(BiliError::LoginExpired));
+
+        assert!(matches!(result, Err(BiliError::LoginExpired)));
+        assert!(client.wbi_cache.lock().unwrap().is_none());
     }
 
     #[test]

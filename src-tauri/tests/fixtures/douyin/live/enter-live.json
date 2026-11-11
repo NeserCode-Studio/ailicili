@@ -1,0 +1,51 @@
+{
+  "status_code": 0,
+  "data": {
+    "user": {
+      "nickname": "Fixture anchor"
+    },
+    "data": [
+      {
+        "id_str": "7000000000000000001",
+        "status": 2,
+        "title": "Fixture live room",
+        "live_start_time": 1700000000,
+        "owner": {
+          "id_str": "12345",
+          "nickname": "Fixture anchor",
+          "avatar_thumb": {
+            "url_list": [
+              "https://example.invalid/avatar.jpg"
+            ]
+          }
+        },
+        "cover": {
+          "url_list": [
+            "https://example.invalid/cover.jpg"
+          ]
+        },
+        "room_tag": [
+          {
+            "tag_name": "Fixture tag"
+          },
+          {
+            "tag_name": "Second tag"
+          }
+        ],
+        "stream_url": {
+          "default_resolution": "HD1",
+          "hls_pull_url_map": {
+            "FULL_HD1": "https://pull-hls-f1.douyincdn.com/live/FULL_HD1.m3u8?token=fixture",
+            "HD1": "https://pull-hls-f1.douyincdn.com/live/HD1.m3u8?token=fixture",
+            "SD1": "https://pull-hls-f1.douyincdn.com/live/SD1.m3u8?token=fixture"
+          },
+          "flv_pull_url": {
+            "FULL_HD1": "https://pull-flv-f1.douyincdn.com/live/FULL_HD1.flv?token=fixture",
+            "HD1": "https://pull-flv-f1.douyincdn.com/live/HD1.flv?token=fixture",
+            "SD1": "https://pull-flv-f1.douyincdn.com/live/SD1.flv?token=fixture"
+          }
+        }
+      }
+    ]
+  }
+}

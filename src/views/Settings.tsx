@@ -2,7 +2,7 @@ import { TitleContext } from "@/contexts/title";
 import { useLocalStorageState } from "ahooks";
 import { useContext, useEffect, useMemo, useState } from "react";
 import { useI18n, useToast } from "@/composables";
-import AccountAvatar from "@/components/account/AccountAvatar";
+import AccountCenter from "@/components/account/AccountCenter";
 import {
   SettingInputItem,
   SettingOptionalItem,
@@ -12,36 +12,17 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
-  AlertTriangle,
   CheckCircle2,
   ChevronRight,
   Clock,
   History,
-  LogIn,
-  LogOut,
-  RefreshCw,
   Search,
   Settings2,
-  ShieldOff,
   Trash2,
   UserRound,
 } from "lucide-react";
 
 import type { SettingSelectItemItem } from "@/shared";
-import { useAccount } from "@/contexts/account-context";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-import { commandErrorKey } from "@/lib/command-error";
-import { asCommandError } from "@/api/account";
 import {
   setRecommendationPriority,
   useRecommendationPriority,
@@ -132,16 +113,6 @@ export default function Settings({
   const { success, error } = useToast({
     duration: 2000,
   });
-  const {
-    account,
-    capabilities,
-    loading: accountLoading,
-    error: accountError,
-    openLogin,
-    refresh: refreshAccount,
-    logout,
-    resetDeviceIdentity,
-  } = useAccount();
 
   /* 搜索历史 + 修改记录（localStorage 持久化） */
   const [searchHistory, setSearchHistory] = useLocalStorageState<string[]>(
@@ -457,166 +428,7 @@ export default function Settings({
         </TabsContent>
 
         <TabsContent value="account" className="mt-5">
-          <div className="flex flex-col gap-4">
-            <p className="text-muted-sm">{t("Settings.account.description")}</p>
-
-            <section className="rounded-lg border p-4">
-              <div className="flex items-start gap-3">
-                <AccountAvatar
-                  src={account?.profile?.avatarUrl}
-                  className="size-10"
-                  fallback={
-                    account?.status === "expired" ||
-                    account?.status === "locked" ? (
-                      <AlertTriangle className="size-5 text-amber-500" />
-                    ) : (
-                      <UserRound className="text-muted-foreground size-5" />
-                    )
-                  }
-                />
-
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="truncate text-sm font-medium">
-                      {account?.profile?.name ??
-                        t(`Account.status.${account?.status ?? "anonymous"}`)}
-                    </p>
-                    <span className="text-muted-foreground rounded-full border px-2 py-0.5 text-[11px]">
-                      {t(`Account.status.${account?.status ?? "anonymous"}`)}
-                    </span>
-                  </div>
-                  <p className="text-muted-xs mt-1">
-                    {accountLoading
-                      ? t("Account.settings.loading")
-                      : account?.messageCode
-                        ? t(`Account.message.${account.messageCode}`)
-                        : t("Account.settings.localSession")}
-                  </p>
-                  {accountError ? (
-                    <p className="text-destructive mt-2 text-xs">
-                      {t(commandErrorKey(accountError))}
-                    </p>
-                  ) : null}
-                </div>
-              </div>
-
-              <div className="mt-4 flex flex-wrap gap-2">
-                {account?.status === "authenticated" ? (
-                  <>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={accountLoading}
-                      onClick={() => {
-                        void refreshAccount()
-                          .then(() =>
-                            success("Account.settings.refreshSuccess")
-                          )
-                          .catch((reason) =>
-                            error(commandErrorKey(asCommandError(reason)))
-                          );
-                      }}
-                    >
-                      <RefreshCw
-                        className={accountLoading ? "animate-spin" : ""}
-                      />
-                      {t("Account.settings.refresh")}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        void logout()
-                          .then(() => success("Account.settings.logoutSuccess"))
-                          .catch((reason) =>
-                            error(commandErrorKey(asCommandError(reason)))
-                          );
-                      }}
-                    >
-                      <LogOut />
-                      {t("Account.settings.logout")}
-                    </Button>
-                  </>
-                ) : (
-                  <Button
-                    type="button"
-                    size="sm"
-                    disabled={
-                      !capabilities ||
-                      (!capabilities.qrAvailable && !capabilities.smsAvailable)
-                    }
-                    onClick={() =>
-                      openLogin(
-                        capabilities?.qrAvailable === false ? "sms" : "qr"
-                      )
-                    }
-                  >
-                    <LogIn />
-                    {t("Account.settings.login")}
-                  </Button>
-                )}
-              </div>
-            </section>
-
-            <section className="rounded-lg border p-4">
-              <p className="text-sm font-medium">
-                {t("Account.settings.methodsTitle")}
-              </p>
-              <p className="text-muted-xs mt-1">
-                {capabilities &&
-                !capabilities.qrAvailable &&
-                !capabilities.smsAvailable
-                  ? t("Account.settings.methodsUnavailable")
-                  : capabilities?.qrAvailable
-                    ? t("Account.settings.methodsBoth")
-                    : t("Account.settings.methodsSms")}
-              </p>
-            </section>
-
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="text-destructive self-start"
-                >
-                  <ShieldOff />
-                  {t("Account.settings.resetDevice")}
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>
-                    {t("Account.settings.resetDeviceTitle")}
-                  </AlertDialogTitle>
-                  <AlertDialogDescription>
-                    {t("Account.settings.resetDeviceDescription")}
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>
-                    {t("Account.settings.cancel")}
-                  </AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={() => {
-                      void resetDeviceIdentity()
-                        .then(() =>
-                          success("Account.settings.resetDeviceSuccess")
-                        )
-                        .catch((reason) =>
-                          error(commandErrorKey(asCommandError(reason)))
-                        );
-                    }}
-                  >
-                    {t("Account.settings.confirmReset")}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          </div>
+          <AccountCenter />
         </TabsContent>
       </Tabs>
     </div>

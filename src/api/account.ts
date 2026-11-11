@@ -1,5 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 
+import type {
+  LoginMethod,
+  PlatformDescriptor,
+  PlatformId,
+} from "@/api/platforms";
+
 export interface CommandError {
   code: string;
   message: string;
@@ -23,10 +29,76 @@ export interface BilibiliAccount {
   messageCode?: string;
 }
 
+export interface PlatformAccountEntry {
+  platform: PlatformDescriptor;
+  status: AccountStatus;
+  profile?: AccountProfile;
+  messageCode?: string;
+  revision: number;
+}
+
+export interface AccountCenterSnapshot {
+  platforms: PlatformAccountEntry[];
+}
+
 export interface LoginCapabilities {
   credentialStorageAvailable: boolean;
   qrAvailable: boolean;
   smsAvailable: boolean;
+}
+
+export type PlatformLoginChallenge =
+  | {
+      kind: "qr";
+      imageDataUrl: string;
+    }
+  | {
+      kind: "smsCaptcha";
+      provider: CaptchaProvider;
+      gt?: string;
+      challenge?: string;
+      tencentAppId?: string;
+    };
+
+export type PlatformLoginInput =
+  | {
+      kind: "smsCaptcha";
+      countryCode: string;
+      phone: string;
+      challenge: string;
+      validate: string;
+      seccode: string;
+    }
+  | {
+      kind: "smsCode";
+      code: string;
+    };
+
+export interface PlatformLoginStart {
+  platformId: PlatformId;
+  flowId: string;
+  method: LoginMethod;
+  challenge: PlatformLoginChallenge;
+  expiresInSeconds: number;
+}
+
+export type PlatformLoginState =
+  | { status: "pending" }
+  | { status: "scanned" }
+  | {
+      status: "smsCodeSent";
+      retryAfterSeconds: number;
+      expiresInSeconds: number;
+    }
+  | { status: "succeeded"; account: PlatformAccountEntry }
+  | { status: "expired" }
+  | { status: "failed" };
+
+export interface PlatformLoginEvent {
+  platformId: PlatformId;
+  flowId: string;
+  state: PlatformLoginState;
+  messageCode?: string;
 }
 
 export type QrLoginStatus =
@@ -89,6 +161,63 @@ export function asCommandError(error: unknown): CommandError {
 
 export async function getBilibiliLoginCapabilities(): Promise<LoginCapabilities> {
   return invoke("get_bilibili_login_capabilities");
+}
+
+export async function getAccountCenterSnapshot(): Promise<AccountCenterSnapshot> {
+  return invoke("get_account_center_snapshot");
+}
+
+export async function getPlatformLoginCapabilities(
+  platformId: PlatformId
+): Promise<LoginCapabilities> {
+  return invoke("get_platform_login_capabilities", { platformId });
+}
+
+export async function refreshPlatformAccount(
+  platformId: PlatformId
+): Promise<AccountCenterSnapshot> {
+  return invoke("refresh_platform_account", { platformId });
+}
+
+export async function logoutPlatformAccount(
+  platformId: PlatformId
+): Promise<AccountCenterSnapshot> {
+  return invoke("logout_platform_account", { platformId });
+}
+
+export async function resetPlatformDeviceIdentity(
+  platformId: PlatformId
+): Promise<void> {
+  return invoke("reset_platform_device_identity", { platformId });
+}
+
+export async function startPlatformLogin(
+  platformId: PlatformId,
+  method: LoginMethod
+): Promise<PlatformLoginStart> {
+  return invoke("start_platform_login", { platformId, method });
+}
+
+export async function pollPlatformLogin(
+  platformId: PlatformId,
+  flowId: string
+): Promise<PlatformLoginEvent> {
+  return invoke("poll_platform_login", { platformId, flowId });
+}
+
+export async function submitPlatformLoginInput(
+  platformId: PlatformId,
+  flowId: string,
+  input: PlatformLoginInput
+): Promise<PlatformLoginEvent> {
+  return invoke("submit_platform_login_input", { platformId, flowId, input });
+}
+
+export async function cancelPlatformLogin(
+  platformId: PlatformId,
+  flowId: string
+): Promise<void> {
+  return invoke("cancel_platform_login", { platformId, flowId });
 }
 
 export async function getBilibiliAccount(): Promise<BilibiliAccount> {

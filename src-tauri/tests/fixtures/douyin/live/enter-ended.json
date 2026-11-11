@@ -1,0 +1,27 @@
+{
+  "status_code": 0,
+  "data": {
+    "user": {
+      "nickname": "Ended fixture anchor"
+    },
+    "data": [
+      {
+        "id_str": "7000000000000000002",
+        "status": 4,
+        "title": "Ended fixture room",
+        "owner": {
+          "nickname": "Ended fixture anchor"
+        },
+        "stream_url": {
+          "default_resolution": "HD1",
+          "hls_pull_url_map": {
+            "HD1": "https://pull-hls-f1.douyincdn.com/live/stale.m3u8?token=fixture"
+          },
+          "flv_pull_url": {
+            "HD1": "https://pull-flv-f1.douyincdn.com/live/stale.flv?token=fixture"
+          }
+        }
+      }
+    ]
+  }
+}

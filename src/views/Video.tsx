@@ -305,7 +305,7 @@ function PlayerPausePanel({
                     className="text-foreground hover:text-foreground/75 focus-visible:ring-ring font-medium underline underline-offset-4 focus-visible:ring-2 focus-visible:outline-none"
                     onClick={onLogin}
                   >
-                    {t("Account.titlebar.login")}
+                    {t("Account.titlebar.center")}
                   </button>
                 ) : null}
               </div>
@@ -1533,7 +1533,12 @@ export default function VideoView() {
   const { videoId = "" } = useParams();
   const [searchParams] = useSearchParams();
   const { navigator } = useNavigatorContext();
-  const { openLogin } = useAccount();
+  const {
+    accountRevisions,
+    openLogin,
+    openAccountCenter,
+    snapshot: accountSnapshot,
+  } = useAccount();
   const {
     info: toastInfo,
     success: toastSuccess,
@@ -1566,9 +1571,19 @@ export default function VideoView() {
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [error, setError] = useState<CommandError | null>(null);
   const loadRequestIdRef = useRef(0);
+  const accountRevisionRef = useRef(0);
   const favoriteRequestIdRef = useRef(0);
   const historySaveKeyRef = useRef<string | null>(null);
   const lastHistorySaveAtRef = useRef(0);
+  const videoPlatformId = accountSnapshot?.platforms.find(
+    (entry) =>
+      entry.platform.contentKinds.includes("video") &&
+      entry.platform.accountCapability.mode !== "none"
+  )?.platform.id;
+  const accountRevision = videoPlatformId
+    ? (accountRevisions[videoPlatformId] ?? 0)
+    : 0;
+  accountRevisionRef.current = accountRevision;
 
   const handlePlaybackError = useCallback((message: string) => {
     setError({ code: "playbackError", message });
@@ -1576,12 +1591,18 @@ export default function VideoView() {
 
   const load = useCallback(async () => {
     const requestId = ++loadRequestIdRef.current;
+    const revision = accountRevision;
     setError(null);
     setDetail(null);
     setPlayback(null);
     try {
       const videoDetail = await getVideoDetail(videoId);
-      if (requestId !== loadRequestIdRef.current) return;
+      if (
+        requestId !== loadRequestIdRef.current ||
+        revision !== accountRevisionRef.current
+      ) {
+        return;
+      }
       log.info("detail loaded", {
         videoId,
         resolvedId: videoDetail.card.videoId,
@@ -1595,7 +1616,12 @@ export default function VideoView() {
         videoDetail.pages[0];
       if (!page) throw new Error("No playable page");
       const info = await getVideoPlayback(videoId, page.cid);
-      if (requestId !== loadRequestIdRef.current) return;
+      if (
+        requestId !== loadRequestIdRef.current ||
+        revision !== accountRevisionRef.current
+      ) {
+        return;
+      }
       const playableStreams = info.streams.filter(canPlayDashStream);
       const selectedStream = playableStreams[0] ?? info.streams[0];
       log.info("playback loaded", {
@@ -1622,11 +1648,16 @@ export default function VideoView() {
       setStreamIndex(info.streams.indexOf(selectedStream));
       setPlayback(info);
     } catch (err) {
-      if (requestId !== loadRequestIdRef.current) return;
+      if (
+        requestId !== loadRequestIdRef.current ||
+        revision !== accountRevisionRef.current
+      ) {
+        return;
+      }
       log.error("video load failed", { videoId, err });
       setError(asCommandError(err));
     }
-  }, [requestedPageCid, requestedResumeTime, videoId]);
+  }, [accountRevision, requestedPageCid, requestedResumeTime, videoId]);
 
   useEffect(() => {
     void load();
@@ -1692,6 +1723,7 @@ export default function VideoView() {
             title: detail.card.title,
             coverUrl: detail.card.coverUrl,
             ownerName: detail.card.owner?.name,
+            ownerAvatarUrl: detail.card.owner?.avatarUrl,
           });
       setFavorite(
         entries.find((entry) => favoriteMatches(entry, target)) ?? null
@@ -1798,7 +1830,7 @@ export default function VideoView() {
               onPlaybackError={handlePlaybackError}
               onBack={() => navigator(backPath)}
               onRetry={() => void load()}
-              onLogin={() => openLogin()}
+              onLogin={openAccountCenter}
               onCommentsOpenChange={setCommentsOpen}
             />
           </VideoPlayer>
@@ -1822,7 +1854,7 @@ export default function VideoView() {
               })
             }
             onRetry={() => void load()}
-            onLogin={() => openLogin()}
+            onLogin={openAccountCenter}
             onComments={() => setCommentsOpen(true)}
             commentsEnabled={Boolean(detail?.aid)}
           />

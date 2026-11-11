@@ -4,6 +4,8 @@ import type {
   HistoryEntry,
   VideoCard,
 } from "@/api/media";
+import type { PlatformId } from "@/api/platforms";
+import { liveRoomPath } from "@/lib/live-routes";
 
 export function favoriteTargetForVideo(video: VideoCard): FavoriteTarget {
   return {
@@ -13,9 +15,12 @@ export function favoriteTargetForVideo(video: VideoCard): FavoriteTarget {
   };
 }
 
-export function favoriteTargetForLiveRoom(roomId: string): FavoriteTarget {
+export function favoriteTargetForLiveRoom(
+  platform: PlatformId,
+  roomId: string
+): FavoriteTarget {
   return {
-    platform: "bilibili",
+    platform,
     kind: "liveRoom",
     targetId: roomId,
   };
@@ -37,7 +42,7 @@ export function favoriteVideoPath(entry: FavoriteEntry): string {
 }
 
 export function favoriteLiveRoomPath(entry: FavoriteEntry): string {
-  return `/live/${encodeURIComponent(entry.target.targetId)}?from=favorites`;
+  return `${liveRoomPath(entry.target.platform, entry.target.targetId)}?from=favorites`;
 }
 
 export function favoriteEntryPath(entry: FavoriteEntry): string {

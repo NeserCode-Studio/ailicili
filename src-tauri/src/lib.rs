@@ -11,17 +11,136 @@ mod device;
 mod domain;
 mod live;
 mod live_media;
+mod platforms;
 mod storage;
 mod wbi;
 
 struct AppState {
     bilibili: bilibili::BilibiliClient,
+    platforms: platforms::PlatformRegistry,
     account: account::AccountManager,
 }
 
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
+}
+
+#[tauri::command]
+fn get_platform_catalog(state: tauri::State<'_, AppState>) -> Vec<domain::PlatformDescriptor> {
+    state.platforms.catalog()
+}
+
+#[tauri::command]
+fn get_account_center_snapshot(
+    state: tauri::State<'_, AppState>,
+) -> Result<domain::AccountCenterSnapshot, domain::CommandError> {
+    state.account.account_center_snapshot().map_err(Into::into)
+}
+
+#[tauri::command]
+fn get_platform_login_capabilities(
+    state: tauri::State<'_, AppState>,
+    platform_id: String,
+) -> Result<domain::LoginCapabilities, domain::CommandError> {
+    let platform_id = explicit_platform_id(platform_id)?;
+    state
+        .account
+        .login_capabilities(&platform_id)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn refresh_platform_account(
+    state: tauri::State<'_, AppState>,
+    platform_id: String,
+) -> Result<domain::AccountCenterSnapshot, domain::CommandError> {
+    let platform_id = explicit_platform_id(platform_id)?;
+    state
+        .account
+        .refresh_platform_account(&platform_id)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn logout_platform_account(
+    state: tauri::State<'_, AppState>,
+    platform_id: String,
+) -> Result<domain::AccountCenterSnapshot, domain::CommandError> {
+    let platform_id = explicit_platform_id(platform_id)?;
+    state
+        .account
+        .logout_platform_account(&platform_id)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn reset_platform_device_identity(
+    state: tauri::State<'_, AppState>,
+    platform_id: String,
+) -> Result<(), domain::CommandError> {
+    let platform_id = explicit_platform_id(platform_id)?;
+    state
+        .account
+        .reset_platform_device_identity(&platform_id)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn start_platform_login(
+    state: tauri::State<'_, AppState>,
+    platform_id: String,
+    method: domain::LoginMethod,
+) -> Result<domain::PlatformLoginStart, domain::CommandError> {
+    let platform_id = explicit_platform_id(platform_id)?;
+    state
+        .account
+        .start_platform_login(&platform_id, method)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn poll_platform_login(
+    state: tauri::State<'_, AppState>,
+    platform_id: String,
+    flow_id: String,
+) -> Result<domain::PlatformLoginEvent, domain::CommandError> {
+    let platform_id = explicit_platform_id(platform_id)?;
+    state
+        .account
+        .poll_platform_login(&platform_id, &flow_id)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn submit_platform_login_input(
+    state: tauri::State<'_, AppState>,
+    platform_id: String,
+    flow_id: String,
+    input: domain::PlatformLoginInput,
+) -> Result<domain::PlatformLoginEvent, domain::CommandError> {
+    let platform_id = explicit_platform_id(platform_id)?;
+    state
+        .account
+        .submit_platform_login_input(&platform_id, &flow_id, input)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn cancel_platform_login(
+    state: tauri::State<'_, AppState>,
+    platform_id: String,
+    flow_id: String,
+) -> Result<(), domain::CommandError> {
+    let platform_id = explicit_platform_id(platform_id)?;
+    state
+        .account
+        .cancel_platform_login(&platform_id, &flow_id)
+        .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -131,8 +250,15 @@ async fn get_search_videos(
 #[tauri::command]
 async fn get_live_discovery(
     state: tauri::State<'_, AppState>,
+    platform_id: Option<String>,
 ) -> Result<domain::LiveDiscovery, domain::CommandError> {
-    state.bilibili.live_discovery().await.map_err(Into::into)
+    let platform_id = requested_platform_id(platform_id)?;
+    state
+        .platforms
+        .live_adapter(&platform_id)?
+        .discover()
+        .await
+        .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -140,10 +266,13 @@ async fn search_live_rooms(
     state: tauri::State<'_, AppState>,
     keyword: String,
     page: u32,
+    platform_id: Option<String>,
 ) -> Result<domain::PagedLiveRooms, domain::CommandError> {
+    let platform_id = requested_platform_id(platform_id)?;
     state
-        .bilibili
-        .search_live_rooms(&keyword, page)
+        .platforms
+        .live_adapter(&platform_id)?
+        .search(&keyword, page)
         .await
         .map_err(Into::into)
 }
@@ -152,10 +281,13 @@ async fn search_live_rooms(
 async fn get_live_room_info(
     state: tauri::State<'_, AppState>,
     room_id: String,
+    platform_id: Option<String>,
 ) -> Result<domain::LiveRoomInfo, domain::CommandError> {
+    let platform_id = requested_platform_id(platform_id)?;
     state
-        .bilibili
-        .live_room_info(&room_id)
+        .platforms
+        .live_adapter(&platform_id)?
+        .room_info(&room_id)
         .await
         .map_err(Into::into)
 }
@@ -165,50 +297,60 @@ async fn get_live_room_playback(
     state: tauri::State<'_, AppState>,
     room_id: String,
     quality: i64,
+    platform_id: Option<String>,
 ) -> Result<domain::LivePlaybackInfo, domain::CommandError> {
+    let platform_id = requested_platform_id(platform_id)?;
     state
-        .bilibili
-        .live_room_playback(&room_id, quality)
+        .platforms
+        .live_adapter(&platform_id)?
+        .room_playback(&room_id, quality)
         .await
         .map_err(Into::into)
 }
 
 #[tauri::command]
-fn get_bilibili_login_capabilities(state: tauri::State<'_, AppState>) -> domain::LoginCapabilities {
-    state.account.login_capabilities()
+fn get_bilibili_login_capabilities(
+    state: tauri::State<'_, AppState>,
+) -> Result<domain::LoginCapabilities, domain::CommandError> {
+    state
+        .account
+        .login_capabilities(&domain::PlatformId::bilibili())
+        .map_err(Into::into)
 }
 
 #[tauri::command]
 async fn get_bilibili_account(
     state: tauri::State<'_, AppState>,
 ) -> Result<domain::BilibiliAccount, domain::CommandError> {
-    state
-        .account
-        .get_account(&state.bilibili)
-        .await
-        .map_err(Into::into)
+    refresh_bilibili_account(state).await
 }
 
 #[tauri::command]
 async fn refresh_bilibili_account(
     state: tauri::State<'_, AppState>,
 ) -> Result<domain::BilibiliAccount, domain::CommandError> {
-    state
-        .account
-        .refresh_account(&state.bilibili)
-        .await
-        .map_err(Into::into)
+    let platform_id = domain::PlatformId::bilibili();
+    state.account.refresh_platform_account(&platform_id).await?;
+    let entry = state.account.platform_account_entry(&platform_id)?;
+    Ok(account::legacy_account(&entry))
 }
 
 #[tauri::command]
 async fn start_bilibili_qr_login(
     state: tauri::State<'_, AppState>,
 ) -> Result<domain::QrLoginStart, domain::CommandError> {
-    state
+    let start = state
         .account
-        .start_qr_login(&state.bilibili)
-        .await
-        .map_err(Into::into)
+        .start_platform_login(&domain::PlatformId::bilibili(), domain::LoginMethod::Qr)
+        .await?;
+    let domain::PlatformLoginChallenge::Qr { image_data_url } = start.challenge else {
+        return Err(invalid_login_flow());
+    };
+    Ok(domain::QrLoginStart {
+        login_id: start.flow_id,
+        image_data_url,
+        expires_in_seconds: start.expires_in_seconds,
+    })
 }
 
 #[tauri::command]
@@ -216,11 +358,28 @@ async fn poll_bilibili_qr_login(
     state: tauri::State<'_, AppState>,
     login_id: String,
 ) -> Result<domain::QrLoginPoll, domain::CommandError> {
-    state
+    let event = state
         .account
-        .poll_qr_login(&state.bilibili, &login_id)
-        .await
-        .map_err(Into::into)
+        .poll_platform_login(&domain::PlatformId::bilibili(), &login_id)
+        .await?;
+    let (status, account) = match event.state {
+        domain::PlatformLoginState::Pending => (domain::QrLoginStatus::Pending, None),
+        domain::PlatformLoginState::Scanned => (domain::QrLoginStatus::Scanned, None),
+        domain::PlatformLoginState::Expired => (domain::QrLoginStatus::Expired, None),
+        domain::PlatformLoginState::Succeeded { account } => (
+            domain::QrLoginStatus::Succeeded,
+            Some(account::legacy_account(&account)),
+        ),
+        domain::PlatformLoginState::Failed | domain::PlatformLoginState::SmsCodeSent { .. } => {
+            (domain::QrLoginStatus::Failed, None)
+        }
+    };
+    Ok(domain::QrLoginPoll {
+        login_id: event.flow_id,
+        status,
+        account,
+        message_code: event.message_code,
+    })
 }
 
 #[tauri::command]
@@ -228,18 +387,37 @@ fn cancel_bilibili_qr_login(
     state: tauri::State<'_, AppState>,
     login_id: String,
 ) -> Result<(), domain::CommandError> {
-    state.account.cancel_qr_login(&login_id).map_err(Into::into)
+    state
+        .account
+        .cancel_platform_login(&domain::PlatformId::bilibili(), &login_id)
+        .map_err(Into::into)
 }
 
 #[tauri::command]
 async fn create_bilibili_sms_challenge(
     state: tauri::State<'_, AppState>,
 ) -> Result<domain::SmsChallenge, domain::CommandError> {
-    state
+    let start = state
         .account
-        .create_sms_challenge(&state.bilibili)
-        .await
-        .map_err(Into::into)
+        .start_platform_login(&domain::PlatformId::bilibili(), domain::LoginMethod::Sms)
+        .await?;
+    let domain::PlatformLoginChallenge::SmsCaptcha {
+        provider,
+        gt,
+        challenge,
+        tencent_app_id,
+    } = start.challenge
+    else {
+        return Err(invalid_login_flow());
+    };
+    Ok(domain::SmsChallenge {
+        challenge_id: start.flow_id,
+        provider,
+        gt,
+        challenge,
+        tencent_app_id,
+        expires_in_seconds: start.expires_in_seconds,
+    })
 }
 
 #[tauri::command]
@@ -252,19 +430,32 @@ async fn send_bilibili_sms_code(
     validate: String,
     seccode: String,
 ) -> Result<domain::SmsCodeSent, domain::CommandError> {
-    state
+    let event = state
         .account
-        .send_sms_code(
-            &state.bilibili,
+        .submit_platform_login_input(
+            &domain::PlatformId::bilibili(),
             &challenge_id,
-            country_code,
-            phone,
-            challenge,
-            validate,
-            seccode,
+            domain::PlatformLoginInput::SmsCaptcha {
+                country_code,
+                phone,
+                challenge,
+                validate,
+                seccode,
+            },
         )
-        .await
-        .map_err(Into::into)
+        .await?;
+    let domain::PlatformLoginState::SmsCodeSent {
+        retry_after_seconds,
+        expires_in_seconds,
+    } = event.state
+    else {
+        return Err(invalid_login_flow());
+    };
+    Ok(domain::SmsCodeSent {
+        sms_flow_id: event.flow_id,
+        retry_after_seconds,
+        expires_in_seconds,
+    })
 }
 
 #[tauri::command]
@@ -273,11 +464,19 @@ async fn login_bilibili_with_sms(
     sms_flow_id: String,
     code: String,
 ) -> Result<domain::BilibiliAccount, domain::CommandError> {
-    state
+    let event = state
         .account
-        .login_with_sms(&state.bilibili, &sms_flow_id, code)
-        .await
-        .map_err(Into::into)
+        .submit_platform_login_input(
+            &domain::PlatformId::bilibili(),
+            &sms_flow_id,
+            domain::PlatformLoginInput::SmsCode { code },
+        )
+        .await?;
+    match event.state {
+        domain::PlatformLoginState::Succeeded { account } => Ok(account::legacy_account(&account)),
+        domain::PlatformLoginState::Expired => Err(platforms::PlatformError::LoginExpired.into()),
+        _ => Err(invalid_login_flow()),
+    }
 }
 
 #[tauri::command]
@@ -286,24 +485,31 @@ fn cancel_bilibili_sms_login(
     challenge_id: Option<String>,
     sms_flow_id: Option<String>,
 ) -> Result<(), domain::CommandError> {
-    state
-        .account
-        .cancel_sms_login(challenge_id.as_deref(), sms_flow_id.as_deref())
-        .map_err(Into::into)
+    let platform_id = domain::PlatformId::bilibili();
+    for flow_id in challenge_id.iter().chain(sms_flow_id.iter()) {
+        state.account.cancel_platform_login(&platform_id, flow_id)?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
 fn logout_bilibili(
     state: tauri::State<'_, AppState>,
 ) -> Result<domain::BilibiliAccount, domain::CommandError> {
-    state.account.logout().map_err(Into::into)
+    let platform_id = domain::PlatformId::bilibili();
+    state.account.logout_platform_account(&platform_id)?;
+    let entry = state.account.platform_account_entry(&platform_id)?;
+    Ok(account::legacy_account(&entry))
 }
 
 #[tauri::command]
 fn reset_bilibili_device_identity(
     state: tauri::State<'_, AppState>,
 ) -> Result<(), domain::CommandError> {
-    state.bilibili.reset_device_identity().map_err(Into::into)
+    state
+        .account
+        .reset_platform_device_identity(&domain::PlatformId::bilibili())
+        .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -388,6 +594,7 @@ fn favorite_entry(
         title: title.to_string(),
         cover_url: normalize_optional_text(favorite.cover_url),
         owner_name: normalize_optional_text(favorite.owner_name),
+        owner_avatar_url: normalize_optional_text(favorite.owner_avatar_url),
         saved_at: chrono::Utc::now().timestamp(),
     })
 }
@@ -415,6 +622,27 @@ fn normalize_optional_text(value: Option<String>) -> Option<String> {
 
 fn invalid_favorite_error() -> domain::CommandError {
     domain::CommandError::new("invalidFavorite", "收藏目标或标题不能为空。")
+}
+
+fn invalid_login_flow() -> domain::CommandError {
+    domain::CommandError::new("invalidLoginFlow", "登录流程状态与当前平台不匹配。")
+}
+
+fn requested_platform_id(
+    value: Option<String>,
+) -> Result<domain::PlatformId, domain::CommandError> {
+    let value = value.unwrap_or_else(|| domain::PlatformId::BILIBILI.to_string());
+    explicit_platform_id(value)
+}
+
+fn explicit_platform_id(value: String) -> Result<domain::PlatformId, domain::CommandError> {
+    domain::PlatformId::new(value.clone()).map_err(|_| {
+        domain::CommandError::with_action(
+            "platformUnavailable",
+            format!("平台 {value} 当前不可用。"),
+            "retryLater",
+        )
+    })
 }
 
 fn storage_error(_detail: String) -> domain::CommandError {
@@ -503,8 +731,15 @@ pub fn run() {
         .setup(|app| {
             let session = Arc::new(RwLock::new(None));
             let bilibili = bilibili::BilibiliClient::new(session.clone())?;
-            let account = account::AccountManager::new(session);
-            app.manage(AppState { bilibili, account });
+            let platforms = platforms::PlatformRegistry::register_builtins(bilibili.clone())
+                .expect("built-in platform registry must be valid");
+            let account_adapters = platforms.account_adapters();
+            let account = account::AccountManager::new(platforms.catalog(), account_adapters);
+            app.manage(AppState {
+                bilibili,
+                platforms,
+                account,
+            });
             app.manage(live_media::LiveMediaRequests::default());
 
             #[cfg(target_os = "windows")]
@@ -563,6 +798,16 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             greet,
+            get_platform_catalog,
+            get_account_center_snapshot,
+            get_platform_login_capabilities,
+            refresh_platform_account,
+            logout_platform_account,
+            reset_platform_device_identity,
+            start_platform_login,
+            poll_platform_login,
+            submit_platform_login_input,
+            cancel_platform_login,
             open_devtools,
             get_popular_videos,
             get_recommended_videos,

@@ -1,11 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 
-import type { Platform, StreamSource } from "@/api/media";
+import type { PlatformId, StreamSource } from "@/api/media";
 
 export type LiveStatus = "live" | "offline" | "round" | "unknown";
+export const BILIBILI_PLATFORM_ID: PlatformId = "bilibili";
 
 export interface LiveRoomCard {
-  platform: Platform;
+  platform: PlatformId;
   roomId: string;
   title: string;
   anchorName: string;
@@ -35,7 +36,7 @@ export interface PagedLiveRooms {
 }
 
 export interface LiveRoomInfo {
-  platform: Platform;
+  platform: PlatformId;
   roomId: string;
   title: string;
   anchorName: string;
@@ -50,6 +51,7 @@ export interface LiveRoomInfo {
 }
 
 export interface LivePlaybackInfo {
+  platform: PlatformId;
   roomId: string;
   liveStatus: LiveStatus;
   streams: StreamSource[];
@@ -78,35 +80,65 @@ export interface LiveMediaStream {
   cancel(): void;
 }
 
-export async function getLiveDiscovery(): Promise<LiveDiscovery> {
-  return invoke("get_live_discovery");
+function normalizeStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+export async function getLiveDiscovery(
+  platformId: PlatformId
+): Promise<LiveDiscovery> {
+  return invoke("get_live_discovery", { platformId });
 }
 
 export async function searchLiveRooms(
+  platformId: PlatformId,
   keyword: string,
   page = 1
 ): Promise<PagedLiveRooms> {
-  return invoke("search_live_rooms", { keyword, page });
+  return invoke("search_live_rooms", { keyword, page, platformId });
 }
 
-export async function getLiveRoomInfo(roomId: string): Promise<LiveRoomInfo> {
-  return invoke("get_live_room_info", { roomId });
+export async function getLiveRoomInfo(
+  platformId: PlatformId,
+  roomId: string
+): Promise<LiveRoomInfo> {
+  const info = await invoke<LiveRoomInfo>("get_live_room_info", {
+    roomId,
+    platformId,
+  });
+  return { ...info, tags: normalizeStringArray(info.tags) };
 }
 
 export async function getLiveRoomPlayback(
+  platformId: PlatformId,
   roomId: string,
   quality = 10_000
 ): Promise<LivePlaybackInfo> {
-  return invoke("get_live_room_playback", { roomId, quality });
+  const playback = await invoke<LivePlaybackInfo>("get_live_room_playback", {
+    roomId,
+    quality,
+    platformId,
+  });
+  return {
+    ...playback,
+    streams: Array.isArray(playback.streams) ? playback.streams : [],
+    advertisedQualities: Array.isArray(playback.advertisedQualities)
+      ? playback.advertisedQualities
+      : [],
+  };
 }
 
 export async function openLiveMediaStream(
+  platformId: PlatformId,
   url: string,
   headers: Record<string, string>
 ): Promise<LiveMediaStream> {
   const start = await invoke<LiveMediaStartEvent>("open_live_media_stream", {
     url,
     headers,
+    platformId,
   });
   const requestId = start.requestId;
   let closed = false;

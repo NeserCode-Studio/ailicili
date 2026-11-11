@@ -13,7 +13,7 @@ import TitlebarOperations, {
   ThemeIcon,
 } from "@/components/framework/TitlebarOperations";
 import { useContext } from "react";
-import { AlertTriangle, LogIn, UserRound } from "lucide-react";
+import { UserRound } from "lucide-react";
 import { ThemeContext } from "@/contexts/theme";
 import { NavigatorContext } from "@/contexts/navigator";
 import { useAccount } from "@/contexts/account-context";
@@ -30,7 +30,12 @@ export default function Titlebar() {
   /* Navigator */
   const { navigator } = useContext(NavigatorContext);
   const { openSettings, openAbout } = useSettingsDialog();
-  const { account, openLogin } = useAccount();
+  const { snapshot, openAccountCenter } = useAccount();
+  const authenticatedAccounts =
+    snapshot?.platforms.filter((entry) => entry.status === "authenticated") ??
+    [];
+  const soleAccount =
+    authenticatedAccounts.length === 1 ? authenticatedAccounts[0] : null;
 
   function toggleTheme() {
     if (theme === "dark") {
@@ -169,33 +174,30 @@ export default function Titlebar() {
           type="button"
           className="row-icon focus-visible:ring-ring h-6 max-w-40 px-2 text-xs text-neutral-700 hover:bg-neutral-200 focus-visible:ring-2 focus-visible:outline-none dark:text-neutral-200 dark:hover:bg-neutral-600"
           title={
-            account?.status === "authenticated"
+            soleAccount
               ? t("Account.titlebar.authenticated")
-              : t("Account.titlebar.login")
+              : authenticatedAccounts.length > 1
+                ? t("Account.titlebar.multiple")
+                : t("Account.titlebar.login")
           }
-          onClick={() => {
-            if (account?.status === "anonymous" || !account) {
-              openLogin();
-            } else {
-              openSettings();
-            }
-          }}
+          onClick={openAccountCenter}
         >
-          {account?.status === "authenticated" ? (
+          {soleAccount ? (
             <AccountAvatar
-              src={account.profile?.avatarUrl}
+              src={soleAccount.profile?.avatarUrl}
               className="size-4"
               fallback={<UserRound className="icon-sm" />}
             />
-          ) : account?.status === "expired" || account?.status === "locked" ? (
-            <AlertTriangle className="icon-sm text-amber-500" />
           ) : (
-            <LogIn className="icon-sm" />
+            <UserRound className="icon-sm" />
           )}
           <span className="truncate">
-            {account?.status === "authenticated"
-              ? (account.profile?.name ?? t("Account.titlebar.authenticated"))
-              : t("Account.titlebar.login")}
+            {soleAccount
+              ? (soleAccount.profile?.name ??
+                t("Account.titlebar.authenticated"))
+              : authenticatedAccounts.length > 1
+                ? t("Account.titlebar.multiple")
+                : t("Account.titlebar.login")}
           </span>
         </button>
 

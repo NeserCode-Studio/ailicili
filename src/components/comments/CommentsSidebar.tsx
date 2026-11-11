@@ -52,7 +52,7 @@ import { useI18n } from "@/composables";
 import { useAccount } from "@/contexts/account-context";
 import { commandErrorMessage } from "@/lib/command-error";
 import { formatCount, formatTimestamp } from "@/lib/format";
-import { useBilibiliImage, useBilibiliImages } from "@/hooks/useBilibiliImages";
+import { useRemoteImage, useRemoteImages } from "@/hooks/useRemoteImages";
 import { createLogger } from "@/lib/logger";
 import { cn } from "@/lib/utils";
 
@@ -134,9 +134,9 @@ function CommentPictures({
   );
   const fullSources = pictures.map((picture) => picture.url);
   const { resolvedSources: thumbnailUrls, failedSources: failedThumbnails } =
-    useBilibiliImages(thumbnailSources);
+    useRemoteImages(thumbnailSources);
   const { resolvedSources: fullUrls, failedSources: failedFullImages } =
-    useBilibiliImages(fullSources, {
+    useRemoteImages(fullSources, {
       enabled: fullImagesRequested,
     });
   const fullImagesSettled = pictures.every(
@@ -352,7 +352,7 @@ function CommentAvatar({
   authorName: string;
   compact: boolean;
 }) {
-  const { src } = useBilibiliImage(source);
+  const { src } = useRemoteImage(source);
 
   return (
     <Avatar className={compact ? "size-6" : "size-8"}>
@@ -374,7 +374,7 @@ function CommentEmoteImage({
   emote: CommentEmote;
   compact: boolean;
 }) {
-  const { src, failed } = useBilibiliImage(emote.url);
+  const { src, failed } = useRemoteImage(emote.url);
 
   if (failed) return <span>{emote.text}</span>;
 

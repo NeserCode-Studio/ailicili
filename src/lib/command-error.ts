@@ -1,15 +1,18 @@
 import type { CommandError } from "@/api/account";
 
 const ERROR_KEYS: Record<string, string> = {
+  accountUnavailable: "Account.errors.accountUnavailable",
   authRequired: "Account.errors.authRequired",
   bilibiliApiError: "Account.errors.bilibiliApiError",
   captchaUnavailable: "Account.errors.captchaUnavailable",
   credentialStoreError: "Account.errors.credentialStoreError",
   invalidResponse: "Account.errors.invalidResponse",
   loginExpired: "Account.errors.loginExpired",
+  liveContentUnavailable: "Live.room.contentUnavailable",
   networkError: "Account.errors.networkError",
   noCompatibleStream: "Account.errors.noCompatibleStream",
   playbackError: "Account.errors.playbackError",
+  platformUnavailable: "Account.errors.platformUnavailable",
   rateLimited: "Account.errors.rateLimited",
   riskControl: "Account.errors.riskControl",
   smsCodeExpired: "Account.errors.smsCodeExpired",

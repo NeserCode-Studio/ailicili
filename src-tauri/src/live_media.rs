@@ -47,14 +47,17 @@ pub async fn open_live_media_stream(
     requests: State<'_, LiveMediaRequests>,
     url: String,
     headers: Option<BTreeMap<String, String>>,
+    platform_id: Option<String>,
 ) -> Result<LiveMediaOpen, CommandError> {
     if url.len() > MAX_MEDIA_URL_LENGTH {
         return Err(media_error("直播媒体地址无效。"));
     }
     let request_headers = media_request_headers(headers.as_ref())?;
+    let platform_id = crate::requested_platform_id(platform_id)?;
+    let adapter = state.platforms.live_adapter(&platform_id)?;
     let response = tokio::time::timeout(
         LIVE_MEDIA_HEADER_TIMEOUT,
-        state.bilibili.live_media_response(&url, &request_headers),
+        adapter.media_response(&url, &request_headers),
     )
     .await
     .map_err(|_| media_error("直播媒体请求超时。"))?
@@ -85,7 +88,7 @@ pub async fn open_live_media_stream(
             .and_then(Result::ok)
             .unwrap_or_default();
         warn!(
-            target: "Bilibili/LiveMedia",
+            target: "LiveMedia",
             "live media rejected diag={LIVE_MEDIA_DIAGNOSTIC_REV} status={} host={} http={http_version} content_type={content_type:?} header_names={response_header_names:?} body_length={} body_preview={:?}",
             status.as_u16(),
             response_host,

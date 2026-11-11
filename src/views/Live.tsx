@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   ArrowLeft,
+  Lock,
   Loader2,
   Radio,
   RefreshCw,
@@ -16,14 +17,29 @@ import {
   type LiveDiscovery,
   type LiveRoomCard as LiveRoomCardModel,
 } from "@/api/live";
+import type { PlatformId } from "@/api/platforms";
 import LiveRoomCard from "@/components/live/LiveRoomCard";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useI18n } from "@/composables";
+import { useAccount } from "@/contexts/account-context";
 import { useNavigatorContext } from "@/contexts/navigator";
 import { commandErrorKey } from "@/lib/command-error";
+import {
+  getSelectedLivePlatformId,
+  setSelectedLivePlatformId,
+} from "@/lib/live-preferences";
+import { rememberLiveRoomCard } from "@/lib/live-room-cache";
+import { liveRoomPath } from "@/lib/live-routes";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("Media/Live");
@@ -73,7 +89,14 @@ function LiveGridSkeleton() {
 export default function Live() {
   const { t } = useI18n();
   const { navigator } = useNavigatorContext();
+  const {
+    accountRevisions,
+    platformCatalog,
+    loading: accountLoading,
+  } = useAccount();
   const [mode, setMode] = useState<BrowseMode>("discovery");
+  const [selectedPlatformId, setSelectedPlatformId] =
+    useState<PlatformId | null>(getSelectedLivePlatformId);
   const [keyword, setKeyword] = useState("");
   const [query, setQuery] = useState("");
   const [discovery, setDiscovery] = useState<LiveDiscovery | null>(null);
@@ -86,10 +109,62 @@ export default function Live() {
   const [error, setError] = useState<CommandError | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
   const requestIdRef = useRef(0);
+  const accountRevisionRef = useRef(0);
   const loadingMoreRef = useRef(false);
+  const livePlatforms = useMemo(
+    () =>
+      platformCatalog.filter(
+        (platform) =>
+          platform.availability === "available" &&
+          Boolean(platform.liveCapability)
+      ),
+    [platformCatalog]
+  );
+  const selectedPlatform = useMemo(
+    () =>
+      livePlatforms.find((platform) => platform.id === selectedPlatformId) ??
+      null,
+    [livePlatforms, selectedPlatformId]
+  );
+  const searchSupported = Boolean(
+    selectedPlatform?.liveCapability?.supportsSearch
+  );
+  const accountRevision = selectedPlatformId
+    ? (accountRevisions[selectedPlatformId] ?? 0)
+    : 0;
+  accountRevisionRef.current = accountRevision;
+
+  useEffect(() => {
+    if (
+      livePlatforms.length > 0 &&
+      !livePlatforms.some((platform) => platform.id === selectedPlatformId)
+    ) {
+      const fallbackPlatformId = livePlatforms[0].id;
+      setSelectedPlatformId(fallbackPlatformId);
+      setSelectedLivePlatformId(fallbackPlatformId);
+      setKeyword("");
+      setQuery("");
+      setMode("discovery");
+    }
+  }, [livePlatforms, selectedPlatformId]);
 
   useEffect(() => {
     const requestId = ++requestIdRef.current;
+    const revision = accountRevisionRef.current;
+    if (!selectedPlatformId) {
+      setLoading(!accountLoading);
+      setLoadingMore(false);
+      setError(null);
+      setDiscovery(null);
+      setItems([]);
+      setPage(1);
+      setTotal(0);
+      setHasMore(false);
+      return () => {
+        requestIdRef.current += 1;
+      };
+    }
+
     setLoading(true);
     setLoadingMore(false);
     setError(null);
@@ -100,9 +175,14 @@ export default function Live() {
     setHasMore(false);
 
     if (mode === "discovery") {
-      void getLiveDiscovery()
+      void getLiveDiscovery(selectedPlatformId)
         .then((result) => {
-          if (requestId !== requestIdRef.current) return;
+          if (
+            requestId !== requestIdRef.current ||
+            revision !== accountRevisionRef.current
+          ) {
+            return;
+          }
           setDiscovery(result);
           log.info("live discovery loaded", {
             sections: result.sections.length,
@@ -113,7 +193,12 @@ export default function Live() {
           });
         })
         .catch((reason) => {
-          if (requestId !== requestIdRef.current) return;
+          if (
+            requestId !== requestIdRef.current ||
+            revision !== accountRevisionRef.current
+          ) {
+            return;
+          }
           const normalized = asCommandError(reason);
           setError(normalized);
           log.error("live discovery failed", { code: normalized.code });
@@ -126,9 +211,14 @@ export default function Live() {
       };
     }
 
-    void searchLiveRooms(query, 1)
+    void searchLiveRooms(selectedPlatformId, query, 1)
       .then((result) => {
-        if (requestId !== requestIdRef.current) return;
+        if (
+          requestId !== requestIdRef.current ||
+          revision !== accountRevisionRef.current
+        ) {
+          return;
+        }
         setItems(mergeRooms([], result.items));
         setPage(result.page || 1);
         setHasMore(result.hasMore);
@@ -140,7 +230,12 @@ export default function Live() {
         });
       })
       .catch((reason) => {
-        if (requestId !== requestIdRef.current) return;
+        if (
+          requestId !== requestIdRef.current ||
+          revision !== accountRevisionRef.current
+        ) {
+          return;
+        }
         const normalized = asCommandError(reason);
         setError(normalized);
         log.error("live search failed", { code: normalized.code });
@@ -152,21 +247,44 @@ export default function Live() {
     return () => {
       requestIdRef.current += 1;
     };
-  }, [mode, query, reloadToken]);
+  }, [
+    accountLoading,
+    accountRevision,
+    mode,
+    query,
+    reloadToken,
+    selectedPlatformId,
+  ]);
 
   const loadMore = useCallback(async () => {
-    if (mode !== "search" || loading || loadingMoreRef.current || !hasMore) {
+    if (
+      !selectedPlatformId ||
+      mode !== "search" ||
+      loading ||
+      loadingMoreRef.current ||
+      !hasMore
+    ) {
       return;
     }
 
     loadingMoreRef.current = true;
     const requestId = ++requestIdRef.current;
+    const revision = accountRevisionRef.current;
     const requestedPage = page + 1;
     setLoadingMore(true);
     setError(null);
     try {
-      const result = await searchLiveRooms(query, requestedPage);
-      if (requestId !== requestIdRef.current) return;
+      const result = await searchLiveRooms(
+        selectedPlatformId,
+        query,
+        requestedPage
+      );
+      if (
+        requestId !== requestIdRef.current ||
+        revision !== accountRevisionRef.current
+      ) {
+        return;
+      }
       setItems((current) => mergeRooms(current, result.items));
       setPage(result.page || requestedPage);
       setHasMore(result.hasMore);
@@ -176,7 +294,12 @@ export default function Live() {
         count: result.items.length,
       });
     } catch (reason) {
-      if (requestId !== requestIdRef.current) return;
+      if (
+        requestId !== requestIdRef.current ||
+        revision !== accountRevisionRef.current
+      ) {
+        return;
+      }
       const normalized = asCommandError(reason);
       setError(normalized);
       log.error("live search page failed", { code: normalized.code });
@@ -184,9 +307,10 @@ export default function Live() {
       loadingMoreRef.current = false;
       if (requestId === requestIdRef.current) setLoadingMore(false);
     }
-  }, [hasMore, loading, mode, page, query]);
+  }, [hasMore, loading, mode, page, query, selectedPlatformId]);
 
   const submitSearch = () => {
+    if (!searchSupported) return;
     const nextQuery = keyword.trim();
     if (!nextQuery) {
       clearSearch();
@@ -205,8 +329,18 @@ export default function Live() {
   };
 
   const refresh = () => setReloadToken((value) => value + 1);
-  const openRoom = (room: LiveRoomCardModel) =>
-    navigator(`/live/${encodeURIComponent(room.roomId)}`);
+  const openRoom = (room: LiveRoomCardModel) => {
+    rememberLiveRoomCard(room);
+    navigator(liveRoomPath(room.platform, room.roomId));
+  };
+  const changePlatform = (platformId: PlatformId) => {
+    if (platformId === selectedPlatformId) return;
+    setSelectedLivePlatformId(platformId);
+    setSelectedPlatformId(platformId);
+    setKeyword("");
+    setQuery("");
+    setMode("discovery");
+  };
 
   return (
     <div className="view-home">
@@ -233,6 +367,28 @@ export default function Live() {
             {t("Live.backHome")}
           </Button>
 
+          {livePlatforms.length > 1 ? (
+            <Select
+              value={selectedPlatformId ?? undefined}
+              onValueChange={changePlatform}
+            >
+              <SelectTrigger
+                size="sm"
+                className="min-w-32"
+                aria-label={t("Live.platform.label")}
+              >
+                <SelectValue placeholder={t("Live.platform.label")} />
+              </SelectTrigger>
+              <SelectContent>
+                {livePlatforms.map((platform) => (
+                  <SelectItem key={platform.id} value={platform.id}>
+                    {platform.displayName}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : null}
+
           <form
             className="ml-auto flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2"
             onSubmit={(event) => {
@@ -240,30 +396,56 @@ export default function Live() {
               submitSearch();
             }}
           >
-            <div className="relative min-w-40 flex-1 sm:max-w-80">
-              <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
-              <Input
-                value={keyword}
-                onChange={(event) => setKeyword(event.target.value)}
-                placeholder={t("Live.search.placeholder")}
-                className="w-full pl-9"
-              />
-            </div>
-            <Button type="submit" variant="outline" size="sm">
-              <Search />
-              {t("Live.search")}
-            </Button>
-            {mode === "search" || keyword ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={clearSearch}
-              >
-                <X />
-                {t("Live.clearSearch")}
-              </Button>
-            ) : null}
+            {searchSupported ? (
+              <>
+                <div className="relative min-w-40 flex-1 sm:max-w-80">
+                  <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
+                  <Input
+                    value={keyword}
+                    onChange={(event) => setKeyword(event.target.value)}
+                    placeholder={t("Live.search.placeholder")}
+                    className="w-full pl-9"
+                  />
+                </div>
+                <Button type="submit" variant="outline" size="sm">
+                  <Search />
+                  {t("Live.search")}
+                </Button>
+                {mode === "search" || keyword ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearSearch}
+                  >
+                    <X />
+                    {t("Live.clearSearch")}
+                  </Button>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <div className="relative min-w-40 flex-1 sm:max-w-80">
+                  <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
+                  <Input
+                    value={keyword}
+                    placeholder={t("Live.search.placeholder")}
+                    className="w-full pl-9"
+                    disabled
+                  />
+                </div>
+                <Button type="button" variant="outline" size="sm" disabled>
+                  <Search />
+                  {t("Live.search")}
+                </Button>
+                {selectedPlatformId ? (
+                  <span className="text-muted-xs inline-flex items-center gap-1.5">
+                    <Lock className="size-3.5" />
+                    {t("Live.search.unavailable")}
+                  </span>
+                ) : null}
+              </>
+            )}
             <Button
               type="button"
               variant="ghost"
@@ -318,9 +500,16 @@ export default function Live() {
         </div>
       ) : null}
 
-      {loading ? (
+      {accountLoading || loading ? (
         <div className="mx-auto w-full max-w-[1440px] p-4">
           <LiveGridSkeleton />
+        </div>
+      ) : !selectedPlatformId ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center p-8">
+          <div className="stack-3 max-w-xl items-center text-center">
+            <Radio className="text-muted-foreground size-6" />
+            <p className="text-muted-sm">{t("Live.platform.empty")}</p>
+          </div>
         </div>
       ) : error && items.length === 0 && !discovery ? (
         <div className="stack-3 max-w-xl items-start p-8">

@@ -1,7 +1,12 @@
-import { BaseLoader, type LoaderResponse } from "hls.js";
+import {
+  BaseLoader,
+  type LoaderConfiguration,
+  type LoaderResponse,
+} from "hls.js";
 import mpegts from "mpegts.js";
 
 import { openLiveMediaStream, type LiveMediaStream } from "@/api/live";
+import type { PlatformId } from "@/api/platforms";
 import { createLogger } from "@/lib/logger";
 
 const LIVE_ACCEPT = "*/*";
@@ -21,6 +26,7 @@ interface SeekHandler {
 interface FlvLoaderConfig {
   reuseRedirectedURL?: boolean;
   headers?: Record<string, string>;
+  livePlatformId?: PlatformId;
 }
 
 interface FlvDataSource {
@@ -81,6 +87,16 @@ function logLiveMediaStart(start: LiveMediaStream["start"]) {
     headerNames: Object.keys(start.headers).sort(),
     requestIdPresent: Boolean(start.requestId),
   });
+}
+
+function hlsPlatformId(config: LoaderConfiguration): PlatformId {
+  const platformId = (
+    config as LoaderConfiguration & { livePlatformId?: unknown }
+  ).livePlatformId;
+  if (typeof platformId !== "string" || platformId.length === 0) {
+    throw new Error("Live platform id is missing from the HLS loader config");
+  }
+  return platformId;
 }
 
 function mergeChunks(chunks: Uint8Array[]): ArrayBuffer {
@@ -215,6 +231,7 @@ export class LiveHlsLoader extends BaseLoader {
       let stream: LiveMediaStream | null = null;
       try {
         stream = await openLiveMediaStream(
+          hlsPlatformId(config),
           context.url,
           headersToRecord(headers)
         );
@@ -348,7 +365,14 @@ export class LiveFlvLoader extends mpegts.BaseLoader {
     const readStream = async () => {
       let stream: LiveMediaStream | null = null;
       try {
+        const platformId = this.loaderConfig.livePlatformId;
+        if (!platformId) {
+          throw new Error(
+            "Live platform id is missing from the FLV loader config"
+          );
+        }
         stream = await openLiveMediaStream(
+          platformId,
           seekConfig.url,
           headersToRecord(headers)
         );

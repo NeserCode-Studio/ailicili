@@ -250,7 +250,7 @@ fn write_library(root: &Path, document: &LibraryDocument) -> Result<(), String> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{FavoriteKind, Platform, VideoCard, VideoSourceKind, VideoStats};
+    use crate::domain::{FavoriteKind, PlatformId, VideoCard, VideoSourceKind, VideoStats};
     use std::thread;
     use uuid::Uuid;
 
@@ -276,7 +276,7 @@ mod tests {
     fn history_entry(video_id: &str, progress_seconds: i64) -> HistoryEntry {
         HistoryEntry {
             card: VideoCard {
-                platform: Platform::Bilibili,
+                platform: PlatformId::bilibili(),
                 video_id: video_id.to_string(),
                 title: format!("Video {video_id}"),
                 cover_url: None,
@@ -303,13 +303,14 @@ mod tests {
     ) -> FavoriteEntry {
         FavoriteEntry {
             target: FavoriteTarget {
-                platform: Platform::Bilibili,
+                platform: PlatformId::bilibili(),
                 kind,
                 target_id: target_id.to_string(),
             },
             title: title.to_string(),
             cover_url: None,
             owner_name: None,
+            owner_avatar_url: None,
             saved_at,
         }
     }
@@ -357,6 +358,21 @@ mod tests {
     }
 
     #[test]
+    fn video_platform_ids_accept_legacy_missing_and_unknown_values() {
+        let entry = serde_json::to_value(history_entry("BV1", 42)).unwrap();
+
+        let mut missing = entry.clone();
+        missing["card"].as_object_mut().unwrap().remove("platform");
+        let missing_card: VideoCard = serde_json::from_value(missing["card"].clone()).unwrap();
+        assert_eq!(missing_card.platform, PlatformId::bilibili());
+
+        let mut future = entry;
+        future["card"]["platform"] = serde_json::json!("future-live");
+        let future_card: VideoCard = serde_json::from_value(future["card"].clone()).unwrap();
+        assert_eq!(future_card.platform.as_str(), "future-live");
+    }
+
+    #[test]
     fn history_round_trips_and_deduplicates_by_video() {
         let test_dir = TestDir::new();
 
@@ -380,11 +396,9 @@ mod tests {
             favorite_entry(FavoriteKind::Video, "BV1", "Video", 10),
         )
         .unwrap();
-        save_favorite_in(
-            &test_dir.0,
-            favorite_entry(FavoriteKind::LiveRoom, "BV1", "Live room", 20),
-        )
-        .unwrap();
+        let mut live = favorite_entry(FavoriteKind::LiveRoom, "BV1", "Live room", 20);
+        live.owner_avatar_url = Some("https://example.com/avatar.jpg".to_string());
+        save_favorite_in(&test_dir.0, live).unwrap();
         let entries = save_favorite_in(
             &test_dir.0,
             favorite_entry(FavoriteKind::Video, "BV1", "Updated video", 30),
@@ -395,7 +409,21 @@ mod tests {
         assert_eq!(entries[0].title, "Updated video");
         assert_eq!(entries[0].target.kind, FavoriteKind::Video);
         assert_eq!(entries[1].target.kind, FavoriteKind::LiveRoom);
+        assert_eq!(
+            entries[1].owner_avatar_url.as_deref(),
+            Some("https://example.com/avatar.jpg")
+        );
         assert_eq!(list_favorites_in(&test_dir.0).unwrap(), entries);
+    }
+
+    #[test]
+    fn legacy_favorites_without_owner_avatar_still_deserialize() {
+        let mut value =
+            serde_json::to_value(favorite_entry(FavoriteKind::LiveRoom, "42", "Live", 10)).unwrap();
+        value.as_object_mut().unwrap().remove("ownerAvatarUrl");
+
+        let entry: FavoriteEntry = serde_json::from_value(value).unwrap();
+        assert_eq!(entry.owner_avatar_url, None);
     }
 
     #[test]

@@ -4,20 +4,42 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 
 const BILIBILI_ORIGIN = "https://www.bilibili.com";
 const BILIBILI_REFERER = `${BILIBILI_ORIGIN}/`;
+const BILIBILI_IMAGE_HOST_SUFFIXES = [
+  "bilibili.com",
+  "biliimg.com",
+  "bilivideo.com",
+  "hdslb.com",
+];
 const IMAGE_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 const IMAGE_ACCEPT = "image/avif,image/webp,image/apng,image/*,*/*;q=0.8";
 
+function imageRequestHeaders(source: string) {
+  const headers: Record<string, string> = {
+    Accept: IMAGE_ACCEPT,
+    "User-Agent": IMAGE_USER_AGENT,
+  };
+  try {
+    const host = new URL(source).hostname.toLowerCase();
+    if (
+      BILIBILI_IMAGE_HOST_SUFFIXES.some(
+        (suffix) => host === suffix || host.endsWith(`.${suffix}`)
+      )
+    ) {
+      headers.Origin = BILIBILI_ORIGIN;
+      headers.Referer = BILIBILI_REFERER;
+    }
+  } catch {
+    return headers;
+  }
+  return headers;
+}
+
 async function fetchImageObjectUrl(source: string) {
   const response = await tauriFetch(source, {
     method: "GET",
-    headers: {
-      Accept: IMAGE_ACCEPT,
-      Origin: BILIBILI_ORIGIN,
-      Referer: BILIBILI_REFERER,
-      "User-Agent": IMAGE_USER_AGENT,
-    },
+    headers: imageRequestHeaders(source),
   });
   if (!response.ok) {
     throw new Error(`image request failed with status ${response.status}`);
@@ -29,7 +51,7 @@ async function fetchImageObjectUrl(source: string) {
   return URL.createObjectURL(blob);
 }
 
-export function useBilibiliImage(source?: string) {
+export function useRemoteImage(source?: string) {
   const [resolvedSource, setResolvedSource] = useState<string>();
   const [loading, setLoading] = useState(Boolean(source));
   const [failed, setFailed] = useState(false);
@@ -80,13 +102,13 @@ export function useBilibiliImage(source?: string) {
   return { src: resolvedSource, loading, failed };
 }
 
-interface BilibiliImagesOptions {
+interface RemoteImagesOptions {
   enabled?: boolean;
 }
 
-export function useBilibiliImages(
+export function useRemoteImages(
   sources: readonly string[],
-  { enabled = true }: BilibiliImagesOptions = {}
+  { enabled = true }: RemoteImagesOptions = {}
 ) {
   const sourceKey = sources.join("\n");
   const [resolvedSources, setResolvedSources] = useState<

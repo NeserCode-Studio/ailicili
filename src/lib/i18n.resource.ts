@@ -20,8 +20,11 @@ export const I18nTexts = {
     "Titlebar.operations.always-on-top.tooltip": "Always on top",
     "Account.titlebar.login": "Sign in",
     "Account.titlebar.authenticated": "Account",
+    "Account.titlebar.multiple": "Accounts",
+    "Account.titlebar.center": "Account center",
 
     "Account.login.title": "Bilibili account",
+    "Account.login.titleWithPlatform": "Sign in to {platform}",
     "Account.login.description":
       "Sign in to unlock account-bound quality and personalized content.",
     "Account.login.capabilitiesLoading": "Loading sign-in options...",
@@ -86,7 +89,25 @@ export const I18nTexts = {
       "Check the country code and phone number.",
     "Account.errors.storageError":
       "Local application data could not be read or written.",
+    "Account.errors.accountUnavailable":
+      "This platform does not provide an account.",
+    "Account.errors.platformUnavailable":
+      "This platform is currently unavailable.",
     "Account.errors.unknown": "The operation failed. Try again.",
+    "Account.center.description":
+      "Each platform keeps zero or one local account. Signing in again replaces the current account.",
+    "Account.center.listLabel": "Platform accounts",
+    "Account.center.retry": "Retry",
+    "Account.center.empty": "No compiled platforms are available.",
+    "Account.center.unavailable": "This platform is currently unavailable.",
+    "Account.center.unavailableBadge": "Unavailable",
+    "Account.center.anonymousAccess": "Anonymous access available.",
+    "Account.center.noAccount": "No account connected.",
+    "Account.center.sessionStored":
+      "Session saved in secure credential storage.",
+    "Account.center.checking": "Checking account...",
+    "Account.center.relogin": "Sign in again",
+    "Account.center.replaceHint": "Signing in again replaces this account.",
     "Account.settings.description":
       "Manage the Bilibili session and local device identity.",
     "Account.settings.loading": "Checking the saved session...",
@@ -112,7 +133,7 @@ export const I18nTexts = {
     "Account.settings.confirmReset": "Reset identity",
     "Account.settings.resetDeviceSuccess": "Device identity reset.",
     "Quality.notice.loginForHigherQuality":
-      "Sign in for a chance to unlock higher quality.",
+      "Sign in to request higher quality. The platform decides what is available.",
     "Quality.notice.dashRequiredForHigherQuality":
       "This build only supports the returned MP4 quality. DASH switching comes in P2.",
     "Quality.notice.higherQualityUnavailable":
@@ -180,12 +201,16 @@ export const I18nTexts = {
     "Home.recommend.openSettings": "Change setting",
     "Home.live": "Live",
     "Live.title": "Live",
-    "Live.discovery.subtitle": "Recommended live rooms from Bilibili",
+    "Live.discovery.subtitle": "Recommended live rooms",
+    "Live.platform.label": "Live platform",
+    "Live.platform.empty": "No live platforms are available.",
     "Live.search.results": "Live room results",
     "Live.search.keyword": "Search",
     "Live.search.total": "rooms",
     "Live.search.placeholder": "Search live rooms...",
     "Live.search": "Search",
+    "Live.search.unavailable":
+      "Live search is not available for this platform yet.",
     "Live.search.empty": "No live rooms matched this search.",
     "Live.clearSearch": "Back to discovery",
     "Live.backHome": "Back to home",
@@ -224,7 +249,8 @@ export const I18nTexts = {
     "Live.player.refresh": "Refresh stream",
     "Live.player.fullscreen": "Fullscreen",
     "Live.player.exitFullscreen": "Exit fullscreen",
-    "Live.quality.loginRequired": "Sign in to switch live quality.",
+    "Live.quality.loginRequired":
+      "Sign in to request other live qualities. The platform decides what is available.",
     "Live.quality.locked": "Sign in to switch quality",
     "Live.quality.default": "Default",
     "Live.quality.smooth": "Smooth",
@@ -238,6 +264,8 @@ export const I18nTexts = {
     "Live.room.back": "Back",
     "Live.room.loading": "Loading live room...",
     "Live.room.unavailable": "Live room unavailable",
+    "Live.room.contentUnavailable":
+      "This live room is temporarily unavailable. It may have ended or be restricted by the platform.",
     "Live.room.favorite": "Favorite",
     "Live.room.unfavorite": "Remove favorite",
     "Live.room.refresh": "Refresh",
@@ -467,8 +495,11 @@ export const I18nTexts = {
     "Titlebar.operations.always-on-top.tooltip": "窗口置顶",
     "Account.titlebar.login": "登录",
     "Account.titlebar.authenticated": "账号",
+    "Account.titlebar.multiple": "账号",
+    "Account.titlebar.center": "账号中心",
 
     "Account.login.title": "哔哩哔哩账号",
+    "Account.login.titleWithPlatform": "登录 {platform}",
     "Account.login.description":
       "登录后可协商账号相关画质，并使用个性化内容能力。",
     "Account.login.capabilitiesLoading": "正在加载登录方式...",
@@ -522,7 +553,22 @@ export const I18nTexts = {
     "Account.errors.smsCodeInvalid": "短信验证码不正确。",
     "Account.errors.smsRequestInvalid": "请检查国际区号和手机号。",
     "Account.errors.storageError": "本地应用数据读写失败。",
+    "Account.errors.accountUnavailable": "当前平台不提供账号功能。",
+    "Account.errors.platformUnavailable": "当前平台暂不可用。",
     "Account.errors.unknown": "操作失败，请重试。",
+    "Account.center.description":
+      "每个平台保存零个或一个本地账号；再次登录会替换当前账号。",
+    "Account.center.listLabel": "平台账号",
+    "Account.center.retry": "重试",
+    "Account.center.empty": "当前没有已编译的平台。",
+    "Account.center.unavailable": "当前平台暂不可用。",
+    "Account.center.unavailableBadge": "不可用",
+    "Account.center.anonymousAccess": "可匿名使用。",
+    "Account.center.noAccount": "尚未连接账号。",
+    "Account.center.sessionStored": "登录会话保存在系统安全凭据存储中。",
+    "Account.center.checking": "正在检查账号...",
+    "Account.center.relogin": "重新登录",
+    "Account.center.replaceHint": "再次登录将替换当前账号。",
     "Account.settings.description": "管理哔哩哔哩登录状态与本地设备身份。",
     "Account.settings.loading": "正在检查已保存的登录状态...",
     "Account.settings.localSession": "登录凭据保存在 Windows 原生凭据库中。",
@@ -543,7 +589,8 @@ export const I18nTexts = {
     "Account.settings.cancel": "取消",
     "Account.settings.confirmReset": "重置设备身份",
     "Account.settings.resetDeviceSuccess": "设备身份已重置。",
-    "Quality.notice.loginForHigherQuality": "登录后可能解锁更高画质。",
+    "Quality.notice.loginForHigherQuality":
+      "登录后可向平台请求更高画质，实际可用档位由平台决定。",
     "Quality.notice.dashRequiredForHigherQuality":
       "当前版本仅支持接口返回的 MP4 画质，DASH 切换将在 P2 支持。",
     "Quality.notice.higherQualityUnavailable":
@@ -609,12 +656,15 @@ export const I18nTexts = {
     "Home.recommend.openSettings": "修改设置",
     "Home.live": "直播",
     "Live.title": "直播",
-    "Live.discovery.subtitle": "哔哩哔哩推荐直播间",
+    "Live.discovery.subtitle": "推荐直播间",
+    "Live.platform.label": "直播平台",
+    "Live.platform.empty": "当前没有可用的直播平台。",
     "Live.search.results": "直播间搜索结果",
     "Live.search.keyword": "搜索",
     "Live.search.total": "个直播间",
     "Live.search.placeholder": "搜索直播间...",
     "Live.search": "搜索",
+    "Live.search.unavailable": "当前平台的直播搜索尚未开放。",
     "Live.search.empty": "没有找到匹配的直播间。",
     "Live.clearSearch": "返回推荐",
     "Live.backHome": "返回首页",
@@ -650,7 +700,8 @@ export const I18nTexts = {
     "Live.player.refresh": "刷新直播流",
     "Live.player.fullscreen": "全屏",
     "Live.player.exitFullscreen": "退出全屏",
-    "Live.quality.loginRequired": "登录后可切换直播清晰度。",
+    "Live.quality.loginRequired":
+      "登录后可请求其他直播清晰度，实际可用档位由平台决定。",
     "Live.quality.locked": "登录后可切换清晰度",
     "Live.quality.default": "默认",
     "Live.quality.smooth": "流畅",
@@ -664,6 +715,8 @@ export const I18nTexts = {
     "Live.room.back": "返回",
     "Live.room.loading": "正在加载直播间...",
     "Live.room.unavailable": "直播间暂不可用",
+    "Live.room.contentUnavailable":
+      "该直播暂时无法查看，可能已结束或受平台限制。",
     "Live.room.favorite": "收藏",
     "Live.room.unfavorite": "取消收藏",
     "Live.room.refresh": "刷新",

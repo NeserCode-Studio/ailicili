@@ -29,6 +29,7 @@ import { lifecycle } from "@/lifecycle";
 import SettingsDialog from "@/components/framework/SettingsDialog";
 import AboutDialog from "@/components/framework/AboutDialog";
 import AccountDialog from "@/components/account/AccountDialog";
+import LegacyLiveRoomRedirect from "@/components/live/LegacyLiveRoomRedirect";
 import { SettingsDialogContext, type SettingsTab } from "@/contexts/settings";
 import { AccountProvider } from "@/contexts/account";
 import { createLogger } from "@/lib/logger";
@@ -197,8 +198,12 @@ function App() {
                             />
                             <Route path="/live" element={<LiveView />} />
                             <Route
-                              path="/live/:roomId"
+                              path="/live/:platformId/:roomId"
                               element={<LiveRoomView />}
+                            />
+                            <Route
+                              path="/live/:roomId"
+                              element={<LegacyLiveRoomRedirect />}
                             />
                             <Route path="/favorites" element={<Favorites />} />
                             <Route path="/history" element={<HistoryView />} />

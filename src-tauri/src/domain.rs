@@ -1,3 +1,5 @@
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,14 +65,22 @@ pub struct BilibiliAccount {
     pub message_code: Option<String>,
 }
 
-impl BilibiliAccount {
-    pub fn anonymous() -> Self {
-        Self {
-            status: AccountStatus::Anonymous,
-            profile: None,
-            message_code: None,
-        }
-    }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlatformAccountEntry {
+    pub platform: PlatformDescriptor,
+    pub status: AccountStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<AccountProfile>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_code: Option<String>,
+    pub revision: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountCenterSnapshot {
+    pub platforms: Vec<PlatformAccountEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,6 +89,82 @@ pub struct LoginCapabilities {
     pub credential_storage_available: bool,
     pub qr_available: bool,
     pub sms_available: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlatformLoginStart {
+    pub platform_id: PlatformId,
+    pub flow_id: String,
+    pub method: LoginMethod,
+    pub challenge: PlatformLoginChallenge,
+    pub expires_in_seconds: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum PlatformLoginChallenge {
+    Qr {
+        image_data_url: String,
+    },
+    SmsCaptcha {
+        provider: CaptchaProvider,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        gt: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        challenge: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tencent_app_id: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum PlatformLoginInput {
+    SmsCaptcha {
+        country_code: String,
+        phone: String,
+        challenge: String,
+        validate: String,
+        seccode: String,
+    },
+    SmsCode {
+        code: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlatformLoginEvent {
+    pub platform_id: PlatformId,
+    pub flow_id: String,
+    pub state: PlatformLoginState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_code: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum PlatformLoginState {
+    Pending,
+    Scanned,
+    SmsCodeSent {
+        retry_after_seconds: u64,
+        expires_in_seconds: u64,
+    },
+    Succeeded {
+        account: PlatformAccountEntry,
+    },
+    Expired,
+    Failed,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -189,14 +275,109 @@ pub struct VideoStats {
     pub danmaku: i64,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum Platform {
-    #[default]
-    Bilibili,
-    Douyin,
-    Huya,
-    Custom,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(transparent)]
+pub struct PlatformId(String);
+
+impl PlatformId {
+    pub const BILIBILI: &'static str = "bilibili";
+
+    pub fn new(value: impl Into<String>) -> Result<Self, String> {
+        let value = value.into();
+        if value.is_empty()
+            || value.len() > 64
+            || !value.chars().all(|character| {
+                character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+            })
+            || !value
+                .chars()
+                .next()
+                .is_some_and(|character| character.is_ascii_lowercase())
+        {
+            return Err(
+                "platform id must contain lowercase letters, digits and hyphens".to_string(),
+            );
+        }
+        Ok(Self(value))
+    }
+
+    pub fn bilibili() -> Self {
+        Self(Self::BILIBILI.to_string())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Default for PlatformId {
+    fn default() -> Self {
+        Self::bilibili()
+    }
+}
+
+impl fmt::Display for PlatformId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ContentKind {
+    Video,
+    Live,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum PlatformAvailability {
+    Available,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum AccountMode {
+    None,
+    Optional,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum LoginMethod {
+    Qr,
+    Sms,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountCapability {
+    pub mode: AccountMode,
+    pub login_methods: Vec<LoginMethod>,
+    pub supports_refresh: bool,
+    pub supports_logout: bool,
+    pub supports_device_reset: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveCapability {
+    pub supports_discovery: bool,
+    pub supports_search: bool,
+    pub supports_quality_selection: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlatformDescriptor {
+    pub id: PlatformId,
+    pub display_name: String,
+    pub content_kinds: Vec<ContentKind>,
+    pub availability: PlatformAvailability,
+    pub account_capability: AccountCapability,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub live_capability: Option<LiveCapability>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -216,7 +397,7 @@ pub enum VideoSourceKind {
 #[serde(rename_all = "camelCase")]
 pub struct VideoCard {
     #[serde(default)]
-    pub platform: Platform,
+    pub platform: PlatformId,
     pub video_id: String,
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -353,7 +534,7 @@ pub enum FavoriteKind {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct FavoriteTarget {
-    pub platform: Platform,
+    pub platform: PlatformId,
     pub kind: FavoriteKind,
     pub target_id: String,
 }
@@ -367,6 +548,8 @@ pub struct FavoriteDraft {
     pub cover_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub owner_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_avatar_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -378,6 +561,8 @@ pub struct FavoriteEntry {
     pub cover_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub owner_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_avatar_url: Option<String>,
     pub saved_at: i64,
 }
 
@@ -437,7 +622,7 @@ pub enum LiveStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LiveRoomCard {
-    pub platform: Platform,
+    pub platform: PlatformId,
     pub room_id: String,
     pub title: String,
     pub anchor_name: String,
@@ -479,7 +664,7 @@ pub struct PagedLiveRooms {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LiveRoomInfo {
-    pub platform: Platform,
+    pub platform: PlatformId,
     pub room_id: String,
     pub title: String,
     pub anchor_name: String,
@@ -493,7 +678,7 @@ pub struct LiveRoomInfo {
     pub area_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_area_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub tags: Vec<String>,
     pub live_status: LiveStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -503,12 +688,74 @@ pub struct LiveRoomInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LivePlaybackInfo {
+    pub platform: PlatformId,
     pub room_id: String,
     pub live_status: LiveStatus,
     #[serde(default)]
     pub streams: Vec<StreamSource>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_quality: Option<QualityOption>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub advertised_qualities: Vec<QualityOption>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn platform_id_preserves_legacy_and_future_string_values() {
+        let legacy: PlatformId = serde_json::from_str("\"bilibili\"").unwrap();
+        assert_eq!(legacy, PlatformId::bilibili());
+
+        let future: PlatformId = serde_json::from_str("\"future-live\"").unwrap();
+        assert_eq!(future.as_str(), "future-live");
+        assert_eq!(PlatformId::default(), PlatformId::bilibili());
+    }
+
+    #[test]
+    fn platform_id_registration_rejects_unsafe_values() {
+        for value in ["", "Bilibili", "-bilibili", "bili_live", "bilibili.test"] {
+            assert!(PlatformId::new(value).is_err(), "{value}");
+        }
+        assert_eq!(
+            PlatformId::new("future-live-2").unwrap().as_str(),
+            "future-live-2"
+        );
+    }
+
+    #[test]
+    fn live_wire_models_always_serialize_required_arrays() {
+        let room = LiveRoomInfo {
+            platform: PlatformId::bilibili(),
+            room_id: "1001".to_string(),
+            title: "fixture".to_string(),
+            anchor_name: "anchor".to_string(),
+            anchor_id: None,
+            cover_url: None,
+            avatar_url: None,
+            area_name: None,
+            parent_area_name: None,
+            tags: Vec::new(),
+            live_status: LiveStatus::Offline,
+            started_at: None,
+        };
+        let serialized = serde_json::to_value(&room).unwrap();
+        assert_eq!(serialized.get("tags"), Some(&serde_json::json!([])));
+
+        let playback = LivePlaybackInfo {
+            platform: PlatformId::bilibili(),
+            room_id: "1001".to_string(),
+            live_status: LiveStatus::Offline,
+            streams: Vec::new(),
+            current_quality: None,
+            advertised_qualities: Vec::new(),
+        };
+        let serialized = serde_json::to_value(&playback).unwrap();
+        assert_eq!(serialized.get("streams"), Some(&serde_json::json!([])));
+        assert_eq!(
+            serialized.get("advertisedQualities"),
+            Some(&serde_json::json!([]))
+        );
+    }
 }

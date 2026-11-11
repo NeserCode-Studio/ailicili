@@ -1,104 +1,24 @@
 use std::{
     collections::HashMap,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, RwLock,
-    },
-    time::{Duration, Instant},
+    sync::{Arc, Mutex},
 };
 
 use log::{info, warn};
-use qrcode::{render::svg, QrCode};
-use reqwest::header::HeaderMap;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use uuid::Uuid;
 
 use crate::{
-    bilibili::{BiliError, BilibiliClient},
     domain::{
-        AccountProfile, AccountStatus, BilibiliAccount, CaptchaProvider, CommandError,
-        LoginCapabilities, QrLoginPoll, QrLoginStart, QrLoginStatus, SmsChallenge, SmsCodeSent,
+        AccountCenterSnapshot, AccountMode, AccountProfile, AccountStatus, BilibiliAccount,
+        LoginCapabilities, LoginMethod, PlatformAccountEntry, PlatformAvailability,
+        PlatformDescriptor, PlatformId, PlatformLoginEvent, PlatformLoginInput, PlatformLoginStart,
+        PlatformLoginState,
+    },
+    platforms::{
+        AccountLoginEvent, AccountLoginOutcome, AccountRefresh, PlatformAccountAdapter,
+        PlatformError,
     },
 };
 
 const CREDENTIAL_SERVICE: &str = "ailicili";
-const CREDENTIAL_ACCOUNT: &str = "bilibili-session";
-const QR_FLOW_TTL: Duration = Duration::from_secs(180);
-const SMS_CHALLENGE_TTL: Duration = Duration::from_secs(300);
-const SMS_FLOW_TTL: Duration = Duration::from_secs(300);
-const SMS_RETRY_AFTER: Duration = Duration::from_secs(60);
-
-pub type SharedSession = Arc<RwLock<Option<SessionCookies>>>;
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub(crate) struct SessionCookies {
-    pub sessdata: Option<String>,
-    pub bili_jct: Option<String>,
-    pub dede_user_id: Option<String>,
-    pub dede_user_id_ck_md5: Option<String>,
-    pub sid: Option<String>,
-}
-
-impl SessionCookies {
-    pub fn from_response(headers: &HeaderMap, fallback_url: Option<&str>) -> Self {
-        let mut cookies = Self::default();
-        for header in headers.get_all("set-cookie") {
-            let Ok(value) = header.to_str() else {
-                continue;
-            };
-            let Some((name, value)) = value.split_once('=') else {
-                continue;
-            };
-            cookies.set(
-                name.trim(),
-                value.split(';').next().unwrap_or_default().trim(),
-            );
-        }
-        if let Some(url) = fallback_url {
-            if let Ok(parsed) = reqwest::Url::parse(url) {
-                for (name, value) in parsed.query_pairs() {
-                    cookies.set(&name, &value);
-                }
-            }
-        }
-        cookies
-    }
-
-    fn set(&mut self, name: &str, value: &str) {
-        if value.is_empty() {
-            return;
-        }
-        match name {
-            "SESSDATA" => self.sessdata = Some(value.to_string()),
-            "bili_jct" => self.bili_jct = Some(value.to_string()),
-            "DedeUserID" => self.dede_user_id = Some(value.to_string()),
-            "DedeUserID__ckMd5" => self.dede_user_id_ck_md5 = Some(value.to_string()),
-            "sid" => self.sid = Some(value.to_string()),
-            _ => {}
-        }
-    }
-
-    pub fn is_authenticated(&self) -> bool {
-        self.sessdata
-            .as_deref()
-            .is_some_and(|value| !value.is_empty())
-    }
-
-    pub fn cookie_header(&self) -> String {
-        [
-            ("SESSDATA", self.sessdata.as_deref()),
-            ("bili_jct", self.bili_jct.as_deref()),
-            ("DedeUserID", self.dede_user_id.as_deref()),
-            ("DedeUserID__ckMd5", self.dede_user_id_ck_md5.as_deref()),
-            ("sid", self.sid.as_deref()),
-        ]
-        .into_iter()
-        .filter_map(|(name, value)| value.map(|value| format!("{name}={value}")))
-        .collect::<Vec<_>>()
-        .join("; ")
-    }
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum CredentialStoreError {
@@ -110,10 +30,28 @@ pub enum CredentialStoreError {
 }
 
 pub trait CredentialStore: Send + Sync {
-    fn load_session(&self) -> Result<Option<SessionCookies>, CredentialStoreError>;
-    fn save_session(&self, session: &SessionCookies) -> Result<(), CredentialStoreError>;
-    fn clear_session(&self) -> Result<(), CredentialStoreError>;
+    fn load_platform(
+        &self,
+        platform_id: &PlatformId,
+    ) -> Result<Option<String>, CredentialStoreError>;
+    fn save_platform(
+        &self,
+        platform_id: &PlatformId,
+        payload: &str,
+    ) -> Result<(), CredentialStoreError>;
+    fn clear_platform(&self, platform_id: &PlatformId) -> Result<(), CredentialStoreError>;
     fn is_available(&self) -> bool;
+}
+
+fn credential_slot(platform_id: &PlatformId) -> String {
+    format!("{platform_id}-session")
+}
+
+fn map_credential_error(error: CredentialStoreError) -> PlatformError {
+    match error {
+        CredentialStoreError::Unavailable => PlatformError::CredentialLocked,
+        CredentialStoreError::Backend => PlatformError::CredentialStore,
+    }
 }
 
 #[cfg(windows)]
@@ -121,33 +59,37 @@ struct NativeCredentialStore;
 
 #[cfg(windows)]
 impl NativeCredentialStore {
-    fn entry() -> Result<keyring::Entry, CredentialStoreError> {
-        keyring::Entry::new(CREDENTIAL_SERVICE, CREDENTIAL_ACCOUNT)
+    fn entry(platform_id: &PlatformId) -> Result<keyring::Entry, CredentialStoreError> {
+        keyring::Entry::new(CREDENTIAL_SERVICE, &credential_slot(platform_id))
             .map_err(|_| CredentialStoreError::Backend)
     }
 }
 
 #[cfg(windows)]
 impl CredentialStore for NativeCredentialStore {
-    fn load_session(&self) -> Result<Option<SessionCookies>, CredentialStoreError> {
-        match Self::entry()?.get_password() {
-            Ok(value) => serde_json::from_str(&value)
-                .map(Some)
-                .map_err(|_| CredentialStoreError::Backend),
+    fn load_platform(
+        &self,
+        platform_id: &PlatformId,
+    ) -> Result<Option<String>, CredentialStoreError> {
+        match Self::entry(platform_id)?.get_password() {
+            Ok(value) => Ok(Some(value)),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(_) => Err(CredentialStoreError::Backend),
         }
     }
 
-    fn save_session(&self, session: &SessionCookies) -> Result<(), CredentialStoreError> {
-        let value = serde_json::to_string(session).map_err(|_| CredentialStoreError::Backend)?;
-        Self::entry()?
-            .set_password(&value)
+    fn save_platform(
+        &self,
+        platform_id: &PlatformId,
+        payload: &str,
+    ) -> Result<(), CredentialStoreError> {
+        Self::entry(platform_id)?
+            .set_password(payload)
             .map_err(|_| CredentialStoreError::Backend)
     }
 
-    fn clear_session(&self) -> Result<(), CredentialStoreError> {
-        match Self::entry()?.delete_credential() {
+    fn clear_platform(&self, platform_id: &PlatformId) -> Result<(), CredentialStoreError> {
+        match Self::entry(platform_id)?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(_) => Err(CredentialStoreError::Backend),
         }
@@ -163,43 +105,22 @@ struct NativeCredentialStore;
 
 #[cfg(not(windows))]
 impl CredentialStore for NativeCredentialStore {
-    fn load_session(&self) -> Result<Option<SessionCookies>, CredentialStoreError> {
+    fn load_platform(
+        &self,
+        _platform_id: &PlatformId,
+    ) -> Result<Option<String>, CredentialStoreError> {
         Err(CredentialStoreError::Unavailable)
     }
 
-    fn save_session(&self, _session: &SessionCookies) -> Result<(), CredentialStoreError> {
+    fn save_platform(
+        &self,
+        _platform_id: &PlatformId,
+        _payload: &str,
+    ) -> Result<(), CredentialStoreError> {
         Err(CredentialStoreError::Unavailable)
     }
 
-    fn clear_session(&self) -> Result<(), CredentialStoreError> {
-        Err(CredentialStoreError::Unavailable)
-    }
-
-    fn is_available(&self) -> bool {
-        false
-    }
-}
-
-#[cfg(test)]
-#[derive(Default)]
-struct MemoryCredentialStore {
-    value: std::sync::Mutex<Option<String>>,
-}
-
-#[cfg(test)]
-struct UnavailableCredentialStore;
-
-#[cfg(test)]
-impl CredentialStore for UnavailableCredentialStore {
-    fn load_session(&self) -> Result<Option<SessionCookies>, CredentialStoreError> {
-        Err(CredentialStoreError::Unavailable)
-    }
-
-    fn save_session(&self, _session: &SessionCookies) -> Result<(), CredentialStoreError> {
-        Err(CredentialStoreError::Unavailable)
-    }
-
-    fn clear_session(&self) -> Result<(), CredentialStoreError> {
+    fn clear_platform(&self, _platform_id: &PlatformId) -> Result<(), CredentialStoreError> {
         Err(CredentialStoreError::Unavailable)
     }
 
@@ -208,917 +129,1089 @@ impl CredentialStore for UnavailableCredentialStore {
     }
 }
 
-#[cfg(test)]
-impl CredentialStore for MemoryCredentialStore {
-    fn load_session(&self) -> Result<Option<SessionCookies>, CredentialStoreError> {
-        let guard = self
-            .value
-            .lock()
-            .map_err(|_| CredentialStoreError::Backend)?;
-        guard
-            .as_deref()
-            .map(serde_json::from_str)
-            .transpose()
-            .map_err(|_| CredentialStoreError::Backend)
-    }
-
-    fn save_session(&self, session: &SessionCookies) -> Result<(), CredentialStoreError> {
-        let value = serde_json::to_string(session).map_err(|_| CredentialStoreError::Backend)?;
-        *self
-            .value
-            .lock()
-            .map_err(|_| CredentialStoreError::Backend)? = Some(value);
-        Ok(())
-    }
-
-    fn clear_session(&self) -> Result<(), CredentialStoreError> {
-        *self
-            .value
-            .lock()
-            .map_err(|_| CredentialStoreError::Backend)? = None;
-        Ok(())
-    }
-
-    fn is_available(&self) -> bool {
-        true
-    }
-}
-
 #[derive(Debug, Clone)]
-struct QrFlow {
-    qrcode_key: String,
-    expires_at: Instant,
-    cancelled: Arc<AtomicBool>,
+struct PlatformAccountRuntime {
+    status: AccountStatus,
+    profile: Option<AccountProfile>,
+    message_code: Option<String>,
+    revision: u64,
 }
 
-impl QrFlow {
-    fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Acquire)
+impl Default for PlatformAccountRuntime {
+    fn default() -> Self {
+        Self {
+            status: AccountStatus::Anonymous,
+            profile: None,
+            message_code: None,
+            revision: 0,
+        }
     }
-}
-
-#[derive(Debug, Clone)]
-struct SmsChallengeFlow {
-    token: String,
-    expires_at: Instant,
-}
-
-#[derive(Debug, Clone)]
-struct SmsFlow {
-    country_code: String,
-    phone: String,
-    captcha_key: String,
-    expires_at: Instant,
 }
 
 #[derive(Default)]
 struct RuntimeState {
     initialized: bool,
-    status: Option<AccountStatus>,
-    profile: Option<AccountProfile>,
-    message_code: Option<String>,
-    qr_flows: HashMap<String, QrFlow>,
-    sms_challenges: HashMap<String, SmsChallengeFlow>,
-    sms_challenge_generation: u64,
-    sms_flows: HashMap<String, SmsFlow>,
-    sms_last_sent: Option<Instant>,
+    accounts: HashMap<PlatformId, PlatformAccountRuntime>,
 }
 
 pub struct AccountManager {
-    runtime: std::sync::Mutex<RuntimeState>,
+    runtime: Mutex<RuntimeState>,
     credentials: Box<dyn CredentialStore>,
-    session: SharedSession,
+    platforms: Vec<PlatformDescriptor>,
+    adapters: HashMap<PlatformId, Arc<dyn PlatformAccountAdapter>>,
 }
 
 impl AccountManager {
-    pub fn new(session: SharedSession) -> Self {
+    pub fn new(
+        platforms: Vec<PlatformDescriptor>,
+        adapters: HashMap<PlatformId, Arc<dyn PlatformAccountAdapter>>,
+    ) -> Self {
         Self {
-            runtime: std::sync::Mutex::new(RuntimeState::default()),
+            runtime: Mutex::new(RuntimeState::default()),
             credentials: Box::new(NativeCredentialStore),
-            session,
+            platforms,
+            adapters,
         }
     }
 
     #[cfg(test)]
-    fn with_store(session: SharedSession, credentials: Box<dyn CredentialStore>) -> Self {
+    fn with_store(
+        credentials: Box<dyn CredentialStore>,
+        platforms: Vec<PlatformDescriptor>,
+        adapters: HashMap<PlatformId, Arc<dyn PlatformAccountAdapter>>,
+    ) -> Self {
         Self {
-            runtime: std::sync::Mutex::new(RuntimeState::default()),
+            runtime: Mutex::new(RuntimeState::default()),
             credentials,
-            session,
+            platforms,
+            adapters,
         }
     }
 
-    pub fn login_capabilities(&self) -> LoginCapabilities {
+    pub fn login_capabilities(
+        &self,
+        platform_id: &PlatformId,
+    ) -> Result<LoginCapabilities, PlatformError> {
+        let descriptor = self.ensure_account_platform(platform_id)?;
         let credential_storage_available = self.credentials.is_available();
-        LoginCapabilities {
+        let supports = |method| {
+            descriptor
+                .account_capability
+                .login_methods
+                .contains(&method)
+        };
+        Ok(LoginCapabilities {
             credential_storage_available,
-            qr_available: !cfg!(target_os = "android") && credential_storage_available,
-            sms_available: credential_storage_available,
-        }
+            qr_available: !cfg!(target_os = "android")
+                && credential_storage_available
+                && supports(LoginMethod::Qr),
+            sms_available: credential_storage_available && supports(LoginMethod::Sms),
+        })
     }
 
-    pub async fn get_account(&self, client: &BilibiliClient) -> Result<BilibiliAccount, BiliError> {
+    pub fn account_center_snapshot(&self) -> Result<AccountCenterSnapshot, PlatformError> {
         self.initialize()?;
-        let session = self.session_snapshot()?;
-        let Some(session) = session else {
-            return self.account_snapshot();
+        let runtime = self.runtime_lock()?;
+        let platforms = self
+            .platforms
+            .iter()
+            .cloned()
+            .map(|platform| {
+                let account = runtime
+                    .accounts
+                    .get(&platform.id)
+                    .cloned()
+                    .unwrap_or_default();
+                PlatformAccountEntry {
+                    platform,
+                    status: account.status,
+                    profile: account.profile,
+                    message_code: account.message_code,
+                    revision: account.revision,
+                }
+            })
+            .collect();
+        Ok(AccountCenterSnapshot { platforms })
+    }
+
+    pub fn platform_account_entry(
+        &self,
+        platform_id: &PlatformId,
+    ) -> Result<PlatformAccountEntry, PlatformError> {
+        self.initialize()?;
+        let descriptor = self
+            .platforms
+            .iter()
+            .find(|platform| &platform.id == platform_id)
+            .cloned()
+            .ok_or_else(|| PlatformError::Unavailable(platform_id.to_string()))?;
+        let account = self
+            .runtime_lock()?
+            .accounts
+            .get(platform_id)
+            .cloned()
+            .unwrap_or_default();
+        Ok(PlatformAccountEntry {
+            platform: descriptor,
+            status: account.status,
+            profile: account.profile,
+            message_code: account.message_code,
+            revision: account.revision,
+        })
+    }
+
+    pub async fn refresh_platform_account(
+        &self,
+        platform_id: &PlatformId,
+    ) -> Result<AccountCenterSnapshot, PlatformError> {
+        let descriptor = self.ensure_account_platform(platform_id)?;
+        if !descriptor.account_capability.supports_refresh {
+            return Err(PlatformError::AccountUnavailable(platform_id.to_string()));
+        }
+        let adapter = self.account_adapter(platform_id)?;
+        self.initialize()?;
+        let Some(credential) = self.load_credential(platform_id)? else {
+            return self.account_center_snapshot();
         };
 
-        match client.account_profile(&session).await {
-            Ok(profile) => {
-                self.set_authenticated(profile)?;
-                Ok(self.account_snapshot()?)
+        match adapter.refresh(&credential).await {
+            Ok(AccountRefresh::Authenticated(profile)) => {
+                self.set_authenticated(platform_id, Some(profile), None, false)?;
             }
-            Err(BiliError::LoginExpired) => {
-                self.set_status(AccountStatus::Expired, Some("login_expired".to_string()))?;
-                Ok(self.account_snapshot()?)
+            Ok(AccountRefresh::Expired) | Err(PlatformError::LoginExpired) => {
+                self.expire_account(platform_id, &adapter, &credential)?;
             }
-            Err(err) => {
-                self.set_message_code(Some("profile_unavailable".to_string()))?;
+            Err(error) => {
+                self.set_message_code(platform_id, Some("profile_unavailable".to_string()))?;
                 warn!(
                     target: "Account",
-                    "account profile refresh failed code={}",
-                    command_code(&err),
+                    "account profile refresh failed platform={platform_id} code={}",
+                    platform_error_code(&error),
                 );
-                Ok(self.account_snapshot()?)
             }
         }
+        self.account_center_snapshot()
     }
 
-    pub async fn refresh_account(
+    pub fn logout_platform_account(
         &self,
-        client: &BilibiliClient,
-    ) -> Result<BilibiliAccount, BiliError> {
-        self.get_account(client).await
-    }
-
-    pub async fn start_qr_login(&self, client: &BilibiliClient) -> Result<QrLoginStart, BiliError> {
+        platform_id: &PlatformId,
+    ) -> Result<AccountCenterSnapshot, PlatformError> {
+        let descriptor = self.ensure_account_platform(platform_id)?;
+        if !descriptor.account_capability.supports_logout {
+            return Err(PlatformError::AccountUnavailable(platform_id.to_string()));
+        }
+        let adapter = self.account_adapter(platform_id)?;
         self.initialize()?;
-        let root = client.qr_generate().await?;
-        let data = root
-            .get("data")
-            .ok_or_else(|| BiliError::Invalid("missing QR data".to_string()))?;
-        let url = data
-            .get("url")
-            .and_then(Value::as_str)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| BiliError::Invalid("missing QR URL".to_string()))?;
-        let qrcode_key = data
-            .get("qrcode_key")
-            .and_then(Value::as_str)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| BiliError::Invalid("missing QR key".to_string()))?;
-        let qr = QrCode::new(url.as_bytes())
-            .map_err(|err| BiliError::Invalid(format!("cannot render QR: {err}")))?;
-        let svg = qr
-            .render::<svg::Color>()
-            .min_dimensions(220, 220)
-            .quiet_zone(true)
-            .build();
-        let image_data_url = format!("data:image/svg+xml,{}", urlencoding::encode(&svg));
-        let login_id = Uuid::new_v4().simple().to_string();
+        let credential = self.load_credential(platform_id)?.unwrap_or_default();
+        adapter.logout(&credential)?;
+        self.credentials
+            .clear_platform(platform_id)
+            .map_err(map_credential_error)?;
 
         let mut runtime = self.runtime_lock()?;
-        for flow in runtime.qr_flows.values() {
-            flow.cancelled.store(true, Ordering::Release);
-        }
-        runtime.qr_flows.clear();
-        runtime.qr_flows.insert(
-            login_id.clone(),
-            QrFlow {
-                qrcode_key: qrcode_key.to_string(),
-                expires_at: Instant::now() + QR_FLOW_TTL,
-                cancelled: Arc::new(AtomicBool::new(false)),
-            },
-        );
+        let account = runtime.accounts.entry(platform_id.clone()).or_default();
+        account.status = AccountStatus::Anonymous;
+        account.profile = None;
+        account.message_code = None;
+        account.revision = account.revision.saturating_add(1);
         drop(runtime);
-        info!(target: "Account", "qr login started");
-
-        Ok(QrLoginStart {
-            login_id,
-            image_data_url,
-            expires_in_seconds: QR_FLOW_TTL.as_secs(),
-        })
+        info!(target: "Account", "platform logout completed platform={platform_id}");
+        self.account_center_snapshot()
     }
 
-    pub async fn poll_qr_login(
+    pub fn reset_platform_device_identity(
         &self,
-        client: &BilibiliClient,
-        login_id: &str,
-    ) -> Result<QrLoginPoll, BiliError> {
-        let flow = self.qr_flow(login_id)?;
-        if flow.is_cancelled() {
-            return Ok(self.cancelled_qr_poll(login_id));
+        platform_id: &PlatformId,
+    ) -> Result<(), PlatformError> {
+        let descriptor = self.ensure_account_platform(platform_id)?;
+        if !descriptor.account_capability.supports_device_reset {
+            return Err(PlatformError::AccountUnavailable(platform_id.to_string()));
         }
-        if flow.expires_at <= Instant::now() {
-            self.remove_qr_flow(login_id)?;
-            return Ok(QrLoginPoll {
-                login_id: login_id.to_string(),
-                status: QrLoginStatus::Expired,
-                account: None,
-                message_code: Some("qr_expired".to_string()),
-            });
-        }
-
-        let (headers, root) = client.qr_poll(&flow.qrcode_key).await?;
-        if flow.is_cancelled() {
-            return Ok(self.cancelled_qr_poll(login_id));
-        }
-        let data = root
-            .get("data")
-            .ok_or_else(|| BiliError::Invalid("missing QR poll data".to_string()))?;
-        let code = data.get("code").and_then(Value::as_i64).unwrap_or(-1);
-        let status = match code {
-            86101 => QrLoginStatus::Pending,
-            86090 => QrLoginStatus::Scanned,
-            86038 => {
-                self.remove_qr_flow(login_id)?;
-                QrLoginStatus::Expired
-            }
-            0 => {
-                if flow.is_cancelled() {
-                    return Ok(self.cancelled_qr_poll(login_id));
-                }
-                let fallback_url = data.get("url").and_then(Value::as_str);
-                let session = SessionCookies::from_response(&headers, fallback_url);
-                if !session.is_authenticated() {
-                    self.remove_qr_flow(login_id)?;
-                    return Ok(QrLoginPoll {
-                        login_id: login_id.to_string(),
-                        status: QrLoginStatus::Failed,
-                        account: None,
-                        message_code: Some("login_cookie_missing".to_string()),
-                    });
-                }
-                let account = self.complete_login(client, session).await?;
-                self.remove_qr_flow(login_id)?;
-                info!(target: "Account", "qr login succeeded");
-                return Ok(QrLoginPoll {
-                    login_id: login_id.to_string(),
-                    status: QrLoginStatus::Succeeded,
-                    account: Some(account),
-                    message_code: None,
-                });
-            }
-            _ => QrLoginStatus::Failed,
-        };
-
-        Ok(QrLoginPoll {
-            login_id: login_id.to_string(),
-            status,
-            account: None,
-            message_code: (status == QrLoginStatus::Expired)
-                .then(|| "qr_expired".to_string())
-                .or_else(|| {
-                    (status == QrLoginStatus::Failed).then(|| "qr_login_failed".to_string())
-                }),
-        })
+        self.account_adapter(platform_id)?.reset_identity()
     }
 
-    pub fn cancel_qr_login(&self, login_id: &str) -> Result<(), BiliError> {
-        self.remove_qr_flow(login_id)
-    }
-
-    pub async fn create_sms_challenge(
+    pub async fn start_platform_login(
         &self,
-        client: &BilibiliClient,
-    ) -> Result<SmsChallenge, BiliError> {
-        self.initialize()?;
-        let generation = {
-            let mut runtime = self.runtime_lock()?;
-            runtime.sms_challenge_generation = runtime.sms_challenge_generation.wrapping_add(1);
-            runtime.sms_challenges.clear();
-            runtime.sms_challenge_generation
-        };
-        info!(
-            target: "Account",
-            "sms captcha request started generation={generation}"
-        );
-        let root = client.sms_captcha().await?;
-        let data = root
-            .get("data")
-            .ok_or_else(|| BiliError::Invalid("missing captcha data".to_string()))?;
-        let challenge_type = data.get("type").and_then(Value::as_str).unwrap_or_default();
-        let token = data
-            .get("token")
-            .and_then(Value::as_str)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| BiliError::Invalid("missing captcha token".to_string()))?;
-        let (provider, gt, challenge, tencent_app_id) = match challenge_type {
-            "geetest" => (
-                CaptchaProvider::Geetest,
-                data.pointer("/geetest/gt")
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned),
-                data.pointer("/geetest/challenge")
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned),
-                None,
-            ),
-            "tencent" => (
-                CaptchaProvider::Tencent,
-                None,
-                None,
-                data.pointer("/tencent/appid")
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned),
-            ),
-            _ => {
-                return Err(BiliError::Invalid(
-                    "unsupported captcha provider".to_string(),
-                ))
-            }
-        };
-        if provider == CaptchaProvider::Geetest && (gt.is_none() || challenge.is_none()) {
-            return Err(BiliError::Invalid(
-                "incomplete Geetest challenge".to_string(),
-            ));
-        }
-        let gt_present = gt.is_some();
-        let challenge_present = challenge.is_some();
-        let tencent_app_id_present = tencent_app_id.is_some();
-        let challenge_id = Uuid::new_v4().simple().to_string();
-        let mut runtime = self.runtime_lock()?;
-        if runtime.sms_challenge_generation != generation {
-            info!(
-                target: "Account",
-                "sms captcha response discarded generation={generation} current_generation={}",
-                runtime.sms_challenge_generation,
-            );
-            return Err(BiliError::Invalid(
-                "sms challenge request was superseded".to_string(),
-            ));
-        }
-        runtime.sms_challenges.clear();
-        runtime.sms_challenges.insert(
-            challenge_id.clone(),
-            SmsChallengeFlow {
-                token: token.to_string(),
-                expires_at: Instant::now() + SMS_CHALLENGE_TTL,
-            },
-        );
-        drop(runtime);
-        info!(
-            target: "Account",
-            "sms challenge created generation={generation} provider={provider:?} token_present=true gt_present={gt_present} challenge_present={challenge_present} tencent_app_id_present={tencent_app_id_present} ttl_seconds={} challenge_id_len={} gt_len={} challenge_len={}",
-            SMS_CHALLENGE_TTL.as_secs(),
-            challenge_id.len(),
-            gt.as_deref().map(str::len).unwrap_or_default(),
-            challenge.as_deref().map(str::len).unwrap_or_default(),
-        );
-
-        Ok(SmsChallenge {
-            challenge_id,
-            provider,
-            gt,
-            challenge,
-            tencent_app_id,
-            expires_in_seconds: SMS_CHALLENGE_TTL.as_secs(),
-        })
-    }
-
-    pub async fn send_sms_code(
-        &self,
-        client: &BilibiliClient,
-        challenge_id: &str,
-        country_code: String,
-        phone: String,
-        captcha_challenge: String,
-        validate: String,
-        seccode: String,
-    ) -> Result<SmsCodeSent, BiliError> {
-        let country_code = normalize_country_code(&country_code)?;
-        let phone = normalize_phone(&phone)?;
-        let country_code_len = country_code.len();
-        let phone_len = phone.len();
+        platform_id: &PlatformId,
+        method: LoginMethod,
+    ) -> Result<PlatformLoginStart, PlatformError> {
+        let descriptor = self.ensure_account_platform(platform_id)?;
+        if !descriptor
+            .account_capability
+            .login_methods
+            .contains(&method)
         {
-            let runtime = self.runtime_lock()?;
-            if runtime
-                .sms_last_sent
-                .is_some_and(|sent_at| sent_at + SMS_RETRY_AFTER > Instant::now())
-            {
-                return Err(BiliError::RateLimited);
-            }
+            return Err(PlatformError::AccountUnavailable(platform_id.to_string()));
         }
-        let challenge = {
-            let mut runtime = self.runtime_lock()?;
-            runtime
-                .sms_challenges
-                .remove(challenge_id)
-                .ok_or_else(|| BiliError::Invalid("sms challenge not found".to_string()))?
-        };
-        if challenge.expires_at <= Instant::now() {
-            return Err(BiliError::Api {
-                code: 1007,
-                message: "sms challenge expired".to_string(),
-            });
+        if !self.credentials.is_available() {
+            return Err(PlatformError::CredentialLocked);
         }
-        if captcha_challenge.is_empty() || validate.is_empty() || seccode.is_empty() {
-            return Err(BiliError::AuthRequired);
-        }
-        info!(
-            target: "Account",
-            "sms send request country_code_len={country_code_len} phone_len={phone_len} token_len={} challenge_len={} validate_len={} seccode_len={}",
-            challenge.token.len(),
-            captcha_challenge.len(),
-            validate.len(),
-            seccode.len(),
-        );
-
-        let root = client
-            .send_sms_code(
-                &country_code,
-                &phone,
-                &challenge.token,
-                &captcha_challenge,
-                &validate,
-                &seccode,
-            )
-            .await?;
-        let captcha_key = root
-            .pointer("/data/captcha_key")
-            .and_then(Value::as_str)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| BiliError::Invalid("missing captcha key".to_string()))?
-            .to_string();
-        let captcha_key_len = captcha_key.len();
-        info!(
-            target: "Account",
-            "sms send response captcha_key_present=true captcha_key_len={captcha_key_len} response_keys={:?} data_keys={:?}",
-            root.as_object()
-                .map(|object| object.keys().cloned().collect::<Vec<_>>())
-                .unwrap_or_default(),
-            root.get("data")
-                .and_then(Value::as_object)
-                .map(|object| object.keys().cloned().collect::<Vec<_>>())
-                .unwrap_or_default(),
-        );
-        let sms_flow_id = Uuid::new_v4().simple().to_string();
-        let mut runtime = self.runtime_lock()?;
-        runtime.sms_last_sent = Some(Instant::now());
-        runtime.sms_flows.clear();
-        runtime.sms_flows.insert(
-            sms_flow_id.clone(),
-            SmsFlow {
-                country_code,
-                phone,
-                captcha_key,
-                expires_at: Instant::now() + SMS_FLOW_TTL,
-            },
-        );
-        drop(runtime);
-        info!(
-            target: "Account",
-            "sms code sent retry_after_seconds={} expires_in_seconds={}",
-            SMS_RETRY_AFTER.as_secs(),
-            SMS_FLOW_TTL.as_secs(),
-        );
-
-        Ok(SmsCodeSent {
-            sms_flow_id,
-            retry_after_seconds: SMS_RETRY_AFTER.as_secs(),
-            expires_in_seconds: SMS_FLOW_TTL.as_secs(),
+        let adapter = self.account_adapter(platform_id)?;
+        let start = adapter.start_login(method).await?;
+        Ok(PlatformLoginStart {
+            platform_id: platform_id.clone(),
+            flow_id: start.flow_id,
+            method: start.method,
+            challenge: start.challenge,
+            expires_in_seconds: start.expires_in_seconds,
         })
     }
 
-    pub async fn login_with_sms(
+    pub async fn poll_platform_login(
         &self,
-        client: &BilibiliClient,
-        sms_flow_id: &str,
-        code: String,
-    ) -> Result<BilibiliAccount, BiliError> {
-        let code = normalize_sms_code(&code)?;
-        let flow = {
-            let runtime = self.runtime_lock()?;
-            runtime
-                .sms_flows
-                .get(sms_flow_id)
-                .cloned()
-                .ok_or_else(|| BiliError::Invalid("sms flow not found".to_string()))?
-        };
-        if flow.expires_at <= Instant::now() {
-            self.runtime_lock()?.sms_flows.remove(sms_flow_id);
-            return Err(BiliError::Api {
-                code: 1007,
-                message: "sms flow expired".to_string(),
-            });
-        }
-
-        let (headers, root) = client
-            .login_with_sms(&flow.country_code, &flow.phone, &code, &flow.captcha_key)
-            .await?;
-        self.runtime_lock()?.sms_flows.remove(sms_flow_id);
-        let fallback_url = root.pointer("/data/url").and_then(Value::as_str);
-        let session = SessionCookies::from_response(&headers, fallback_url);
-        info!(
-            target: "Account",
-            "sms login response country_code_len={} phone_len={} code_len={} captcha_key_len={} sessdata_present={} bili_jct_present={} dede_user_id_present={}",
-            flow.country_code.len(),
-            flow.phone.len(),
-            code.len(),
-            flow.captcha_key.len(),
-            session.sessdata.is_some(),
-            session.bili_jct.is_some(),
-            session.dede_user_id.is_some(),
-        );
-        if !session.is_authenticated() {
-            return Err(BiliError::AuthRequired);
-        }
-        let account = self.complete_login(client, session).await?;
-        info!(
-            target: "Account",
-            "sms login succeeded profile_present={}",
-            account.profile.is_some(),
-        );
-        Ok(account)
+        platform_id: &PlatformId,
+        flow_id: &str,
+    ) -> Result<PlatformLoginEvent, PlatformError> {
+        self.ensure_account_platform(platform_id)?;
+        let adapter = self.account_adapter(platform_id)?;
+        let event = adapter.poll_login(flow_id).await?;
+        self.finish_login_event(platform_id, &adapter, event).await
     }
 
-    pub fn cancel_sms_login(
+    pub async fn submit_platform_login_input(
         &self,
-        challenge_id: Option<&str>,
-        sms_flow_id: Option<&str>,
-    ) -> Result<(), BiliError> {
-        let mut runtime = self.runtime_lock()?;
-        if challenge_id.is_some() || (challenge_id.is_none() && sms_flow_id.is_none()) {
-            runtime.sms_challenge_generation = runtime.sms_challenge_generation.wrapping_add(1);
-            runtime.sms_challenges.clear();
+        platform_id: &PlatformId,
+        flow_id: &str,
+        input: PlatformLoginInput,
+    ) -> Result<PlatformLoginEvent, PlatformError> {
+        self.ensure_account_platform(platform_id)?;
+        let adapter = self.account_adapter(platform_id)?;
+        let event = adapter.submit_login_input(flow_id, input).await?;
+        self.finish_login_event(platform_id, &adapter, event).await
+    }
+
+    pub fn cancel_platform_login(
+        &self,
+        platform_id: &PlatformId,
+        flow_id: &str,
+    ) -> Result<(), PlatformError> {
+        self.ensure_account_platform(platform_id)?;
+        self.account_adapter(platform_id)?.cancel_login(flow_id)
+    }
+
+    async fn finish_login_event(
+        &self,
+        platform_id: &PlatformId,
+        adapter: &Arc<dyn PlatformAccountAdapter>,
+        event: AccountLoginEvent,
+    ) -> Result<PlatformLoginEvent, PlatformError> {
+        let flow_id = event.flow_id.clone();
+        let state = match event.outcome {
+            AccountLoginOutcome::Pending => PlatformLoginState::Pending,
+            AccountLoginOutcome::Scanned => PlatformLoginState::Scanned,
+            AccountLoginOutcome::SmsCodeSent {
+                retry_after_seconds,
+                expires_in_seconds,
+            } => PlatformLoginState::SmsCodeSent {
+                retry_after_seconds,
+                expires_in_seconds,
+            },
+            AccountLoginOutcome::Authenticated { credential } => {
+                self.complete_platform_login(platform_id, adapter, credential)
+                    .await?
+            }
+            AccountLoginOutcome::Expired => PlatformLoginState::Expired,
+            AccountLoginOutcome::Failed => PlatformLoginState::Failed,
+        };
+        Ok(PlatformLoginEvent {
+            platform_id: platform_id.clone(),
+            flow_id,
+            state,
+            message_code: event.message_code,
+        })
+    }
+
+    async fn complete_platform_login(
+        &self,
+        platform_id: &PlatformId,
+        adapter: &Arc<dyn PlatformAccountAdapter>,
+        credential: String,
+    ) -> Result<PlatformLoginState, PlatformError> {
+        if credential.is_empty() {
+            return Err(PlatformError::Invalid(
+                "platform returned an empty credential".to_string(),
+            ));
         }
-        if let Some(id) = challenge_id {
-            runtime.sms_challenges.remove(id);
+        let previous_credential = self.load_credential(platform_id)?;
+        self.credentials
+            .save_platform(platform_id, &credential)
+            .map_err(map_credential_error)?;
+        if let Err(error) = adapter.restore_session(&credential) {
+            self.rollback_login(
+                platform_id,
+                adapter,
+                previous_credential.as_deref(),
+                &credential,
+            )?;
+            return Err(error);
         }
-        if let Some(id) = sms_flow_id {
-            runtime.sms_flows.remove(id);
+
+        match adapter.refresh(&credential).await {
+            Ok(AccountRefresh::Authenticated(profile)) => {
+                self.set_authenticated(platform_id, Some(profile), None, true)?;
+            }
+            Ok(AccountRefresh::Expired) | Err(PlatformError::LoginExpired) => {
+                if previous_credential.is_some() {
+                    self.rollback_login(
+                        platform_id,
+                        adapter,
+                        previous_credential.as_deref(),
+                        &credential,
+                    )?;
+                    self.set_message_code(platform_id, Some("relogin_failed".to_string()))?;
+                    return Ok(PlatformLoginState::Failed);
+                }
+                self.expire_account(platform_id, adapter, &credential)?;
+                return Ok(PlatformLoginState::Expired);
+            }
+            Err(error) => {
+                self.set_authenticated(
+                    platform_id,
+                    None,
+                    Some("profile_unavailable".to_string()),
+                    true,
+                )?;
+                warn!(
+                    target: "Account",
+                    "account profile unavailable after login platform={platform_id} code={}",
+                    platform_error_code(&error),
+                );
+            }
         }
-        if challenge_id.is_none() && sms_flow_id.is_none() {
-            runtime.sms_flows.clear();
+
+        let account = self.platform_account_entry(platform_id)?;
+        info!(
+            target: "Account",
+            "platform login completed platform={platform_id} revision={}",
+            account.revision,
+        );
+        Ok(PlatformLoginState::Succeeded { account })
+    }
+
+    fn rollback_login(
+        &self,
+        platform_id: &PlatformId,
+        adapter: &Arc<dyn PlatformAccountAdapter>,
+        previous_credential: Option<&str>,
+        rejected_credential: &str,
+    ) -> Result<(), PlatformError> {
+        adapter.logout(rejected_credential)?;
+        if let Some(previous_credential) = previous_credential {
+            self.credentials
+                .save_platform(platform_id, previous_credential)
+                .map_err(map_credential_error)?;
+            adapter.restore_session(previous_credential)?;
+        } else {
+            self.credentials
+                .clear_platform(platform_id)
+                .map_err(map_credential_error)?;
         }
         Ok(())
     }
 
-    pub fn logout(&self) -> Result<BilibiliAccount, BiliError> {
+    fn expire_account(
+        &self,
+        platform_id: &PlatformId,
+        adapter: &Arc<dyn PlatformAccountAdapter>,
+        credential: &str,
+    ) -> Result<(), PlatformError> {
+        adapter.logout(credential)?;
         self.credentials
-            .clear_session()
+            .clear_platform(platform_id)
             .map_err(map_credential_error)?;
-        self.replace_session(None)?;
         let mut runtime = self.runtime_lock()?;
-        runtime.status = Some(AccountStatus::Anonymous);
-        runtime.profile = None;
-        runtime.message_code = None;
-        runtime.qr_flows.clear();
-        runtime.sms_challenge_generation = runtime.sms_challenge_generation.wrapping_add(1);
-        runtime.sms_challenges.clear();
-        runtime.sms_flows.clear();
-        drop(runtime);
-        info!(target: "Account", "logout completed");
-        Ok(BilibiliAccount::anonymous())
+        let account = runtime.accounts.entry(platform_id.clone()).or_default();
+        account.status = AccountStatus::Expired;
+        account.profile = None;
+        account.message_code = Some("login_expired".to_string());
+        account.revision = account.revision.saturating_add(1);
+        Ok(())
     }
 
-    fn initialize(&self) -> Result<(), BiliError> {
-        {
-            let runtime = self.runtime_lock()?;
-            if runtime.initialized {
-                return Ok(());
-            }
-        }
-
-        let loaded = self.credentials.load_session();
+    fn initialize(&self) -> Result<(), PlatformError> {
         let mut runtime = self.runtime_lock()?;
         if runtime.initialized {
             return Ok(());
         }
-        runtime.initialized = true;
-        match loaded {
-            Ok(Some(session)) if session.is_authenticated() => {
-                self.replace_session(Some(session))?;
-                runtime.status = Some(AccountStatus::Authenticated);
+
+        for platform in &self.platforms {
+            let mut account = PlatformAccountRuntime::default();
+            if platform.availability == PlatformAvailability::Available
+                && platform.account_capability.mode != AccountMode::None
+            {
+                account = self.initialize_platform_account(platform)?;
             }
-            Ok(_) => {
-                self.replace_session(None)?;
-                runtime.status = Some(AccountStatus::Anonymous);
-            }
-            Err(CredentialStoreError::Unavailable) => {
-                runtime.status = Some(AccountStatus::Locked);
-                runtime.message_code = Some("credential_store_unavailable".to_string());
-            }
-            Err(CredentialStoreError::Backend) => {
-                runtime.status = Some(AccountStatus::Locked);
-                runtime.message_code = Some("credential_store_error".to_string());
-            }
+            runtime.accounts.insert(platform.id.clone(), account);
         }
+        runtime.initialized = true;
         Ok(())
     }
 
-    async fn complete_login(
+    fn initialize_platform_account(
         &self,
-        client: &BilibiliClient,
-        session: SessionCookies,
-    ) -> Result<BilibiliAccount, BiliError> {
-        self.credentials
-            .save_session(&session)
-            .map_err(map_credential_error)?;
-        self.replace_session(Some(session.clone()))?;
-
-        let (profile, message_code) = match client.account_profile(&session).await {
-            Ok(profile) => (Some(profile), None),
-            Err(BiliError::LoginExpired) => {
-                self.set_status(AccountStatus::Expired, Some("login_expired".to_string()))?;
-                return self.account_snapshot();
+        platform: &PlatformDescriptor,
+    ) -> Result<PlatformAccountRuntime, PlatformError> {
+        if !self.credentials.is_available() {
+            return Ok(locked_account("credential_store_unavailable"));
+        }
+        if !self.adapters.contains_key(&platform.id) {
+            return Ok(locked_account("account_adapter_unavailable"));
+        }
+        let credential = match self.credentials.load_platform(&platform.id) {
+            Ok(credential) => credential,
+            Err(CredentialStoreError::Unavailable) => {
+                return Ok(locked_account("credential_store_unavailable"))
             }
-            Err(_) => (None, Some("profile_unavailable".to_string())),
+            Err(CredentialStoreError::Backend) => {
+                return Ok(locked_account("credential_store_error"))
+            }
         };
-        let mut runtime = self.runtime_lock()?;
-        runtime.initialized = true;
-        runtime.status = Some(AccountStatus::Authenticated);
-        runtime.profile = profile;
-        runtime.message_code = message_code;
-        drop(runtime);
-        self.account_snapshot()
-    }
+        let Some(credential) = credential else {
+            return Ok(PlatformAccountRuntime::default());
+        };
 
-    fn account_snapshot(&self) -> Result<BilibiliAccount, BiliError> {
-        let runtime = self.runtime_lock()?;
-        Ok(BilibiliAccount {
-            status: runtime.status.unwrap_or(AccountStatus::Anonymous),
-            profile: runtime.profile.clone(),
-            message_code: runtime.message_code.clone(),
+        let adapter = self
+            .adapters
+            .get(&platform.id)
+            .cloned()
+            .ok_or_else(|| PlatformError::AccountUnavailable(platform.id.to_string()))?;
+        if adapter.restore_session(&credential).is_err() {
+            let _ = self.credentials.clear_platform(&platform.id);
+            let _ = adapter.logout(&credential);
+            return Ok(PlatformAccountRuntime {
+                message_code: Some("credential_invalid".to_string()),
+                ..PlatformAccountRuntime::default()
+            });
+        }
+        Ok(PlatformAccountRuntime {
+            status: AccountStatus::Authenticated,
+            ..PlatformAccountRuntime::default()
         })
     }
 
-    fn set_authenticated(&self, profile: AccountProfile) -> Result<(), BiliError> {
-        let mut runtime = self.runtime_lock()?;
-        runtime.status = Some(AccountStatus::Authenticated);
-        runtime.profile = Some(profile);
-        runtime.message_code = None;
-        Ok(())
+    fn load_credential(&self, platform_id: &PlatformId) -> Result<Option<String>, PlatformError> {
+        self.credentials
+            .load_platform(platform_id)
+            .map_err(map_credential_error)
     }
 
-    fn set_status(
+    fn set_authenticated(
         &self,
-        status: AccountStatus,
+        platform_id: &PlatformId,
+        profile: Option<AccountProfile>,
         message_code: Option<String>,
-    ) -> Result<(), BiliError> {
+        bump_revision: bool,
+    ) -> Result<(), PlatformError> {
         let mut runtime = self.runtime_lock()?;
-        runtime.status = Some(status);
-        runtime.message_code = message_code;
+        let account = runtime.accounts.entry(platform_id.clone()).or_default();
+        account.status = AccountStatus::Authenticated;
+        account.profile = profile;
+        account.message_code = message_code;
+        if bump_revision {
+            account.revision = account.revision.saturating_add(1);
+        }
         Ok(())
     }
 
-    fn set_message_code(&self, message_code: Option<String>) -> Result<(), BiliError> {
-        self.runtime_lock()?.message_code = message_code;
-        Ok(())
-    }
-
-    fn qr_flow(&self, login_id: &str) -> Result<QrFlow, BiliError> {
+    fn set_message_code(
+        &self,
+        platform_id: &PlatformId,
+        message_code: Option<String>,
+    ) -> Result<(), PlatformError> {
         self.runtime_lock()?
-            .qr_flows
-            .get(login_id)
+            .accounts
+            .entry(platform_id.clone())
+            .or_default()
+            .message_code = message_code;
+        Ok(())
+    }
+
+    fn ensure_account_platform(
+        &self,
+        platform_id: &PlatformId,
+    ) -> Result<PlatformDescriptor, PlatformError> {
+        let descriptor = self
+            .platforms
+            .iter()
+            .find(|platform| &platform.id == platform_id)
             .cloned()
-            .ok_or_else(|| BiliError::Invalid("QR login flow not found".to_string()))
-    }
-
-    fn remove_qr_flow(&self, login_id: &str) -> Result<(), BiliError> {
-        if let Some(flow) = self.runtime_lock()?.qr_flows.remove(login_id) {
-            flow.cancelled.store(true, Ordering::Release);
+            .ok_or_else(|| PlatformError::Unavailable(platform_id.to_string()))?;
+        if descriptor.availability != PlatformAvailability::Available
+            || descriptor.account_capability.mode == AccountMode::None
+        {
+            return Err(PlatformError::AccountUnavailable(platform_id.to_string()));
         }
-        Ok(())
+        Ok(descriptor)
     }
 
-    fn cancelled_qr_poll(&self, login_id: &str) -> QrLoginPoll {
-        QrLoginPoll {
-            login_id: login_id.to_string(),
-            status: QrLoginStatus::Failed,
-            account: None,
-            message_code: Some("qr_login_cancelled".to_string()),
-        }
+    fn account_adapter(
+        &self,
+        platform_id: &PlatformId,
+    ) -> Result<Arc<dyn PlatformAccountAdapter>, PlatformError> {
+        self.adapters
+            .get(platform_id)
+            .cloned()
+            .ok_or_else(|| PlatformError::AccountUnavailable(platform_id.to_string()))
     }
 
-    fn session_snapshot(&self) -> Result<Option<SessionCookies>, BiliError> {
-        self.session
-            .read()
-            .map(|session| session.clone())
-            .map_err(|_| BiliError::Storage("session lock poisoned".to_string()))
-    }
-
-    fn replace_session(&self, session: Option<SessionCookies>) -> Result<(), BiliError> {
-        *self
-            .session
-            .write()
-            .map_err(|_| BiliError::Storage("session lock poisoned".to_string()))? = session;
-        Ok(())
-    }
-
-    fn runtime_lock(&self) -> Result<std::sync::MutexGuard<'_, RuntimeState>, BiliError> {
+    fn runtime_lock(&self) -> Result<std::sync::MutexGuard<'_, RuntimeState>, PlatformError> {
         self.runtime
             .lock()
-            .map_err(|_| BiliError::Storage("account state lock poisoned".to_string()))
+            .map_err(|_| PlatformError::Storage("account state lock poisoned".to_string()))
     }
 }
 
-impl From<BiliError> for CommandError {
-    fn from(error: BiliError) -> Self {
-        match &error {
-            BiliError::Network(_) => CommandError::with_action(
-                "networkError",
-                "网络请求失败，请检查网络后重试。",
-                "retry",
-            ),
-            BiliError::Api { code: -101, .. } | BiliError::LoginExpired => {
-                CommandError::with_action("loginExpired", "登录状态已失效，请重新登录。", "login")
-            }
-            BiliError::Api { code: 1006, .. } => {
-                CommandError::with_action("smsCodeInvalid", "短信验证码不正确。", "editCode")
-            }
-            BiliError::Api { code: 1007, .. } => CommandError::with_action(
-                "smsCodeExpired",
-                "短信验证码已过期，请重新获取。",
-                "refresh",
-            ),
-            BiliError::Api { code: -400, .. } => CommandError::with_action(
-                "smsRequestInvalid",
-                "短信请求参数无效，请检查区号和手机号。",
-                "editPhone",
-            ),
-            BiliError::Api { code: -352, .. } => CommandError::with_action(
-                "riskControl",
-                "平台风控校验未通过，请稍后重试或重新登录。",
-                "retryLater",
-            ),
-            BiliError::Api { code: -412, .. } | BiliError::RateLimited => {
-                CommandError::with_action("rateLimited", "请求过于频繁，请稍后再试。", "retryLater")
-            }
-            BiliError::Api { code, .. } => CommandError::new(
-                format!("bilibiliApiError:{code}"),
-                "平台返回了未处理的错误。",
-            ),
-            BiliError::AuthRequired => {
-                CommandError::with_action("authRequired", "此操作需要登录。", "login")
-            }
-            BiliError::NoCompatibleStream => CommandError::new(
-                "noCompatibleStream",
-                "当前账号或视频没有可播放的兼容 MP4 流。",
-            ),
-            BiliError::CredentialLocked | BiliError::CredentialStore(_) => {
-                CommandError::with_action(
-                    "credentialStoreError",
-                    "无法安全读取或保存登录凭据。",
-                    "retry",
-                )
-            }
-            BiliError::Storage(_) => {
-                CommandError::new("storageError", "本地数据读写失败，请检查应用数据目录权限。")
-            }
-            BiliError::Invalid(_) => {
-                CommandError::new("invalidResponse", "平台响应格式异常，请稍后重试。")
-            }
-        }
+fn locked_account(message_code: &str) -> PlatformAccountRuntime {
+    PlatformAccountRuntime {
+        status: AccountStatus::Locked,
+        message_code: Some(message_code.to_string()),
+        ..PlatformAccountRuntime::default()
     }
 }
 
-fn map_credential_error(error: CredentialStoreError) -> BiliError {
+fn platform_error_code(error: &PlatformError) -> &'static str {
     match error {
-        CredentialStoreError::Unavailable => BiliError::CredentialLocked,
-        CredentialStoreError::Backend => BiliError::CredentialStore(error.to_string()),
+        PlatformError::Unavailable(_) => "platformUnavailable",
+        PlatformError::AccountUnavailable(_) => "accountUnavailable",
+        PlatformError::LoginExpired => "loginExpired",
+        PlatformError::CredentialLocked => "credentialLocked",
+        PlatformError::CredentialStore => "credentialStoreError",
+        PlatformError::Storage(_) => "storageError",
+        PlatformError::Invalid(_) => "invalidResponse",
+        PlatformError::Unsupported(_) => "unsupportedOperation",
+        PlatformError::Upstream(_) => "platformRequestFailed",
     }
 }
 
-fn command_code(error: &BiliError) -> String {
-    match error {
-        BiliError::Network(_) => "networkError".to_string(),
-        BiliError::Api { code, .. } => format!("api:{code}"),
-        BiliError::AuthRequired => "authRequired".to_string(),
-        BiliError::LoginExpired => "loginExpired".to_string(),
-        BiliError::RateLimited => "rateLimited".to_string(),
-        BiliError::NoCompatibleStream => "noCompatibleStream".to_string(),
-        BiliError::CredentialLocked => "credentialLocked".to_string(),
-        BiliError::CredentialStore(_) => "credentialStoreError".to_string(),
-        BiliError::Storage(_) => "storageError".to_string(),
-        BiliError::Invalid(_) => "invalidResponse".to_string(),
+pub fn legacy_account(entry: &PlatformAccountEntry) -> BilibiliAccount {
+    BilibiliAccount {
+        status: entry.status,
+        profile: entry.profile.clone(),
+        message_code: entry.message_code.clone(),
     }
-}
-
-fn normalize_country_code(value: &str) -> Result<String, BiliError> {
-    let normalized = value.trim().trim_start_matches('+');
-    if normalized.is_empty()
-        || normalized.len() > 4
-        || !normalized
-            .chars()
-            .all(|character| character.is_ascii_digit())
-    {
-        return Err(BiliError::Invalid("invalid country code".to_string()));
-    }
-    Ok(normalized.to_string())
-}
-
-fn normalize_phone(value: &str) -> Result<String, BiliError> {
-    let normalized = value.trim().replace([' ', '-'], "");
-    if normalized.len() < 6
-        || normalized.len() > 15
-        || !normalized
-            .chars()
-            .all(|character| character.is_ascii_digit())
-    {
-        return Err(BiliError::Invalid("invalid phone number".to_string()));
-    }
-    Ok(normalized)
-}
-
-fn normalize_sms_code(value: &str) -> Result<String, BiliError> {
-    let normalized = value.trim();
-    if normalized.len() != 6
-        || !normalized
-            .chars()
-            .all(|character| character.is_ascii_digit())
-    {
-        return Err(BiliError::Invalid("invalid sms code".to_string()));
-    }
-    Ok(normalized.to_string())
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
+    use crate::{
+        domain::{AccountCapability, ContentKind, LiveCapability, PlatformLoginChallenge},
+        platforms::{AccountLoginStart, PlatformFuture},
+    };
 
-    #[test]
-    fn reads_only_whitelisted_cookies() {
-        let mut headers = HeaderMap::new();
-        headers.append(
-            "set-cookie",
-            "SESSDATA=secret%2Cvalue; Path=/; HttpOnly".parse().unwrap(),
-        );
-        headers.append(
-            "set-cookie",
-            "DedeUserID=42; Path=/; HttpOnly".parse().unwrap(),
-        );
-        headers.append(
-            "set-cookie",
-            "unknown_cookie=drop-me; Path=/".parse().unwrap(),
-        );
+    #[derive(Default)]
+    struct MemoryCredentialStore {
+        values: Mutex<HashMap<String, String>>,
+    }
 
-        let session = SessionCookies::from_response(&headers, None);
-        assert_eq!(session.sessdata.as_deref(), Some("secret%2Cvalue"));
-        assert_eq!(session.dede_user_id.as_deref(), Some("42"));
-        assert!(session.is_authenticated());
-        assert!(!session.cookie_header().contains("unknown_cookie"));
+    impl CredentialStore for Arc<MemoryCredentialStore> {
+        fn load_platform(
+            &self,
+            platform_id: &PlatformId,
+        ) -> Result<Option<String>, CredentialStoreError> {
+            Ok(self
+                .values
+                .lock()
+                .map_err(|_| CredentialStoreError::Backend)?
+                .get(&credential_slot(platform_id))
+                .cloned())
+        }
+
+        fn save_platform(
+            &self,
+            platform_id: &PlatformId,
+            payload: &str,
+        ) -> Result<(), CredentialStoreError> {
+            *self
+                .values
+                .lock()
+                .map_err(|_| CredentialStoreError::Backend)?
+                .entry(credential_slot(platform_id))
+                .or_default() = payload.to_string();
+            Ok(())
+        }
+
+        fn clear_platform(&self, platform_id: &PlatformId) -> Result<(), CredentialStoreError> {
+            self.values
+                .lock()
+                .map_err(|_| CredentialStoreError::Backend)?
+                .remove(&credential_slot(platform_id));
+            Ok(())
+        }
+
+        fn is_available(&self) -> bool {
+            true
+        }
+    }
+
+    impl CredentialStore for MemoryCredentialStore {
+        fn load_platform(
+            &self,
+            platform_id: &PlatformId,
+        ) -> Result<Option<String>, CredentialStoreError> {
+            Ok(self
+                .values
+                .lock()
+                .map_err(|_| CredentialStoreError::Backend)?
+                .get(&credential_slot(platform_id))
+                .cloned())
+        }
+
+        fn save_platform(
+            &self,
+            platform_id: &PlatformId,
+            payload: &str,
+        ) -> Result<(), CredentialStoreError> {
+            *self
+                .values
+                .lock()
+                .map_err(|_| CredentialStoreError::Backend)?
+                .entry(credential_slot(platform_id))
+                .or_default() = payload.to_string();
+            Ok(())
+        }
+
+        fn clear_platform(&self, platform_id: &PlatformId) -> Result<(), CredentialStoreError> {
+            self.values
+                .lock()
+                .map_err(|_| CredentialStoreError::Backend)?
+                .remove(&credential_slot(platform_id));
+            Ok(())
+        }
+
+        fn is_available(&self) -> bool {
+            true
+        }
+    }
+
+    struct UnavailableCredentialStore;
+
+    impl CredentialStore for UnavailableCredentialStore {
+        fn load_platform(
+            &self,
+            _platform_id: &PlatformId,
+        ) -> Result<Option<String>, CredentialStoreError> {
+            Err(CredentialStoreError::Unavailable)
+        }
+
+        fn save_platform(
+            &self,
+            _platform_id: &PlatformId,
+            _payload: &str,
+        ) -> Result<(), CredentialStoreError> {
+            Err(CredentialStoreError::Unavailable)
+        }
+
+        fn clear_platform(&self, _platform_id: &PlatformId) -> Result<(), CredentialStoreError> {
+            Err(CredentialStoreError::Unavailable)
+        }
+
+        fn is_available(&self) -> bool {
+            false
+        }
+    }
+
+    fn platform_descriptor(id: &str, account_mode: AccountMode) -> PlatformDescriptor {
+        PlatformDescriptor {
+            id: PlatformId::new(id).unwrap(),
+            display_name: id.to_string(),
+            content_kinds: vec![ContentKind::Live],
+            availability: PlatformAvailability::Available,
+            account_capability: AccountCapability {
+                mode: account_mode,
+                login_methods: if account_mode == AccountMode::Optional {
+                    vec![LoginMethod::Qr, LoginMethod::Sms]
+                } else {
+                    Vec::new()
+                },
+                supports_refresh: account_mode == AccountMode::Optional,
+                supports_logout: account_mode == AccountMode::Optional,
+                supports_device_reset: false,
+            },
+            live_capability: Some(LiveCapability {
+                supports_discovery: true,
+                supports_search: false,
+                supports_quality_selection: false,
+            }),
+        }
+    }
+
+    fn bilibili_platform() -> PlatformDescriptor {
+        platform_descriptor(PlatformId::BILIBILI, AccountMode::Optional)
+    }
+
+    struct FakeAccountState {
+        restore_count: AtomicUsize,
+        logout_count: AtomicUsize,
+        refresh_expired: Mutex<bool>,
+        restored_credentials: Mutex<Vec<String>>,
+    }
+
+    impl Default for FakeAccountState {
+        fn default() -> Self {
+            Self {
+                restore_count: AtomicUsize::new(0),
+                logout_count: AtomicUsize::new(0),
+                refresh_expired: Mutex::new(false),
+                restored_credentials: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    struct FakeAccountAdapter {
+        name: &'static str,
+        state: Arc<FakeAccountState>,
+    }
+
+    impl PlatformAccountAdapter for FakeAccountAdapter {
+        fn start_login<'a>(&'a self, method: LoginMethod) -> PlatformFuture<'a, AccountLoginStart> {
+            Box::pin(async move {
+                Ok(AccountLoginStart {
+                    flow_id: "flow".to_string(),
+                    method,
+                    challenge: PlatformLoginChallenge::Qr {
+                        image_data_url: "[image omitted]".to_string(),
+                    },
+                    expires_in_seconds: 60,
+                })
+            })
+        }
+
+        fn poll_login<'a>(&'a self, flow_id: &'a str) -> PlatformFuture<'a, AccountLoginEvent> {
+            Box::pin(async move {
+                Ok(AccountLoginEvent {
+                    flow_id: flow_id.to_string(),
+                    outcome: AccountLoginOutcome::Pending,
+                    message_code: None,
+                })
+            })
+        }
+
+        fn submit_login_input<'a>(
+            &'a self,
+            flow_id: &'a str,
+            _input: PlatformLoginInput,
+        ) -> PlatformFuture<'a, AccountLoginEvent> {
+            Box::pin(async move {
+                Ok(AccountLoginEvent {
+                    flow_id: flow_id.to_string(),
+                    outcome: AccountLoginOutcome::Authenticated {
+                        credential: format!("{}-credential", self.name),
+                    },
+                    message_code: None,
+                })
+            })
+        }
+
+        fn cancel_login(&self, _flow_id: &str) -> Result<(), PlatformError> {
+            Ok(())
+        }
+
+        fn restore_session(&self, credential: &str) -> Result<(), PlatformError> {
+            self.state.restore_count.fetch_add(1, Ordering::AcqRel);
+            self.state
+                .restored_credentials
+                .lock()
+                .map_err(|_| PlatformError::Storage("fake lock poisoned".to_string()))?
+                .push(credential.to_string());
+            Ok(())
+        }
+
+        fn refresh<'a>(&'a self, _credential: &'a str) -> PlatformFuture<'a, AccountRefresh> {
+            Box::pin(async move {
+                if *self
+                    .state
+                    .refresh_expired
+                    .lock()
+                    .map_err(|_| PlatformError::Storage("fake lock poisoned".to_string()))?
+                {
+                    return Ok(AccountRefresh::Expired);
+                }
+                Ok(AccountRefresh::Authenticated(AccountProfile {
+                    mid: 1,
+                    name: self.name.to_string(),
+                    avatar_url: None,
+                    level: None,
+                    vip: false,
+                }))
+            })
+        }
+
+        fn logout(&self, _credential: &str) -> Result<(), PlatformError> {
+            self.state.logout_count.fetch_add(1, Ordering::AcqRel);
+            Ok(())
+        }
+
+        fn reset_identity(&self) -> Result<(), PlatformError> {
+            Ok(())
+        }
+    }
+
+    fn fake_adapter(
+        name: &'static str,
+        state: Arc<FakeAccountState>,
+    ) -> Arc<dyn PlatformAccountAdapter> {
+        Arc::new(FakeAccountAdapter { name, state })
+    }
+
+    fn adapter_map(
+        entries: Vec<(PlatformId, Arc<dyn PlatformAccountAdapter>)>,
+    ) -> HashMap<PlatformId, Arc<dyn PlatformAccountAdapter>> {
+        entries.into_iter().collect()
     }
 
     #[test]
-    fn credential_round_trip_uses_store_boundary() {
+    fn credential_slots_are_isolated_by_platform() {
         let store = MemoryCredentialStore::default();
-        let session = SessionCookies {
-            sessdata: Some("secret".to_string()),
-            dede_user_id: Some("42".to_string()),
-            ..Default::default()
-        };
-        store.save_session(&session).unwrap();
+        let bilibili = PlatformId::bilibili();
+        let future = PlatformId::new("future-live").unwrap();
+        store.save_platform(&bilibili, "bilibili-secret").unwrap();
+        store.save_platform(&future, "future-secret").unwrap();
+
+        store.clear_platform(&bilibili).unwrap();
+        assert!(store.load_platform(&bilibili).unwrap().is_none());
         assert_eq!(
-            store.load_session().unwrap().unwrap().sessdata.as_deref(),
-            Some("secret")
+            store.load_platform(&future).unwrap().as_deref(),
+            Some("future-secret")
         );
-        store.clear_session().unwrap();
-        assert!(store.load_session().unwrap().is_none());
+        assert_eq!(credential_slot(&bilibili), "bilibili-session");
+        assert_eq!(credential_slot(&future), "future-live-session");
     }
 
     #[test]
-    fn manager_restores_session_without_plaintext_file() {
-        let shared = Arc::new(RwLock::new(None));
-        let store = Box::new(MemoryCredentialStore::default());
-        let session = SessionCookies {
-            sessdata: Some("secret".to_string()),
-            dede_user_id: Some("42".to_string()),
-            ..Default::default()
-        };
-        store.save_session(&session).unwrap();
-        let manager = AccountManager::with_store(shared.clone(), store);
-        manager.initialize().unwrap();
-        assert_eq!(
-            shared
-                .read()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .dede_user_id
-                .as_deref(),
-            Some("42")
+    fn manager_restores_credentials_through_the_account_adapter() {
+        let store = Arc::new(MemoryCredentialStore::default());
+        store
+            .save_platform(&PlatformId::bilibili(), "credential")
+            .unwrap();
+        let state = Arc::new(FakeAccountState::default());
+        let manager = AccountManager::with_store(
+            Box::new(store),
+            vec![bilibili_platform()],
+            adapter_map(vec![(
+                PlatformId::bilibili(),
+                fake_adapter("bilibili", state.clone()),
+            )]),
         );
+
+        let snapshot = manager.account_center_snapshot().unwrap();
+        assert_eq!(snapshot.platforms[0].status, AccountStatus::Authenticated);
+        assert_eq!(state.restore_count.load(Ordering::Acquire), 1);
     }
 
     #[test]
     fn capabilities_do_not_advertise_login_without_credential_storage() {
         let manager = AccountManager::with_store(
-            Arc::new(RwLock::new(None)),
             Box::new(UnavailableCredentialStore),
+            vec![bilibili_platform()],
+            adapter_map(vec![(
+                PlatformId::bilibili(),
+                fake_adapter("bilibili", Arc::new(FakeAccountState::default())),
+            )]),
         );
-        let capabilities = manager.login_capabilities();
+        let capabilities = manager.login_capabilities(&PlatformId::bilibili()).unwrap();
         assert!(!capabilities.credential_storage_available);
         assert!(!capabilities.qr_available);
         assert!(!capabilities.sms_available);
     }
 
     #[test]
-    fn sms_code_contract_requires_six_digits() {
-        assert_eq!(normalize_sms_code("123456").unwrap(), "123456");
-        assert!(normalize_sms_code("12345").is_err());
-        assert!(normalize_sms_code("1234567").is_err());
-        assert!(normalize_sms_code("12345a").is_err());
+    fn snapshot_contains_every_registered_platform_and_zero_accounts() {
+        let manager = AccountManager::with_store(
+            Box::new(MemoryCredentialStore::default()),
+            vec![
+                bilibili_platform(),
+                platform_descriptor("future-live", AccountMode::None),
+            ],
+            adapter_map(vec![(
+                PlatformId::bilibili(),
+                fake_adapter("bilibili", Arc::new(FakeAccountState::default())),
+            )]),
+        );
+
+        let snapshot = manager.account_center_snapshot().unwrap();
+        assert_eq!(snapshot.platforms.len(), 2);
+        assert_eq!(
+            snapshot
+                .platforms
+                .iter()
+                .map(|account| account.platform.id.to_string())
+                .collect::<Vec<_>>(),
+            vec!["bilibili", "future-live"]
+        );
+        assert!(snapshot
+            .platforms
+            .iter()
+            .all(|account| account.status == AccountStatus::Anonymous));
+        assert!(snapshot
+            .platforms
+            .iter()
+            .all(|account| account.revision == 0));
+    }
+
+    #[test]
+    fn logout_updates_only_the_target_platform() {
+        let store = Arc::new(MemoryCredentialStore::default());
+        let bilibili = PlatformId::bilibili();
+        let future = PlatformId::new("future-live").unwrap();
+        store.save_platform(&bilibili, "bili").unwrap();
+        store.save_platform(&future, "future").unwrap();
+        let bilibili_state = Arc::new(FakeAccountState::default());
+        let future_state = Arc::new(FakeAccountState::default());
+        let manager = AccountManager::with_store(
+            Box::new(store.clone()),
+            vec![
+                bilibili_platform(),
+                platform_descriptor("future-live", AccountMode::Optional),
+            ],
+            adapter_map(vec![
+                (
+                    bilibili.clone(),
+                    fake_adapter("bilibili", bilibili_state.clone()),
+                ),
+                (future.clone(), fake_adapter("future", future_state.clone())),
+            ]),
+        );
+        manager.initialize().unwrap();
+
+        let snapshot = manager.logout_platform_account(&bilibili).unwrap();
+        assert_eq!(snapshot.platforms[0].status, AccountStatus::Anonymous);
+        assert_eq!(snapshot.platforms[0].revision, 1);
+        assert_eq!(snapshot.platforms[1].status, AccountStatus::Authenticated);
+        assert_eq!(snapshot.platforms[1].revision, 0);
+        assert_eq!(bilibili_state.logout_count.load(Ordering::Acquire), 1);
+        assert_eq!(future_state.logout_count.load(Ordering::Acquire), 0);
+        assert!(store.load_platform(&bilibili).unwrap().is_none());
+        assert_eq!(
+            store.load_platform(&future).unwrap().as_deref(),
+            Some("future")
+        );
+    }
+
+    #[test]
+    fn signing_in_again_replaces_only_the_target_platform_account() {
+        let bilibili = PlatformId::bilibili();
+        let future = PlatformId::new("future-live").unwrap();
+        let bilibili_state = Arc::new(FakeAccountState::default());
+        let future_state = Arc::new(FakeAccountState::default());
+        let manager = AccountManager::with_store(
+            Box::new(MemoryCredentialStore::default()),
+            vec![
+                bilibili_platform(),
+                platform_descriptor("future-live", AccountMode::Optional),
+            ],
+            adapter_map(vec![
+                (bilibili.clone(), fake_adapter("bilibili", bilibili_state)),
+                (future.clone(), fake_adapter("future", future_state)),
+            ]),
+        );
+        manager.initialize().unwrap();
+
+        let first = tauri::async_runtime::block_on(manager.submit_platform_login_input(
+            &bilibili,
+            "flow",
+            PlatformLoginInput::SmsCode {
+                code: "123456".to_string(),
+            },
+        ))
+        .unwrap();
+        assert!(matches!(first.state, PlatformLoginState::Succeeded { .. }));
+        let second = tauri::async_runtime::block_on(manager.submit_platform_login_input(
+            &bilibili,
+            "flow",
+            PlatformLoginInput::SmsCode {
+                code: "123456".to_string(),
+            },
+        ))
+        .unwrap();
+        assert!(matches!(second.state, PlatformLoginState::Succeeded { .. }));
+
+        let snapshot = manager.account_center_snapshot().unwrap();
+        assert_eq!(snapshot.platforms[0].status, AccountStatus::Authenticated);
+        assert_eq!(snapshot.platforms[0].revision, 2);
+        assert_eq!(snapshot.platforms[1].status, AccountStatus::Anonymous);
+        assert_eq!(snapshot.platforms[1].revision, 0);
+    }
+
+    #[test]
+    fn expiration_invalidates_only_the_target_platform() {
+        let store = Arc::new(MemoryCredentialStore::default());
+        let bilibili = PlatformId::bilibili();
+        let future = PlatformId::new("future-live").unwrap();
+        store.save_platform(&bilibili, "bili").unwrap();
+        store.save_platform(&future, "future").unwrap();
+        let future_state = Arc::new(FakeAccountState::default());
+        *future_state.refresh_expired.lock().unwrap() = true;
+        let manager = AccountManager::with_store(
+            Box::new(store.clone()),
+            vec![
+                bilibili_platform(),
+                platform_descriptor("future-live", AccountMode::Optional),
+            ],
+            adapter_map(vec![
+                (
+                    bilibili.clone(),
+                    fake_adapter("bilibili", Arc::new(FakeAccountState::default())),
+                ),
+                (future.clone(), fake_adapter("future", future_state)),
+            ]),
+        );
+        manager.initialize().unwrap();
+
+        let snapshot =
+            tauri::async_runtime::block_on(manager.refresh_platform_account(&future)).unwrap();
+        assert_eq!(snapshot.platforms[0].status, AccountStatus::Authenticated);
+        assert_eq!(snapshot.platforms[0].revision, 0);
+        assert_eq!(snapshot.platforms[1].status, AccountStatus::Expired);
+        assert_eq!(snapshot.platforms[1].revision, 1);
+        assert!(store.load_platform(&future).unwrap().is_none());
+        assert_eq!(
+            store.load_platform(&bilibili).unwrap().as_deref(),
+            Some("bili")
+        );
+    }
+
+    #[test]
+    fn failed_relogin_rolls_back_to_the_previous_account() {
+        let store = Arc::new(MemoryCredentialStore::default());
+        let bilibili = PlatformId::bilibili();
+        store.save_platform(&bilibili, "old-credential").unwrap();
+        let state = Arc::new(FakeAccountState::default());
+        let manager = AccountManager::with_store(
+            Box::new(store.clone()),
+            vec![bilibili_platform()],
+            adapter_map(vec![(
+                bilibili.clone(),
+                fake_adapter("bilibili", state.clone()),
+            )]),
+        );
+        manager.initialize().unwrap();
+        *state.refresh_expired.lock().unwrap() = true;
+
+        let event = tauri::async_runtime::block_on(manager.submit_platform_login_input(
+            &bilibili,
+            "flow",
+            PlatformLoginInput::SmsCode {
+                code: "123456".to_string(),
+            },
+        ))
+        .unwrap();
+        assert!(matches!(event.state, PlatformLoginState::Failed));
+        let snapshot = manager.account_center_snapshot().unwrap();
+        assert_eq!(snapshot.platforms[0].status, AccountStatus::Authenticated);
+        assert_eq!(
+            snapshot.platforms[0].message_code.as_deref(),
+            Some("relogin_failed")
+        );
+        assert_eq!(snapshot.platforms[0].revision, 0);
+        assert_eq!(
+            store.load_platform(&bilibili).unwrap().as_deref(),
+            Some("old-credential")
+        );
+        let restored = state.restored_credentials.lock().unwrap();
+        assert_eq!(restored.last().map(String::as_str), Some("old-credential"));
     }
 }

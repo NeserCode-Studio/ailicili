@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { useI18n, useToast } from "@/composables";
 import { useNavigatorContext } from "@/contexts/navigator";
 import { favoriteEntryPath, favoriteTargetKey } from "@/lib/library";
+import { rememberFavoriteLiveRoom } from "@/lib/live-room-cache";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("Library/Favorites");
@@ -87,6 +88,7 @@ export default function Favorites() {
     if (entry.target.kind !== "video" && entry.target.kind !== "liveRoom") {
       return;
     }
+    rememberFavoriteLiveRoom(entry);
     navigator(favoriteEntryPath(entry));
   };
 

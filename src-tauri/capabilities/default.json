@@ -34,6 +34,9 @@
         },
         {
           "url": "https://*.hdslb.com/**"
+        },
+        {
+          "url": "https://*.douyinpic.com/**"
         }
       ],
       "deny": [

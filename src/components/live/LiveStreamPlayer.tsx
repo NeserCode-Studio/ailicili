@@ -17,12 +17,13 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
-import Hls from "hls.js";
+import Hls, { type HlsConfig } from "hls.js";
 import mpegts from "mpegts.js";
 
 import type { CommandError } from "@/api/account";
 import type { LiveRoomInfo, LiveStatus } from "@/api/live";
 import type { StreamSource } from "@/api/media";
+import type { PlatformId } from "@/api/platforms";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { useI18n } from "@/composables";
@@ -54,6 +55,7 @@ interface LiveQualityOption {
 }
 
 interface LiveStreamPlayerProps {
+  platformId: PlatformId;
   roomId: string;
   info: LiveRoomInfo | null;
   streams: StreamSource[];
@@ -382,6 +384,7 @@ function LivePausePanel({
 }
 
 export default function LiveStreamPlayer({
+  platformId,
   roomId,
   info,
   streams,
@@ -482,7 +485,7 @@ export default function LiveStreamPlayer({
     setLoading(true);
     setPlayerError(null);
     setReloadKey(0);
-  }, [roomId]);
+  }, [platformId, roomId]);
 
   useEffect(() => {
     if (!playbackError) return;
@@ -1003,12 +1006,16 @@ export default function LiveStreamPlayer({
       try {
         if (candidate.protocol === "hls") {
           if (Hls.isSupported()) {
-            const hls = new Hls({
+            const hlsConfig: Partial<HlsConfig> & {
+              livePlatformId: PlatformId;
+            } = {
               enableWorker: true,
               lowLatencyMode: true,
               backBufferLength: 30,
               loader: LiveHlsLoader,
-            });
+              livePlatformId: platformId,
+            };
+            const hls = new Hls(hlsConfig);
             activeHls = hls;
             hls.attachMedia(video);
             hls.on(Hls.Events.MANIFEST_PARSED, playVideo);
@@ -1048,22 +1055,24 @@ export default function LiveStreamPlayer({
             nextSource("flv-unsupported");
             return;
           }
+          const playerConfig = {
+            enableWorker: false,
+            customLoader: LiveFlvLoader,
+            livePlatformId: platformId,
+            enableStashBuffer: true,
+            stashInitialSize: 384 * 1024,
+            liveSync: true,
+            liveSyncMaxLatency: 2.5,
+            liveSyncTargetLatency: 1.5,
+            liveSyncPlaybackRate: 1.1,
+          };
           const player = mpegts.createPlayer(
             {
               type: "flv",
               isLive: true,
               url: candidate.url,
             },
-            {
-              enableWorker: false,
-              customLoader: LiveFlvLoader,
-              enableStashBuffer: true,
-              stashInitialSize: 384 * 1024,
-              liveSync: true,
-              liveSyncMaxLatency: 2.5,
-              liveSyncTargetLatency: 1.5,
-              liveSyncPlaybackRate: 1.1,
-            }
+            playerConfig
           );
           activeMpegts = player;
           const onNativeError = () => nextSource("native-flv-error");
@@ -1113,7 +1122,16 @@ export default function LiveStreamPlayer({
       sourceSwitchingRef.current = false;
       destroySource();
     };
-  }, [availableProtocols, liveStatus, offline, reloadKey, roomId, streams, t]);
+  }, [
+    availableProtocols,
+    liveStatus,
+    offline,
+    platformId,
+    reloadKey,
+    roomId,
+    streams,
+    t,
+  ]);
 
   useEffect(() => {
     if (protocolMenuOpen || qualityMenuOpen || volumePanelOpen) {

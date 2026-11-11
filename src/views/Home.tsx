@@ -106,7 +106,13 @@ function FeedSkeleton() {
 
 export default function Home() {
   const { t, lang } = useI18n();
-  const { account, loading: accountLoading, openLogin } = useAccount();
+  const {
+    account,
+    accountRevisions,
+    loading: accountLoading,
+    openLogin,
+    snapshot: accountSnapshot,
+  } = useAccount();
   const { navigator } = useNavigatorContext();
   const { openSettings } = useSettingsDialog();
   const recommendationPriority = useRecommendationPriority();
@@ -128,7 +134,17 @@ export default function Home() {
   );
   const [reloadToken, setReloadToken] = useState(0);
   const requestIdRef = useRef(0);
+  const accountRevisionRef = useRef(0);
   const loadingMoreRef = useRef(false);
+  const videoPlatformId = accountSnapshot?.platforms.find(
+    (entry) =>
+      entry.platform.contentKinds.includes("video") &&
+      entry.platform.accountCapability.mode !== "none"
+  )?.platform.id;
+  const accountRevision = videoPlatformId
+    ? (accountRevisions[videoPlatformId] ?? 0)
+    : 0;
+  accountRevisionRef.current = accountRevision;
 
   const recommendationEligibility: FallbackReason | null =
     recommendationPriority !== "personalized"
@@ -198,6 +214,7 @@ export default function Home() {
     }
 
     const requestId = ++requestIdRef.current;
+    const revision = accountRevisionRef.current;
     const popularFallback =
       recommendationGate === "preference"
         ? "preference"
@@ -221,7 +238,12 @@ export default function Home() {
       popularFallback
     )
       .then(({ result, fallbackReason: nextFallback }) => {
-        if (requestId !== requestIdRef.current) return;
+        if (
+          requestId !== requestIdRef.current ||
+          revision !== accountRevisionRef.current
+        ) {
+          return;
+        }
         setItems(mergeUnique([], result.items));
         setPage(result.page || 1);
         setHasMore(result.hasMore);
@@ -234,7 +256,12 @@ export default function Home() {
         });
       })
       .catch((reason) => {
-        if (requestId !== requestIdRef.current) return;
+        if (
+          requestId !== requestIdRef.current ||
+          revision !== accountRevisionRef.current
+        ) {
+          return;
+        }
         const normalized = asCommandError(reason);
         setError(normalized);
         log.error("feed failed", { mode, code: normalized.code });
@@ -247,6 +274,7 @@ export default function Home() {
       requestIdRef.current += 1;
     };
   }, [
+    accountRevision,
     mode,
     recommendationGate,
     reloadToken,
@@ -260,6 +288,7 @@ export default function Home() {
 
     loadingMoreRef.current = true;
     const requestId = ++requestIdRef.current;
+    const revision = accountRevisionRef.current;
     const requestedPage = page + 1;
     const popularFallback =
       mode === "recommend"
@@ -276,7 +305,12 @@ export default function Home() {
         searchQuery,
         popularFallback
       );
-      if (requestId !== requestIdRef.current) return;
+      if (
+        requestId !== requestIdRef.current ||
+        revision !== accountRevisionRef.current
+      ) {
+        return;
+      }
 
       setItems((current) => mergeUnique(current, result.items));
       setPage(result.page || requestedPage);
@@ -288,7 +322,12 @@ export default function Home() {
         count: result.items.length,
       });
     } catch (reason) {
-      if (requestId !== requestIdRef.current) return;
+      if (
+        requestId !== requestIdRef.current ||
+        revision !== accountRevisionRef.current
+      ) {
+        return;
+      }
       const normalized = asCommandError(reason);
       setError(normalized);
       log.error("feed page failed", { mode, code: normalized.code });

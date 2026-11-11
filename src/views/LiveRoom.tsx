@@ -29,9 +29,13 @@ import { Button } from "@/components/ui/button";
 import { useI18n, useToast } from "@/composables";
 import { useAccount } from "@/contexts/account-context";
 import { useNavigatorContext } from "@/contexts/navigator";
-import { useBilibiliImage } from "@/hooks/useBilibiliImages";
+import { useRemoteImage } from "@/hooks/useRemoteImages";
 import { formatTimestamp } from "@/lib/format";
 import { favoriteMatches, favoriteTargetForLiveRoom } from "@/lib/library";
+import {
+  cachedLiveRoomInfo,
+  rememberLiveRoomInfo,
+} from "@/lib/live-room-cache";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("Media/LiveRoom");
@@ -51,6 +55,7 @@ const EMPTY_LIVE_STREAMS: LivePlaybackInfo["streams"] = [];
 
 interface LivePlayerErrorBoundaryProps {
   children: ReactNode;
+  platformId: string;
   roomId: string;
   title: string;
   retryLabel: string;
@@ -74,6 +79,7 @@ class LivePlayerErrorBoundary extends Component<
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     log.error("live player render failed", {
+      platformId: this.props.platformId,
       roomId: this.props.roomId,
       error,
       componentStack: info.componentStack,
@@ -115,11 +121,17 @@ class LivePlayerErrorBoundary extends Component<
 }
 
 export default function LiveRoom() {
-  const { roomId = "" } = useParams();
+  const { platformId: routePlatformId, roomId = "" } = useParams();
   const [searchParams] = useSearchParams();
   const { t, lang } = useI18n();
   const { navigator } = useNavigatorContext();
-  const { account, openLogin } = useAccount();
+  const {
+    accountRevisions,
+    accountsByPlatform,
+    openAccountCenter,
+    platformCatalog,
+  } = useAccount();
+  const platformId = routePlatformId ?? "";
   const {
     info: toastInfo,
     success: toastSuccess,
@@ -140,33 +152,45 @@ export default function LiveRoom() {
   const [favoriteBusy, setFavoriteBusy] = useState(false);
   const [favoriteLoading, setFavoriteLoading] = useState(true);
   const requestIdRef = useRef(0);
+  const accountRevisionRef = useRef(0);
   const favoriteRequestIdRef = useRef(0);
   const currentInfo = loadedRoomId === roomId ? info : null;
   const currentPlayback = loadedRoomId === roomId ? playback : null;
-  const cover = useBilibiliImage(currentInfo?.coverUrl);
-  const avatar = useBilibiliImage(currentInfo?.avatarUrl);
+  const cover = useRemoteImage(currentInfo?.coverUrl);
+  const avatar = useRemoteImage(currentInfo?.avatarUrl);
   const target = useMemo(
-    () => favoriteTargetForLiveRoom(currentInfo?.roomId ?? roomId),
-    [currentInfo?.roomId, roomId]
+    () => favoriteTargetForLiveRoom(platformId, currentInfo?.roomId ?? roomId),
+    [currentInfo?.roomId, platformId, roomId]
   );
+  const accountRevision = accountRevisions[platformId] ?? 0;
+  accountRevisionRef.current = accountRevision;
 
   const loadRoom = useCallback(async () => {
-    if (!roomId) {
+    if (!platformId || !roomId) {
       setLoading(false);
-      setRoomError({ code: "invalidResponse", message: "Missing room id" });
+      setRoomError({
+        code: "invalidResponse",
+        message: "Missing platform or room id",
+      });
       return false;
     }
 
     const requestId = ++requestIdRef.current;
+    const revision = accountRevision;
     setLoading(true);
     setRoomError(null);
     setPlaybackError(null);
 
     const [infoResult, playbackResult] = await Promise.allSettled([
-      getLiveRoomInfo(roomId),
-      getLiveRoomPlayback(roomId),
+      getLiveRoomInfo(platformId, roomId),
+      getLiveRoomPlayback(platformId, roomId),
     ]);
-    if (requestId !== requestIdRef.current) return false;
+    if (
+      requestId !== requestIdRef.current ||
+      revision !== accountRevisionRef.current
+    ) {
+      return false;
+    }
     setLoadedRoomId(roomId);
 
     let succeeded = true;
@@ -180,7 +204,17 @@ export default function LiveRoom() {
           ? infoResult.value
           : { ...infoResult.value, liveStatus: playbackStatus };
       setInfo(nextInfo);
+      try {
+        rememberLiveRoomInfo(nextInfo);
+      } catch (cacheError) {
+        log.warn("live room cache write failed", {
+          platformId,
+          roomId,
+          error: cacheError,
+        });
+      }
       log.info("live room info loaded", {
+        platformId,
         roomId,
         status: nextInfo.liveStatus,
         infoStatus: infoResult.value.liveStatus,
@@ -191,6 +225,7 @@ export default function LiveRoom() {
       setRoomError(normalized);
       succeeded = false;
       log.error("live room info failed", {
+        platformId,
         roomId,
         code: normalized.code,
       });
@@ -205,6 +240,7 @@ export default function LiveRoom() {
           10_000
       );
       log.info("live room playback loaded", {
+        platformId,
         roomId,
         status: nextPlayback.liveStatus,
         protocols: nextPlayback.streams.map((stream) => stream.protocol),
@@ -214,6 +250,7 @@ export default function LiveRoom() {
       setPlaybackError(normalized);
       succeeded = false;
       log.error("live room playback failed", {
+        platformId,
         roomId,
         code: normalized.code,
       });
@@ -221,17 +258,18 @@ export default function LiveRoom() {
 
     setLoading(false);
     return succeeded;
-  }, [roomId]);
+  }, [accountRevision, platformId, roomId]);
 
   useEffect(() => {
-    setInfo(null);
+    const cached = cachedLiveRoomInfo(platformId, roomId);
+    setInfo(cached);
     setPlayback(null);
-    setLoadedRoomId(null);
+    setLoadedRoomId(cached ? roomId : null);
     setRoomError(null);
     setPlaybackError(null);
     setSelectedQuality(10_000);
     setFavorite(null);
-  }, [roomId]);
+  }, [accountRevision, platformId, roomId]);
 
   useEffect(() => {
     void loadRoom();
@@ -254,6 +292,7 @@ export default function LiveRoom() {
       .catch((reason) => {
         if (requestId !== favoriteRequestIdRef.current) return;
         log.warn("live favorite state load failed", {
+          platformId,
           roomId,
           code: asCommandError(reason).code,
         });
@@ -269,17 +308,27 @@ export default function LiveRoom() {
         favoriteRequestIdRef.current += 1;
       }
     };
-  }, [roomId, target]);
+  }, [platformId, roomId, target]);
 
   const loadPlayback = useCallback(
     async (quality: number) => {
       if (!roomId) return false;
       const requestId = ++requestIdRef.current;
+      const revision = accountRevision;
       setSwitching(true);
       setPlaybackError(null);
       try {
-        const nextPlayback = await getLiveRoomPlayback(roomId, quality);
-        if (requestId !== requestIdRef.current) return false;
+        const nextPlayback = await getLiveRoomPlayback(
+          platformId,
+          roomId,
+          quality
+        );
+        if (
+          requestId !== requestIdRef.current ||
+          revision !== accountRevisionRef.current
+        ) {
+          return false;
+        }
         setLoadedRoomId(roomId);
         setPlayback(nextPlayback);
         if (nextPlayback.liveStatus !== "unknown") {
@@ -295,6 +344,7 @@ export default function LiveRoom() {
             quality
         );
         log.info("live playback refreshed", {
+          platformId,
           roomId,
           quality: nextPlayback.currentQuality?.id ?? quality,
           status: nextPlayback.liveStatus,
@@ -302,10 +352,16 @@ export default function LiveRoom() {
         });
         return true;
       } catch (reason) {
-        if (requestId !== requestIdRef.current) return false;
+        if (
+          requestId !== requestIdRef.current ||
+          revision !== accountRevisionRef.current
+        ) {
+          return false;
+        }
         const normalized = asCommandError(reason);
         setPlaybackError(normalized);
         log.error("live playback refresh failed", {
+          platformId,
           roomId,
           quality,
           code: normalized.code,
@@ -315,7 +371,7 @@ export default function LiveRoom() {
         if (requestId === requestIdRef.current) setSwitching(false);
       }
     },
-    [roomId]
+    [accountRevision, platformId, roomId]
   );
 
   const qualityOptions = useMemo(() => {
@@ -343,7 +399,12 @@ export default function LiveRoom() {
       ? currentPlayback.liveStatus
       : (currentInfo?.liveStatus ?? "unknown");
   const startedAt = formatTimestamp(currentInfo?.startedAt, lang);
-  const qualityLocked = account?.status !== "authenticated";
+  const platformSupportsAccounts =
+    platformCatalog.find((platform) => platform.id === platformId)
+      ?.accountCapability.mode === "optional";
+  const qualityLocked =
+    platformSupportsAccounts &&
+    accountsByPlatform[platformId]?.status !== "authenticated";
   const stageError = playbackError ?? roomError;
 
   const refreshPlayback = useCallback(async () => {
@@ -365,6 +426,7 @@ export default function LiveRoom() {
             title: currentInfo.title,
             coverUrl: currentInfo.coverUrl,
             ownerName: currentInfo.anchorName,
+            ownerAvatarUrl: currentInfo.avatarUrl,
           });
       setFavorite(
         entries.find((entry) => favoriteMatches(entry, target)) ?? null
@@ -377,6 +439,7 @@ export default function LiveRoom() {
     } catch (reason) {
       toastError("Library.favorites.updateFailed");
       log.error("live favorite toggle failed", {
+        platformId,
         roomId,
         code: asCommandError(reason).code,
       });
@@ -388,6 +451,7 @@ export default function LiveRoom() {
     favoriteBusy,
     favoriteLoading,
     currentInfo,
+    platformId,
     roomId,
     target,
     toastError,
@@ -399,16 +463,17 @@ export default function LiveRoom() {
       id: "live-quality-login-required",
       duration: 2400,
       action: {
-        label: t("Account.titlebar.login"),
-        onClick: () => openLogin(),
+        label: t("Account.titlebar.center"),
+        onClick: openAccountCenter,
       },
     });
-  }, [openLogin, t, toastInfo]);
+  }, [openAccountCenter, t, toastInfo]);
 
   return (
     <div className="bg-background text-foreground relative h-[calc(100vh-2rem)] min-h-0 w-full overflow-hidden">
       <LivePlayerErrorBoundary
-        key={roomId}
+        key={`${platformId}:${roomId}`}
+        platformId={platformId}
         roomId={roomId}
         title={t("Live.player.renderError")}
         retryLabel={t("Live.retry")}
@@ -416,6 +481,7 @@ export default function LiveRoom() {
         onBack={() => navigator(backPath)}
       >
         <LiveStreamPlayer
+          platformId={platformId}
           roomId={roomId}
           info={currentInfo}
           streams={currentPlayback?.streams ?? EMPTY_LIVE_STREAMS}

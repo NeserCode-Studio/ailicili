@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::domain::{
     LiveDiscovery, LivePlaybackInfo, LiveRoomCard, LiveRoomInfo, LiveSection, LiveStatus,
-    PagedLiveRooms, Platform, QualityOption, StreamProtocol, StreamSource,
+    PagedLiveRooms, PlatformId, QualityOption, StreamProtocol, StreamSource,
 };
 
 pub fn parse_discovery(root: &Value) -> Result<LiveDiscovery, String> {
@@ -110,7 +110,7 @@ pub fn parse_room_info(root: &Value, requested_room_id: &str) -> Result<LiveRoom
         .unwrap_or_default();
 
     Ok(LiveRoomInfo {
-        platform: Platform::Bilibili,
+        platform: PlatformId::bilibili(),
         room_id,
         title,
         anchor_name,
@@ -255,6 +255,7 @@ pub fn parse_playback(root: &Value, requested_room_id: &str) -> Result<LivePlayb
         })
         .collect();
     Ok(LivePlaybackInfo {
+        platform: PlatformId::bilibili(),
         room_id,
         live_status,
         streams,
@@ -302,7 +303,7 @@ fn parse_room_card(item: &Value) -> Option<LiveRoomCard> {
         .unwrap_or(LiveStatus::Unknown);
 
     Some(LiveRoomCard {
-        platform: Platform::Bilibili,
+        platform: PlatformId::bilibili(),
         room_id,
         title,
         anchor_name,

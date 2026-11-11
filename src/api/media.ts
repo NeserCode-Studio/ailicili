@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export type StreamProtocol = "hls" | "flv" | "dash" | "mp4";
-export type Platform = "bilibili" | "douyin" | "huya" | "custom";
+export type PlatformId = string;
 export type VideoSourceKind =
   | "popular"
   | "recommend"
@@ -24,7 +24,7 @@ export interface VideoStats {
 }
 
 export interface VideoCard {
-  platform: Platform;
+  platform: PlatformId;
   videoId: string;
   title: string;
   coverUrl?: string;
@@ -110,7 +110,7 @@ export interface HistoryEntry {
 export type FavoriteKind = "video" | "liveRoom";
 
 export interface FavoriteTarget {
-  platform: Platform;
+  platform: PlatformId;
   kind: FavoriteKind;
   targetId: string;
 }
@@ -120,6 +120,7 @@ export interface FavoriteDraft {
   title: string;
   coverUrl?: string;
   ownerName?: string;
+  ownerAvatarUrl?: string;
 }
 
 export interface FavoriteEntry extends FavoriteDraft {
