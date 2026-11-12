@@ -1,8 +1,9 @@
-import { useContext } from "react";
-import { useI18n } from "@/composables";
+import { useContext, type MouseEvent } from "react";
+import { useI18n, useToast } from "@/composables";
 import { NavigatorContext } from "@/contexts/navigator";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, ExternalLink } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 const TECH_KEYS = [
   "vite",
@@ -18,16 +19,25 @@ const TECH_KEYS = [
 
 export default function Framework() {
   const { t } = useI18n();
+  const { error: toastError } = useToast();
   const { navigator } = useContext(NavigatorContext);
+
+  const openExternalLink = (
+    event: MouseEvent<HTMLAnchorElement>,
+    url: string
+  ) => {
+    event.preventDefault();
+    void openUrl(url).catch(() => toastError("ExternalLink.openFailed"));
+  };
 
   return (
     <div className="view-framework">
-      <div className="flex flex-row items-start justify-between gap-4 mb-6">
-        <div className="flex flex-col min-w-0">
-          <h1 className="mb-2 text-2xl font-bold text-foreground">
+      <div className="mb-6 flex flex-row items-start justify-between gap-4">
+        <div className="flex min-w-0 flex-col">
+          <h1 className="text-foreground mb-2 text-2xl font-bold">
             {t("Framework.title")}
           </h1>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-muted-foreground text-sm">
             {t("Framework.intro")}
           </p>
         </div>
@@ -43,25 +53,30 @@ export default function Framework() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        {TECH_KEYS.map((key) => (
-          <a
-            key={key}
-            href={t(`Framework.card.${key}.url`)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex flex-row items-center gap-3 rounded-lg border border-border bg-card p-4 text-card-foreground no-underline transition-all duration-150 ease-in-out hover:border-primary/50 hover:shadow-md"
-          >
-            <div className="flex min-w-0 flex-col gap-0.5">
-              <span className="flex items-center gap-1 text-sm font-semibold text-card-foreground">
-                {t(`Framework.card.${key}.name`)}
-                <ExternalLink className="h-3 w-3 text-muted-foreground" />
-              </span>
-              <span className="text-xs leading-snug text-muted-foreground">
-                {t(`Framework.card.${key}.description`)}
-              </span>
-            </div>
-          </a>
-        ))}
+        {TECH_KEYS.map((key) => {
+          const url = t(`Framework.card.${key}.url`);
+
+          return (
+            <a
+              key={key}
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(event) => openExternalLink(event, url)}
+              className="border-border bg-card text-card-foreground hover:border-primary/50 flex flex-row items-center gap-3 rounded-lg border p-4 no-underline transition-all duration-150 ease-in-out hover:shadow-md"
+            >
+              <div className="flex min-w-0 flex-col gap-0.5">
+                <span className="text-card-foreground flex items-center gap-1 text-sm font-semibold">
+                  {t(`Framework.card.${key}.name`)}
+                  <ExternalLink className="text-muted-foreground h-3 w-3" />
+                </span>
+                <span className="text-muted-foreground text-xs leading-snug">
+                  {t(`Framework.card.${key}.description`)}
+                </span>
+              </div>
+            </a>
+          );
+        })}
       </div>
     </div>
   );

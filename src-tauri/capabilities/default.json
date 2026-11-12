@@ -5,7 +5,41 @@
   "windows": ["main", "tray"],
   "permissions": [
     "core:app:default",
-    "shell:allow-open",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        {
+          "url": "https://ahooks.js.org/*"
+        },
+        {
+          "url": "https://github.com/NeserCode-Studio/ailicili*"
+        },
+        {
+          "url": "https://react.dev/*"
+        },
+        {
+          "url": "https://reactrouter.com/*"
+        },
+        {
+          "url": "https://tailwindcss.com/*"
+        },
+        {
+          "url": "https://tauri.app/*"
+        },
+        {
+          "url": "https://ui.shadcn.com/*"
+        },
+        {
+          "url": "https://vite.dev/*"
+        },
+        {
+          "url": "https://www.typescriptlang.org/*"
+        },
+        {
+          "url": "https://zod.dev/*"
+        }
+      ]
+    },
     "core:window:allow-get-all-windows",
     "core:window:default",
     "core:window:allow-request-user-attention",
@@ -54,7 +88,6 @@
         }
       ]
     },
-    "shell:default",
     "http:default",
     "core:tray:default",
     "core:tray:allow-new",

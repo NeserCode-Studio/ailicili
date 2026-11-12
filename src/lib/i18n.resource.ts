@@ -1,6 +1,6 @@
 export const I18nTexts = {
   "en-US": {
-    "Titlebar.default.title": "App Template",
+    "Titlebar.default.title": "ailicili",
     "Titlebar.menu.turnto": "Turn to",
     "Titlebar.menu.turnto.home": "Home",
     "Titlebar.menu.turnto.live": "Live",
@@ -392,6 +392,7 @@ export const I18nTexts = {
     "Framework.card.ahooks.description":
       "High-quality and reliable React Hooks library",
     "Framework.card.ahooks.url": "https://ahooks.js.org/",
+    "ExternalLink.openFailed": "Could not open the external link",
 
     "Settings.tabs.search": "Search",
     "Settings.tabs.general": "General",
@@ -454,11 +455,12 @@ export const I18nTexts = {
     "Tray.menu.quit": "Quit",
 
     "About.title": "About {name}",
-    "About.tagline": "A Tauri + React application template",
+    "About.tagline":
+      "Watch Bilibili videos and multiplatform live streams on Windows",
     "About.version": "Version",
-    "About.frontend": "Frontend",
+    "About.tauriVersion": "Tauri version",
     "About.identifier": "Identifier",
-    "About.website": "Website",
+    "About.website": "Project homepage",
     "About.copyright": "Released under the MIT License",
     "About.notice":
       "For personal learning and research only. No commercial distribution, no content hosting, and no bypassing paid or regional restrictions.",
@@ -477,7 +479,7 @@ export const I18nTexts = {
     "SuperCommand.devtools.open": "Open developer tools",
   },
   "zh-CN": {
-    "Titlebar.default.title": "应用模板",
+    "Titlebar.default.title": "ailicili",
     "Titlebar.menu.turnto": "转到",
     "Titlebar.menu.turnto.home": "首页",
     "Titlebar.menu.turnto.live": "直播",
@@ -840,6 +842,7 @@ export const I18nTexts = {
     "Framework.card.ahooks.name": "ahooks",
     "Framework.card.ahooks.description": "高质量可靠的 React Hooks 库",
     "Framework.card.ahooks.url": "https://ahooks.js.org/",
+    "ExternalLink.openFailed": "无法打开外部链接",
 
     "Settings.tabs.search": "搜索",
     "Settings.tabs.general": "通用",
@@ -893,9 +896,9 @@ export const I18nTexts = {
     "Tray.menu.quit": "退出",
 
     "About.title": "关于 {name}",
-    "About.tagline": "Tauri + React 桌面应用模板",
+    "About.tagline": "在 Windows 上观看 Bilibili 视频与多平台直播",
     "About.version": "版本",
-    "About.frontend": "前端运行时",
+    "About.tauriVersion": "Tauri 版本",
     "About.identifier": "应用标识",
     "About.website": "项目主页",
     "About.copyright": "基于 MIT 协议发布",

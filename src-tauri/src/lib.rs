@@ -754,7 +754,7 @@ pub fn run() {
 
             TrayIconBuilder::new()
                 .icon(icon)
-                .tooltip("App Template")
+                .tooltip("ailicili")
                 .on_tray_icon_event(|tray, event| {
                     let (rx, ry, rw, is_right) = match event {
                         TrayIconEvent::Click {
@@ -794,7 +794,6 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_http::init())
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             greet,
