@@ -2,12 +2,11 @@
 
 # ailicili
 
-**面向 Bilibili 视频与多平台直播的观看应用**
+**Windows 平台上面向 Bilibili 视频与多平台直播的观看应用**
 
 浏览 Bilibili 热门视频、发现或搜索直播、播放内容、收藏视频或直播间、继续本地观看记录，并在 Windows 上使用 Bilibili 账号登录。
 
 ![Windows](https://img.shields.io/badge/Platform-Windows-0078D4)
-![Android](https://img.shields.io/badge/Platform-Android-lightgrey)
 ![Bilibili](https://img.shields.io/badge/Content-Bilibili-00A1D6)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow)
 
@@ -55,10 +54,9 @@ Windows 版当前支持 Bilibili 二维码登录和手机短信验证码登录�
 
 ## 平台支持
 
-| 平台    | 状态   | 说明                                                                         |
-| ------- | ------ | ---------------------------------------------------------------------------- |
-| Windows | 可用   | 支持视频与直播浏览、搜索、播放、本地收藏与历史、只读评论、账号登录和系统托盘 |
-| Android | 计划中 | 播放与登录能力尚未开放                                                       |
+| 平台    | 状态 | 说明                                                                         |
+| ------- | ---- | ---------------------------------------------------------------------------- |
+| Windows | 可用 | 支持视频与直播浏览、搜索、播放、本地收藏与历史、只读评论、账号登录和系统托盘 |
 
 ## 当前限制
 
@@ -68,7 +66,7 @@ Windows 版当前支持 Bilibili 二维码登录和手机短信验证码登录�
 - 视频源仅支持 Bilibili 用户投稿；直播当前支持 Bilibili、抖音与虎牙。
 - 抖音当前只提供公开直播发现和播放，暂不支持登录、搜索、短视频、弹幕或互动。
 - 虎牙当前只提供公开直播发现和播放，暂不支持登录、搜索、弹幕或互动。
-- 暂不支持 Android 播放和 Android 账号登录。
+- 当前仅支持 Windows 10/11，不提供 Android、iOS 或其他移动端版本。
 - 少数第三方直播间可能受平台接口或 CDN 波动影响，出现缓冲、重连或需要手动刷新。
 - 暂不支持视频弹幕、直播弹幕、评论发布、点赞、投币、平台收藏夹和云端历史。
 - 暂不支持视频下载与离线缓存。
@@ -83,7 +81,7 @@ Windows 版当前支持 Bilibili 二维码登录和手机短信验证码登录�
 - Node.js 18 或更高版本
 - pnpm 9 或更高版本
 - Rust stable
-- Tauri 2 对应平台依赖
+- Tauri 2 Windows 构建依赖
 - Windows 需要 WebView2
 
 ### 启动应用
@@ -102,7 +100,6 @@ pnpm build
 ## 后续计划
 
 - 补齐云端历史、评论写互动与平台收藏夹（需先确认同步和风控边界）。
-- 建设 Android 播放和 Android 登录能力。
 - 为抖音补齐登录态搜索与高画质账号能力。
 - 统一视频弹幕与直播弹幕，再评估下载缓存和更多平台。
 
