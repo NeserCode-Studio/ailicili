@@ -84,6 +84,13 @@ impl SessionCookies {
             .is_some_and(|value| !value.is_empty())
     }
 
+    pub(crate) fn authenticated_uid(&self) -> Option<u64> {
+        self.dede_user_id
+            .as_deref()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value > 0)
+    }
+
     pub(crate) fn cookie_header(&self) -> String {
         [
             ("SESSDATA", self.sessdata.as_deref()),
@@ -726,6 +733,7 @@ mod tests {
         assert_eq!(session.sessdata.as_deref(), Some("secret%2Cvalue"));
         assert_eq!(session.dede_user_id.as_deref(), Some("42"));
         assert!(session.is_authenticated());
+        assert_eq!(session.authenticated_uid(), Some(42));
         assert!(!session.cookie_header().contains("unknown_cookie"));
     }
 

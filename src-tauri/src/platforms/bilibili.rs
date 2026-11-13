@@ -36,6 +36,7 @@ pub(super) fn register(client: BilibiliClient) -> Result<RegisteredPlatform, Str
             supports_discovery: true,
             supports_search: true,
             supports_quality_selection: true,
+            supports_danmaku: true,
         }),
     };
     let live = Arc::new(BilibiliLiveAdapter {

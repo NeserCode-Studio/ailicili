@@ -7,6 +7,7 @@ use tauri::{
 
 mod account;
 mod bilibili;
+mod danmaku;
 mod device;
 mod domain;
 mod live;
@@ -190,6 +191,44 @@ async fn get_video_playback(
     state
         .bilibili
         .video_playback(&video_id, cid, quality)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn get_video_danmaku_segment(
+    state: tauri::State<'_, AppState>,
+    aid: i64,
+    cid: i64,
+    segment_index: u32,
+) -> Result<domain::DanmakuSegment, domain::CommandError> {
+    state
+        .bilibili
+        .video_danmaku_segment(aid, cid, segment_index)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn get_live_danmaku_connection(
+    state: tauri::State<'_, AppState>,
+    room_id: String,
+) -> Result<domain::LiveDanmakuConnection, domain::CommandError> {
+    state
+        .bilibili
+        .live_danmaku_connection(&room_id)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn get_live_emoticon_catalog(
+    state: tauri::State<'_, AppState>,
+    room_id: String,
+) -> Result<domain::LiveEmoticonCatalog, domain::CommandError> {
+    state
+        .bilibili
+        .live_emoticon_catalog(&room_id)
         .await
         .map_err(Into::into)
 }
@@ -812,6 +851,9 @@ pub fn run() {
             get_recommended_videos,
             get_region_videos,
             get_video_playback,
+            get_video_danmaku_segment,
+            get_live_danmaku_connection,
+            get_live_emoticon_catalog,
             get_video_detail,
             get_video_comments,
             get_comment_replies,

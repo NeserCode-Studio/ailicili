@@ -9,6 +9,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "test:danmaku": "node --test tests/danmaku.test.mjs tests/live-danmaku.test.mjs",
     "lint": "eslint .",
     "format": "prettier --write ."
   },

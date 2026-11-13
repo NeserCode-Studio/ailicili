@@ -42,11 +42,13 @@ import {
 } from "@/api/media";
 import { asCommandError, type CommandError } from "@/api/account";
 import { CommentsSidebar } from "@/components/comments/CommentsSidebar";
+import { DanmakuCanvas } from "@/components/danmaku/DanmakuCanvas";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { useI18n, useToast } from "@/composables";
 import { useAccount } from "@/contexts/account-context";
 import { useNavigatorContext } from "@/contexts/navigator";
+import { useVideoDanmaku } from "@/hooks/useVideoDanmaku";
 import { formatCount } from "@/lib/format";
 import { createLogger } from "@/lib/logger";
 import { commandErrorMessage } from "@/lib/command-error";
@@ -538,6 +540,8 @@ interface VideoStageProps {
   streamIndex: number;
   availableStreams: StreamSource[];
   initialTime: number;
+  committedTime: number;
+  accountRevision: number;
   isFavorite: boolean;
   favoriteBusy: boolean;
   commentsOpen: boolean;
@@ -559,6 +563,8 @@ function VideoStage({
   streamIndex,
   availableStreams,
   initialTime,
+  committedTime,
+  accountRevision,
   isFavorite,
   favoriteBusy,
   commentsOpen,
@@ -625,6 +631,7 @@ function VideoStage({
   const mediaReady = canPlay && !mediaError && (!needsAudio || audioCanPlay);
   const [isSwitchingQuality, setIsSwitchingQuality] = useState(false);
   const [wasPlaying, setWasPlaying] = useState(false);
+  const [mediaWaiting, setMediaWaiting] = useState(false);
   const targetTimeRef = useRef(0);
   const [seekPreview, setSeekPreview] = useState<number | null>(null);
   const [controlsVisible, setControlsVisible] = useState(true);
@@ -642,6 +649,14 @@ function VideoStage({
   const handledMediaErrorKeyRef = useRef<string | null>(null);
   const autoFallbackTriedRef = useRef(false);
   const initialSetupAppliedRef = useRef(false);
+  const danmaku = useVideoDanmaku({
+    aid: detail?.aid ?? null,
+    cid: playback.cid,
+    videoId: playback.videoId,
+    accountRevision,
+    mediaTimeSeconds: committedTime,
+    enabled: Boolean(detail?.aid) && !mediaError && !error,
+  });
 
   const handleAudioStore = useCallback((store: AudioStore | null) => {
     audioStoreRef.current = store;
@@ -1245,7 +1260,30 @@ function VideoStage({
             src={currentVideoUrl}
             preload="auto"
             playsInline
+            onWaiting={() => setMediaWaiting(true)}
+            onPlaying={() => setMediaWaiting(false)}
+            onCanPlay={() => setMediaWaiting(false)}
             className="absolute inset-0 h-full w-full object-contain"
+          />
+        ) : null}
+
+        {detail?.aid ? (
+          <DanmakuCanvas
+            key={`${playback.cid}:${accountRevision}`}
+            items={danmaku.items}
+            mediaTimeMs={committedTime * 1_000}
+            playing={
+              !paused &&
+              mediaReady &&
+              !isSeeking &&
+              !isSwitchingQuality &&
+              !mediaWaiting &&
+              !mediaError &&
+              !error
+            }
+            playbackRate={playbackRate}
+            visible={danmaku.visible}
+            onError={danmaku.onRenderError}
           />
         ) : null}
 
@@ -1815,6 +1853,8 @@ export default function VideoView() {
               streamIndex={streamIndex}
               availableStreams={availableStreams}
               initialTime={initialPlaybackTime}
+              committedTime={currentTime}
+              accountRevision={accountRevision}
               isFavorite={Boolean(favorite)}
               favoriteBusy={favoriteBusy || favoriteLoading}
               commentsOpen={commentsOpen}

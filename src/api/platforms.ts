@@ -21,6 +21,7 @@ export interface LiveCapability {
   supportsDiscovery: boolean;
   supportsSearch: boolean;
   supportsQualitySelection: boolean;
+  supportsDanmaku: boolean;
 }
 
 export interface PlatformDescriptor {

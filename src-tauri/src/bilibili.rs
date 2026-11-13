@@ -1,10 +1,12 @@
 use crate::domain::{
     CommandError, CommentAuthor, CommentEmote, CommentPage, CommentPicture, CommentReplyPage,
-    CommentSort, LiveDiscovery, LivePlaybackInfo, LiveRoomInfo, PagedLiveRooms, PagedVideos,
-    PlaybackInfo, QualityNotice, QualityNoticeKind, QualityOption, StreamProtocol, StreamSource,
-    VideoCard, VideoComment, VideoDetail, VideoPage, VideoSourceKind, VideoStats,
+    CommentSort, DanmakuSegment, LiveDanmakuConnection, LiveDiscovery, LiveEmoticonCatalog,
+    LivePlaybackInfo, LiveRoomInfo, PagedLiveRooms, PagedVideos, PlaybackInfo, QualityNotice,
+    QualityNoticeKind, QualityOption, StreamProtocol, StreamSource, VideoCard, VideoComment,
+    VideoDetail, VideoPage, VideoSourceKind, VideoStats,
 };
 use crate::{
+    danmaku,
     device::DeviceManager,
     platforms::bilibili::{SessionCookies, SharedSession},
     wbi,
@@ -26,6 +28,7 @@ const BILIBILI_WEB_URL: &str = "https://www.bilibili.com";
 const WBI_CACHE_TTL: Duration = Duration::from_secs(12 * 60 * 60);
 const LIVE_MEDIA_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const LIVE_MEDIA_DIAGNOSTIC_REV: &str = "media-response-v1";
+const MAX_LIVE_EMOTICON_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 const COMMENT_PAGE_SIZE: usize = 4;
 const COMMENT_REPLY_PAGE_SIZE: u32 = 20;
 
@@ -37,6 +40,8 @@ pub enum BiliError {
     Api { code: i64, message: String },
     #[error("invalid response: {0}")]
     Invalid(String),
+    #[error("danmaku: {0}")]
+    Danmaku(String),
     #[error("authentication required")]
     AuthRequired,
     #[error("login expired")]
@@ -97,6 +102,9 @@ impl From<BiliError> for CommandError {
             }
             BiliError::Invalid(_) => {
                 CommandError::new("invalidResponse", "平台响应格式异常，请稍后重试。")
+            }
+            BiliError::Danmaku(_) => {
+                CommandError::new("danmakuError", "弹幕加载失败，媒体播放不受影响。")
             }
         }
     }
@@ -1127,6 +1135,71 @@ impl BilibiliClient {
         crate::live::parse_playback(&root, &room_id).map_err(BiliError::Invalid)
     }
 
+    pub async fn live_danmaku_connection(
+        &self,
+        room_id: &str,
+    ) -> Result<LiveDanmakuConnection, BiliError> {
+        let room_id = Self::normalize_live_room_id(room_id)?;
+        let session = self.session_snapshot()?;
+        let root = self
+            .live_wbi_json(
+                "/xlive/web-room/v1/index/getDanmuInfo",
+                vec![
+                    ("id".to_string(), room_id.clone()),
+                    ("type".to_string(), "0".to_string()),
+                    ("web_location".to_string(), "444.8".to_string()),
+                ],
+            )
+            .await?;
+        let identity =
+            self.device.ensure_identity().await?.ok_or_else(|| {
+                BiliError::Danmaku("live device identity is unavailable".to_string())
+            })?;
+        let uid = session
+            .as_ref()
+            .and_then(SessionCookies::authenticated_uid)
+            .unwrap_or_default();
+        crate::live::parse_danmaku_connection(&root, &room_id, identity.buvid3, uid)
+            .map_err(BiliError::Danmaku)
+    }
+
+    pub async fn live_emoticon_catalog(
+        &self,
+        room_id: &str,
+    ) -> Result<LiveEmoticonCatalog, BiliError> {
+        let room_id = Self::normalize_live_room_id(room_id)?;
+        let session = self.session_snapshot()?;
+        let cookie = self.cookie_header(session.as_ref()).await;
+        let mut request = self
+            .http
+            .get(format!(
+                "{LIVE_API_BASE}/xlive/web-ucenter/v2/emoticon/GetEmoticons"
+            ))
+            .header("accept", "application/json")
+            .header("referer", "https://live.bilibili.com/")
+            .header("origin", "https://live.bilibili.com")
+            .query(&[("platform", "pc".to_string()), ("room_id", room_id.clone())]);
+        if !cookie.is_empty() {
+            request = request.header("cookie", cookie);
+        }
+
+        let response = request.send().await?;
+        if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(BiliError::RateLimited);
+        }
+        if !response.status().is_success() {
+            return Err(BiliError::Invalid(format!(
+                "live emoticon HTTP status {}",
+                response.status().as_u16()
+            )));
+        }
+        let body = read_limited_response(response, MAX_LIVE_EMOTICON_RESPONSE_BYTES).await?;
+        let root: Value = serde_json::from_slice(&body)
+            .map_err(|_| BiliError::Invalid("invalid live emoticon JSON".to_string()))?;
+        ensure_api_success(&root)?;
+        crate::live::parse_emoticon_catalog(&root, &room_id).map_err(BiliError::Danmaku)
+    }
+
     pub async fn live_media_response(
         &self,
         url: &str,
@@ -1332,6 +1405,89 @@ impl BilibiliClient {
             quality_notice,
         })
     }
+
+    pub async fn video_danmaku_segment(
+        &self,
+        aid: i64,
+        cid: i64,
+        segment_index: u32,
+    ) -> Result<DanmakuSegment, BiliError> {
+        validate_video_danmaku_request(aid, cid, segment_index)?;
+
+        let session = self.session_snapshot()?;
+        let cookie = self.cookie_header(session.as_ref()).await;
+        fetch_video_danmaku_segment(&self.http, aid, cid, segment_index, &cookie).await
+    }
+}
+
+async fn fetch_video_danmaku_segment(
+    http: &reqwest::Client,
+    aid: i64,
+    cid: i64,
+    segment_index: u32,
+    cookie: &str,
+) -> Result<DanmakuSegment, BiliError> {
+    let mut request = http
+        .get(format!("{API_BASE}/x/v2/dm/web/seg.so"))
+        .header("referer", "https://www.bilibili.com/")
+        .header("origin", "https://www.bilibili.com")
+        .query(&[
+            ("type", "1".to_string()),
+            ("oid", cid.to_string()),
+            ("pid", aid.to_string()),
+            ("segment_index", segment_index.to_string()),
+        ]);
+    if !cookie.is_empty() {
+        request = request.header("cookie", cookie);
+    }
+
+    let mut response = request.send().await?;
+    if is_danmaku_not_modified(response.status())? {
+        info!(
+            target: "Bilibili/Danmaku",
+            "video segment ended cid={cid} segment={segment_index}"
+        );
+        return Ok(DanmakuSegment {
+            cid,
+            segment_index,
+            items: Vec::new(),
+            ended: true,
+            skipped_count: 0,
+        });
+    }
+
+    if let Some(content_length) = response.content_length() {
+        let content_length = usize::try_from(content_length)
+            .map_err(|_| BiliError::Danmaku("danmaku segment is too large".to_string()))?;
+        ensure_danmaku_segment_size(content_length)?;
+    }
+
+    let mut data = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        let next_length = data
+            .len()
+            .checked_add(chunk.len())
+            .ok_or_else(|| BiliError::Danmaku("danmaku segment is too large".to_string()))?;
+        ensure_danmaku_segment_size(next_length)?;
+        data.extend_from_slice(&chunk);
+    }
+
+    let parsed = danmaku::parse_video_segment(&data)
+        .map_err(|error| BiliError::Danmaku(error.to_string()))?;
+    info!(
+        target: "Bilibili/Danmaku",
+        "video segment loaded cid={cid} segment={segment_index} bytes={} items={} skipped={}",
+        data.len(),
+        parsed.items.len(),
+        parsed.skipped_count,
+    );
+    Ok(DanmakuSegment {
+        cid,
+        segment_index,
+        items: parsed.items,
+        ended: false,
+        skipped_count: parsed.skipped_count,
+    })
 }
 
 fn sms_send_form<'a>(
@@ -1596,6 +1752,31 @@ fn ensure_api_success(root: &Value) -> Result<(), BiliError> {
     }
 }
 
+async fn read_limited_response(
+    mut response: reqwest::Response,
+    maximum_bytes: usize,
+) -> Result<Vec<u8>, BiliError> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > maximum_bytes as u64)
+    {
+        return Err(BiliError::Danmaku(
+            "live emoticon response is too large".to_string(),
+        ));
+    }
+
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if body.len().saturating_add(chunk.len()) > maximum_bytes {
+            return Err(BiliError::Danmaku(
+                "live emoticon response is too large".to_string(),
+            ));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
 fn ensure_wbi_success(root: Value) -> Result<Value, BiliError> {
     ensure_api_success(&root)?;
     Ok(root)
@@ -1616,8 +1797,48 @@ fn error_code(error: &BiliError) -> String {
     match error {
         BiliError::Api { code, .. } => format!("api:{code}"),
         BiliError::Invalid(_) => "invalidResponse".to_string(),
+        BiliError::Danmaku(_) => "danmakuError".to_string(),
         _ => "unavailable".to_string(),
     }
+}
+
+fn validate_video_danmaku_request(aid: i64, cid: i64, segment_index: u32) -> Result<(), BiliError> {
+    if aid <= 0 || cid <= 0 {
+        return Err(BiliError::Danmaku(
+            "invalid video or page identity".to_string(),
+        ));
+    }
+    if !(1..=danmaku::MAX_SEGMENT_INDEX).contains(&segment_index) {
+        return Err(BiliError::Danmaku(
+            "segment index is out of range".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn is_danmaku_not_modified(status: reqwest::StatusCode) -> Result<bool, BiliError> {
+    if status == reqwest::StatusCode::NOT_MODIFIED {
+        return Ok(true);
+    }
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Err(BiliError::RateLimited);
+    }
+    if !status.is_success() {
+        return Err(BiliError::Danmaku(format!(
+            "unexpected HTTP status {}",
+            status.as_u16()
+        )));
+    }
+    Ok(false)
+}
+
+fn ensure_danmaku_segment_size(size: usize) -> Result<(), BiliError> {
+    if size > danmaku::MAX_SEGMENT_BYTES {
+        return Err(BiliError::Danmaku(
+            "danmaku segment is too large".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_live_media_url(value: &str) -> Result<reqwest::Url, BiliError> {
@@ -2457,8 +2678,123 @@ fn parse_duration_text(value: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{CommandError, PlatformId};
+    use crate::domain::{CommandError, DanmakuMode, PlatformId};
     use serde_json::json;
+
+    #[test]
+    fn danmaku_request_rejects_invalid_ids_and_segment_indexes() {
+        for (aid, cid, segment_index) in [
+            (0, 1, 1),
+            (1, 0, 1),
+            (1, 1, 0),
+            (1, 1, danmaku::MAX_SEGMENT_INDEX + 1),
+        ] {
+            assert!(matches!(
+                validate_video_danmaku_request(aid, cid, segment_index),
+                Err(BiliError::Danmaku(_))
+            ));
+        }
+        assert!(validate_video_danmaku_request(1, 1, 1).is_ok());
+    }
+
+    #[test]
+    fn danmaku_status_normalizes_not_modified_and_rate_limits() {
+        assert!(matches!(
+            is_danmaku_not_modified(reqwest::StatusCode::NOT_MODIFIED),
+            Ok(true)
+        ));
+        assert!(matches!(
+            is_danmaku_not_modified(reqwest::StatusCode::OK),
+            Ok(false)
+        ));
+        assert!(matches!(
+            is_danmaku_not_modified(reqwest::StatusCode::TOO_MANY_REQUESTS),
+            Err(BiliError::RateLimited)
+        ));
+        assert!(matches!(
+            is_danmaku_not_modified(reqwest::StatusCode::BAD_GATEWAY),
+            Err(BiliError::Danmaku(_))
+        ));
+    }
+
+    #[test]
+    fn danmaku_segment_size_limit_is_enforced() {
+        assert!(ensure_danmaku_segment_size(danmaku::MAX_SEGMENT_BYTES).is_ok());
+        assert!(matches!(
+            ensure_danmaku_segment_size(danmaku::MAX_SEGMENT_BYTES + 1),
+            Err(BiliError::Danmaku(_))
+        ));
+    }
+
+    #[test]
+    fn danmaku_errors_have_a_dedicated_command_code() {
+        let command_error: CommandError =
+            BiliError::Danmaku("fixture parse failure".to_string()).into();
+        assert_eq!(command_error.code, "danmakuError");
+        assert_eq!(
+            error_code(&BiliError::Danmaku("fixture".to_string())),
+            "danmakuError"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Bilibili network access and the verified public sample video"]
+    async fn public_video_danmaku_segments_match_verified_sample() {
+        let http = reqwest::Client::builder()
+            .user_agent(USER_AGENT)
+            .timeout(Duration::from_secs(15))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        let aid = 117_602_311_476_853;
+        let cid = 43_538_251_892;
+        let mut top_count = 0;
+        let mut bottom_count = 0;
+        let mut colored_count = 0;
+
+        for (segment_index, minimum_items, start_ms, end_ms) in [
+            (1, 700, 0, 360_000),
+            (2, 600, 360_000, 720_000),
+            (3, 700, 720_000, 1_080_000),
+            (4, 100, 1_080_000, 2_040_000),
+        ] {
+            let segment = fetch_video_danmaku_segment(&http, aid, cid, segment_index, "")
+                .await
+                .unwrap();
+            assert!(!segment.ended);
+            assert!(
+                segment.items.len() >= minimum_items,
+                "segment {segment_index} returned {} items",
+                segment.items.len()
+            );
+            assert!(segment
+                .items
+                .windows(2)
+                .all(|items| items[0].time_ms <= items[1].time_ms));
+            assert!(segment.items.first().unwrap().time_ms >= start_ms);
+            assert!(segment.items.last().unwrap().time_ms <= end_ms);
+            for item in &segment.items {
+                match item.mode {
+                    DanmakuMode::Top => top_count += 1,
+                    DanmakuMode::Bottom => bottom_count += 1,
+                    DanmakuMode::Scroll => {}
+                }
+                if item.color != 0x00ff_ffff {
+                    colored_count += 1;
+                }
+            }
+        }
+
+        assert!(top_count > 0);
+        assert!(bottom_count > 0);
+        assert!(colored_count > 0);
+
+        let end = fetch_video_danmaku_segment(&http, aid, cid, 5, "")
+            .await
+            .unwrap();
+        assert!(end.ended);
+        assert!(end.items.is_empty());
+    }
 
     #[test]
     fn live_media_urls_are_limited_to_bilibili_cdn_paths() {

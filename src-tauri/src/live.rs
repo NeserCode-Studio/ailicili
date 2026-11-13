@@ -1,11 +1,18 @@
 use std::collections::BTreeSet;
 
+use reqwest::Url;
 use serde_json::Value;
 
 use crate::domain::{
-    LiveDiscovery, LivePlaybackInfo, LiveRoomCard, LiveRoomInfo, LiveSection, LiveStatus,
-    PagedLiveRooms, PlatformId, QualityOption, StreamProtocol, StreamSource,
+    LiveDanmakuConnection, LiveDiscovery, LiveEmoticon, LiveEmoticonCatalog, LivePlaybackInfo,
+    LiveRoomCard, LiveRoomInfo, LiveSection, LiveStatus, PagedLiveRooms, PlatformId, QualityOption,
+    StreamProtocol, StreamSource,
 };
+
+const MAX_LIVE_EMOTICONS: usize = 1_024;
+const MAX_LIVE_EMOTICON_ID_BYTES: usize = 128;
+const MAX_LIVE_EMOTICON_URL_BYTES: usize = 2_048;
+const MAX_LIVE_EMOTICON_DIMENSION: i64 = 512;
 
 pub fn parse_discovery(root: &Value) -> Result<LiveDiscovery, String> {
     let modules = root
@@ -262,6 +269,224 @@ pub fn parse_playback(root: &Value, requested_room_id: &str) -> Result<LivePlayb
         current_quality,
         advertised_qualities,
     })
+}
+
+pub fn parse_danmaku_connection(
+    root: &Value,
+    requested_room_id: &str,
+    buvid: String,
+    uid: u64,
+) -> Result<LiveDanmakuConnection, String> {
+    let data = root
+        .get("data")
+        .ok_or_else(|| "missing live danmaku data".to_string())?;
+    let token = data
+        .get("token")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && value.len() <= 4096)
+        .ok_or_else(|| "missing live danmaku token".to_string())?;
+    let room_id = value_id(data.get("room_id")).unwrap_or_else(|| requested_room_id.to_string());
+    let host = data
+        .get("host_list")
+        .and_then(Value::as_array)
+        .and_then(|hosts| {
+            hosts.iter().find_map(|entry| {
+                let host = entry
+                    .get("host")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| is_valid_websocket_host(value))?;
+                let port = entry
+                    .get("wss_port")
+                    .and_then(value_i64)
+                    .filter(|value| (1..=65_535).contains(value))?;
+                Some((host, port))
+            })
+        })
+        .ok_or_else(|| "missing live danmaku websocket host".to_string())?;
+
+    Ok(LiveDanmakuConnection {
+        room_id,
+        token: token.to_string(),
+        uid,
+        buvid,
+        websocket_url: format!("wss://{}:{}/sub", host.0, host.1),
+        protocol_version: 0,
+    })
+}
+
+pub fn parse_emoticon_catalog(
+    root: &Value,
+    requested_room_id: &str,
+) -> Result<LiveEmoticonCatalog, String> {
+    let packages = root
+        .pointer("/data/data")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "missing live emoticon packages".to_string())?;
+    let mut emoticons = Vec::new();
+    let mut seen_tokens = BTreeSet::new();
+    let mut skipped_count = 0u32;
+
+    for package in packages {
+        let Some(items) = package.get("emoticons").and_then(Value::as_array) else {
+            skipped_count = skipped_count.saturating_add(1);
+            continue;
+        };
+
+        for item in items {
+            if emoticons.len() >= MAX_LIVE_EMOTICONS {
+                skipped_count = skipped_count.saturating_add(1);
+                continue;
+            }
+
+            let Some(emoticon) = parse_live_emoticon(item) else {
+                skipped_count = skipped_count.saturating_add(1);
+                continue;
+            };
+            if !seen_tokens.insert(emoticon.token.clone()) {
+                skipped_count = skipped_count.saturating_add(1);
+                continue;
+            }
+            emoticons.push(emoticon);
+        }
+    }
+
+    Ok(LiveEmoticonCatalog {
+        room_id: requested_room_id.to_string(),
+        emoticons,
+        skipped_count,
+    })
+}
+
+fn parse_live_emoticon(value: &Value) -> Option<LiveEmoticon> {
+    let token = value
+        .get("descript")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| is_valid_live_emoticon_token(value))
+        .map(str::to_string)
+        .or_else(|| {
+            value
+                .get("emoji")
+                .and_then(Value::as_str)
+                .and_then(normalize_live_emoticon_emoji)
+        })?;
+    let id = value
+        .get("emoticon_unique")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| is_valid_live_emoticon_id(value))?;
+    let url = value
+        .get("url")
+        .and_then(Value::as_str)
+        .and_then(normalize_live_emoticon_url)?;
+    let width = value
+        .get("width")
+        .and_then(value_i64)
+        .filter(|value| *value > 0)
+        .map(|value| value.min(MAX_LIVE_EMOTICON_DIMENSION))?;
+    let height = value
+        .get("height")
+        .and_then(value_i64)
+        .filter(|value| *value > 0)
+        .map(|value| value.min(MAX_LIVE_EMOTICON_DIMENSION))?;
+    let animated = value
+        .get("is_dynamic")
+        .and_then(value_i64)
+        .is_some_and(|value| value > 0);
+
+    Some(LiveEmoticon {
+        token,
+        id: id.to_string(),
+        url,
+        width: width as u32,
+        height: height as u32,
+        animated,
+    })
+}
+
+fn normalize_live_emoticon_emoji(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+
+    let token = if value.starts_with('[') && value.ends_with(']') {
+        value.to_string()
+    } else {
+        format!("[{value}]")
+    };
+    is_valid_live_emoticon_token(&token).then_some(token)
+}
+
+fn is_valid_live_emoticon_token(value: &str) -> bool {
+    let Some(inner) = value
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+    else {
+        return false;
+    };
+    let length = inner.chars().count();
+    (1..=62).contains(&length)
+        && !inner
+            .chars()
+            .any(|character| matches!(character, ']' | '\r' | '\n'))
+}
+
+fn is_valid_live_emoticon_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_LIVE_EMOTICON_ID_BYTES
+        && value
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_alphanumeric())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b':' | b'-'))
+}
+
+fn normalize_live_emoticon_url(value: &str) -> Option<String> {
+    let source = value.trim();
+    if source.is_empty() || source.len() > MAX_LIVE_EMOTICON_URL_BYTES {
+        return None;
+    }
+
+    let mut url = Url::parse(source).ok()?;
+    if !url.username().is_empty() || url.password().is_some() {
+        return None;
+    }
+    if url.scheme() == "http" {
+        url.set_scheme("https").ok()?;
+    }
+    if url.scheme() != "https"
+        || url.port().is_some_and(|port| port != 443)
+        || url.path().is_empty()
+    {
+        return None;
+    }
+
+    let host = url.host_str()?.to_ascii_lowercase();
+    let allowed_host = ["bilibili.com", "biliimg.com", "bilivideo.com", "hdslb.com"]
+        .iter()
+        .any(|suffix| host == *suffix || host.ends_with(&format!(".{suffix}")));
+    if !allowed_host {
+        return None;
+    }
+
+    url.set_fragment(None);
+    let normalized = url.to_string();
+    (normalized.len() <= MAX_LIVE_EMOTICON_URL_BYTES).then_some(normalized)
+}
+
+fn is_valid_websocket_host(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 253
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
+        && !value.starts_with('.')
+        && !value.ends_with('.')
 }
 
 fn parse_room_card(item: &Value) -> Option<LiveRoomCard> {
@@ -610,5 +835,94 @@ mod tests {
             ),
             Some("https://example.invalid/live/stream.flv?expires=fixture&sig=fixture".to_string())
         );
+    }
+
+    #[test]
+    fn danmaku_connection_selects_verified_wss_host_without_cookie_fields() {
+        let root = serde_json::json!({
+            "data": {
+                "room_id": 1001,
+                "uid": 0,
+                "token": "fixture-token",
+                "host_list": [
+                    {
+                        "host": "broadcastlv.chat.bilibili.com",
+                        "wss_port": 443,
+                        "ws_port": 2244
+                    }
+                ]
+            }
+        });
+
+        let connection =
+            parse_danmaku_connection(&root, "1001", "fixture-buvid".to_string(), 42).unwrap();
+        assert_eq!(
+            connection.websocket_url,
+            "wss://broadcastlv.chat.bilibili.com:443/sub"
+        );
+        assert_eq!(connection.uid, 42);
+        assert_eq!(connection.buvid, "fixture-buvid");
+        assert_eq!(connection.protocol_version, 0);
+
+        let serialized = serde_json::to_value(connection).unwrap();
+        assert_eq!(serialized["websocketUrl"], connection_url());
+        assert!(serialized.get("cookie").is_none());
+        assert!(serialized.get("sessdata").is_none());
+    }
+
+    #[test]
+    fn danmaku_connection_rejects_missing_or_unsafe_hosts() {
+        for host in [
+            "",
+            "https://example.invalid",
+            "bad host",
+            ".example.invalid",
+        ] {
+            let root = serde_json::json!({
+                "data": {
+                    "room_id": 1001,
+                    "token": "fixture-token",
+                    "host_list": [{ "host": host, "wss_port": 443 }]
+                }
+            });
+            assert!(
+                parse_danmaku_connection(&root, "1001", "fixture-buvid".to_string(), 0).is_err(),
+                "{host}"
+            );
+        }
+    }
+
+    #[test]
+    fn emoticon_catalog_keeps_safe_token_mappings_and_skips_invalid_entries() {
+        let root: Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/bilibili/live/emoticons.json"
+        ))
+        .unwrap();
+        let catalog = parse_emoticon_catalog(&root, "23438368").unwrap();
+
+        assert_eq!(catalog.room_id, "23438368");
+        assert_eq!(catalog.emoticons.len(), 4);
+        assert_eq!(catalog.skipped_count, 2);
+        assert_eq!(catalog.emoticons[0].token, "[大会员专属身份表情包_战斗]");
+        assert_eq!(catalog.emoticons[0].id, "official_9001");
+        assert_eq!(
+            catalog.emoticons[0].url,
+            "https://i0.hdslb.com/bfs/live/identity-fight.png"
+        );
+        assert!(catalog.emoticons[1].animated);
+        assert_eq!(catalog.emoticons[2].token, "[赞]");
+        assert_eq!(catalog.emoticons[3].id, "room_23438368_191");
+
+        let serialized = serde_json::to_value(catalog).unwrap();
+        assert!(serialized.get("cookie").is_none());
+        assert!(serialized.get("sessdata").is_none());
+        assert_eq!(
+            serialized["emoticons"][0]["token"],
+            "[大会员专属身份表情包_战斗]"
+        );
+    }
+
+    fn connection_url() -> &'static str {
+        "wss://broadcastlv.chat.bilibili.com:443/sub"
     }
 }

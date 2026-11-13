@@ -131,6 +131,7 @@ pub(super) fn register() -> Result<RegisteredPlatform, String> {
             supports_discovery: true,
             supports_search: false,
             supports_quality_selection: true,
+            supports_danmaku: false,
         }),
     };
     let client = Arc::new(

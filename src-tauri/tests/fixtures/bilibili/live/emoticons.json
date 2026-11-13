@@ -1,0 +1,73 @@
+{
+  "code": 0,
+  "message": "0",
+  "ttl": 1,
+  "data": {
+    "data": [
+      {
+        "pkg_name": "身份表情",
+        "emoticons": [
+          {
+            "descript": "[大会员专属身份表情包_战斗]",
+            "emoji": "战斗",
+            "emoticon_unique": "official_9001",
+            "url": "http://i0.hdslb.com/bfs/live/identity-fight.png",
+            "width": 180,
+            "height": 162,
+            "is_dynamic": 0
+          },
+          {
+            "descript": "[动态目录表情]",
+            "emoji": "动态目录表情",
+            "emoticon_unique": "emoji_9002",
+            "url": "https://i0.hdslb.com/bfs/live/catalog-dynamic.png",
+            "width": 120,
+            "height": 120,
+            "is_dynamic": 1
+          },
+          {
+            "descript": "",
+            "emoji": "赞",
+            "emoticon_unique": "official_147",
+            "url": "https://i0.hdslb.com/bfs/live/no-token.png",
+            "width": 150,
+            "height": 60,
+            "is_dynamic": 0
+          },
+          {
+            "descript": "[非法地址]",
+            "emoji": "非法地址",
+            "emoticon_unique": "emoji_9003",
+            "url": "https://example.com/not-bilibili.png",
+            "width": 20,
+            "height": 20,
+            "is_dynamic": 0
+          },
+          {
+            "descript": "[大会员专属身份表情包_战斗]",
+            "emoji": "重复",
+            "emoticon_unique": "official_9004",
+            "url": "https://i0.hdslb.com/bfs/live/duplicate.png",
+            "width": 20,
+            "height": 20,
+            "is_dynamic": 0
+          }
+        ]
+      },
+      {
+        "pkg_name": "直播间表情",
+        "emoticons": [
+          {
+            "descript": "[睡醒了]",
+            "emoji": "睡醒了",
+            "emoticon_unique": "room_23438368_191",
+            "url": "https://i0.hdslb.com/bfs/live/room-wake.png",
+            "width": 162,
+            "height": 162,
+            "is_dynamic": 0
+          }
+        ]
+      }
+    ]
+  }
+}

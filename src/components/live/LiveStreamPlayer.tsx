@@ -24,9 +24,12 @@ import type { CommandError } from "@/api/account";
 import type { LiveRoomInfo, LiveStatus } from "@/api/live";
 import type { StreamSource } from "@/api/media";
 import type { PlatformId } from "@/api/platforms";
+import { DanmakuCanvas } from "@/components/danmaku/DanmakuCanvas";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { useI18n } from "@/composables";
+import { useAccount } from "@/contexts/account-context";
+import { useLiveDanmaku } from "@/hooks/useLiveDanmaku";
 import { LiveFlvLoader, LiveHlsLoader } from "@/lib/bilibili-live-loader";
 import { commandErrorMessage } from "@/lib/command-error";
 import { createLogger } from "@/lib/logger";
@@ -409,6 +412,8 @@ export default function LiveStreamPlayer({
   onQualityLocked,
 }: LiveStreamPlayerProps) {
   const { t } = useI18n();
+  const { accountRevisions, accountsByPlatform, platformCatalog } =
+    useAccount();
   const stageRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const hideTimerRef = useRef<number | null>(null);
@@ -470,6 +475,58 @@ export default function LiveStreamPlayer({
     (!recovering && (playerLoading || !playing)) ||
     Boolean(sourceErrorText) ||
     offline;
+  const livePlatform = platformCatalog.find(
+    (platform) => platform.id === platformId
+  );
+  const liveCapability = livePlatform?.liveCapability;
+  const supportsLiveDanmaku = liveCapability?.supportsDanmaku ?? false;
+  const liveAccountRevision = accountRevisions[platformId] ?? 0;
+  const liveAccount = accountsByPlatform[platformId];
+  const emoticonCatalogEnabled =
+    supportsLiveDanmaku && liveAccount?.status === "authenticated";
+  const danmakuPlaying = playing && !recovering && !playerError && !offline;
+  const capabilityLogKeyRef = useRef("");
+  const liveDanmaku = useLiveDanmaku({
+    roomId,
+    enabled:
+      supportsLiveDanmaku &&
+      !offline &&
+      liveStatus === "live" &&
+      ready &&
+      hasStreams,
+    playing: danmakuPlaying,
+    accountRevision: liveAccountRevision,
+    emoticonCatalogEnabled,
+  });
+
+  useEffect(() => {
+    const platformFound = Boolean(livePlatform);
+    const capabilityPresent = Boolean(liveCapability);
+    const key = `${platformId}:${roomId}:${platformFound}:${capabilityPresent}:${supportsLiveDanmaku}`;
+    if (capabilityLogKeyRef.current === key) return;
+    capabilityLogKeyRef.current = key;
+    log.debug("live danmaku capability resolved", {
+      platformId,
+      roomId,
+      catalogSize: platformCatalog.length,
+      platformFound,
+      capabilityPresent,
+      supported: supportsLiveDanmaku,
+      ready,
+      playing: danmakuPlaying,
+      liveStatus,
+    });
+  }, [
+    danmakuPlaying,
+    liveCapability,
+    livePlatform,
+    liveStatus,
+    platformCatalog.length,
+    platformId,
+    ready,
+    roomId,
+    supportsLiveDanmaku,
+  ]);
 
   useEffect(() => {
     manualProtocolRef.current = null;
@@ -1306,6 +1363,16 @@ export default function LiveStreamPlayer({
         poster={poster}
         playsInline
         aria-label={info?.title ?? t("Live.player.play")}
+      />
+
+      <DanmakuCanvas
+        key={roomId}
+        items={liveDanmaku.items}
+        mediaTimeMs={liveDanmaku.clockMs}
+        playing={danmakuPlaying}
+        playbackRate={1}
+        visible={liveDanmaku.visible}
+        onError={liveDanmaku.onRenderError}
       />
 
       <LivePausePanel

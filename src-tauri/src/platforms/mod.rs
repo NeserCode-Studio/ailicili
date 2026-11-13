@@ -354,6 +354,7 @@ mod tests {
                 supports_discovery: false,
                 supports_search: false,
                 supports_quality_selection: false,
+                supports_danmaku: false,
             }),
         }
     }

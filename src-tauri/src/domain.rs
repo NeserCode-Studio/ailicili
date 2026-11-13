@@ -366,6 +366,7 @@ pub struct LiveCapability {
     pub supports_discovery: bool,
     pub supports_search: bool,
     pub supports_quality_selection: bool,
+    pub supports_danmaku: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -434,6 +435,65 @@ pub struct VideoDetail {
     pub aid: i64,
     pub description: String,
     pub pages: Vec<VideoPage>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DanmakuMode {
+    Scroll,
+    Bottom,
+    Top,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DanmakuItem {
+    pub id: String,
+    pub text: String,
+    pub time_ms: i64,
+    pub mode: DanmakuMode,
+    pub font_size: u16,
+    pub color: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DanmakuSegment {
+    pub cid: i64,
+    pub segment_index: u32,
+    pub items: Vec<DanmakuItem>,
+    pub ended: bool,
+    pub skipped_count: u32,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveDanmakuConnection {
+    pub room_id: String,
+    pub token: String,
+    pub uid: u64,
+    pub buvid: String,
+    pub websocket_url: String,
+    pub protocol_version: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveEmoticon {
+    pub token: String,
+    pub id: String,
+    pub url: String,
+    pub width: u32,
+    pub height: u32,
+    pub animated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveEmoticonCatalog {
+    pub room_id: String,
+    pub emoticons: Vec<LiveEmoticon>,
+    pub skipped_count: u32,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
