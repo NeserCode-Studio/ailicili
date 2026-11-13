@@ -272,6 +272,7 @@ async function readLimited(stream: ReadableStream<Uint8Array>) {
       if (!value) continue;
       total += value.byteLength;
       if (total > MAX_LIVE_PACKET_BYTES) {
+        await reader.cancel();
         throw new LiveProtocolError(
           "packetTooLarge",
           "decompressed live danmaku data exceeds the size limit"
@@ -760,7 +761,7 @@ function emptyDecodedFrame(): LiveDecodedFrame {
 
 function mergeDecodedFrame(target: LiveDecodedFrame, source: LiveDecodedFrame) {
   if (source.authCode !== null) target.authCode = source.authCode;
-  target.items.push(...source.items);
+  for (const item of source.items) target.items.push(item);
   target.malformedPayloads += source.malformedPayloads;
   target.unknownCommands += source.unknownCommands;
   target.skippedMessages += source.skippedMessages;

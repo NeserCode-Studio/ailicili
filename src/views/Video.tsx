@@ -42,13 +42,17 @@ import {
 } from "@/api/media";
 import { asCommandError, type CommandError } from "@/api/account";
 import { CommentsSidebar } from "@/components/comments/CommentsSidebar";
-import { DanmakuCanvas } from "@/components/danmaku/DanmakuCanvas";
+import { DanmakuControlButton } from "@/components/danmaku/DanmakuControl";
+import { VideoDanmakuLayer } from "@/components/danmaku/VideoDanmakuLayer";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { useI18n, useToast } from "@/composables";
 import { useAccount } from "@/contexts/account-context";
 import { useNavigatorContext } from "@/contexts/navigator";
-import { useVideoDanmaku } from "@/hooks/useVideoDanmaku";
+import {
+  resolveDanmakuPreferencesStyle,
+  useDanmakuPreferences,
+} from "@/lib/danmaku/preferences";
 import { formatCount } from "@/lib/format";
 import { createLogger } from "@/lib/logger";
 import { commandErrorMessage } from "@/lib/command-error";
@@ -69,6 +73,10 @@ import {
 
 const log = createLogger("Media/Video");
 const HISTORY_SAVE_THROTTLE_MS = 5000;
+const HISTORY_PROGRESS_PUBLISH_INTERVAL_SECONDS = 5;
+const AUDIO_DRIFT_TOLERANCE_SECONDS = 0.18;
+const AUDIO_DRIFT_CORRECTION_COOLDOWN_MS = 1_000;
+const AUDIO_DRIFT_CHECK_INTERVAL_MS = 1_000;
 const CONTROL_BUTTON_CLASS =
   "size-8 rounded-sm text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring";
 const QUALITY_LABELS: Record<number, string> = {
@@ -478,6 +486,15 @@ function formatPlayerTime(seconds?: number) {
   return hours > 0 ? `${hours}:${clock}` : clock;
 }
 
+function readPlayerTimeSeconds(store: {
+  state: Readonly<Record<string, unknown>>;
+}) {
+  const value = store.state.currentTime;
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, value)
+    : 0;
+}
+
 interface AudioStore {
   state: { currentTime: number };
   pause: () => void;
@@ -540,7 +557,6 @@ interface VideoStageProps {
   streamIndex: number;
   availableStreams: StreamSource[];
   initialTime: number;
-  committedTime: number;
   accountRevision: number;
   isFavorite: boolean;
   favoriteBusy: boolean;
@@ -563,7 +579,6 @@ function VideoStage({
   streamIndex,
   availableStreams,
   initialTime,
-  committedTime,
   accountRevision,
   isFavorite,
   favoriteBusy,
@@ -580,7 +595,17 @@ function VideoStage({
 }: VideoStageProps) {
   const videoStore = usePlayer();
   const paused = usePlayer((state) => state.paused);
-  const currentTime = usePlayer((state) => state.currentTime);
+  const currentTime = usePlayer((state) =>
+    Math.max(
+      0,
+      Math.floor(
+        typeof state.currentTime === "number" &&
+          Number.isFinite(state.currentTime)
+          ? state.currentTime
+          : 0
+      )
+    )
+  );
   const playerDuration = usePlayer((state) => state.duration);
   const isSeeking = usePlayer((state) => state.seeking);
   const currentSrc = usePlayer((state) => state.currentSrc);
@@ -591,6 +616,8 @@ function VideoStage({
   );
   const mediaError = usePlayer((state) => state.error);
   const canPlay = usePlayer((state) => state.canPlay);
+  const danmakuPreferences = useDanmakuPreferences();
+  const stageRef = useRef<HTMLDivElement>(null);
 
   const selectedStream = playback.streams[streamIndex];
   const selectedStreamId = selectedStream?.id;
@@ -632,31 +659,33 @@ function VideoStage({
   const [isSwitchingQuality, setIsSwitchingQuality] = useState(false);
   const [wasPlaying, setWasPlaying] = useState(false);
   const [mediaWaiting, setMediaWaiting] = useState(false);
+  const audioCorrectionRef = useRef({
+    inFlight: false,
+    lastStartedAt: Number.NEGATIVE_INFINITY,
+  });
   const targetTimeRef = useRef(0);
   const [seekPreview, setSeekPreview] = useState<number | null>(null);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [speedMenuOpen, setSpeedMenuOpen] = useState(false);
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
   const [volumePanelOpen, setVolumePanelOpen] = useState(false);
+  const [danmakuSettingsOpen, setDanmakuSettingsOpen] = useState(false);
   const [initialPlayerPreferences] = useState(readPlayerPreferences);
   const [volume, setVolume] = useState(initialPlayerPreferences.volume);
   const [userMuted, setUserMuted] = useState(initialPlayerPreferences.muted);
   const [playbackRate, setPlaybackRate] = useState(
     initialPlayerPreferences.playbackRate
   );
+  const danmakuStyle = useMemo(
+    () => resolveDanmakuPreferencesStyle(danmakuPreferences, playbackRate),
+    [danmakuPreferences, playbackRate]
+  );
   const hideTimer = useRef<number | null>(null);
   const surfaceClickTimer = useRef<number | null>(null);
   const handledMediaErrorKeyRef = useRef<string | null>(null);
   const autoFallbackTriedRef = useRef(false);
   const initialSetupAppliedRef = useRef(false);
-  const danmaku = useVideoDanmaku({
-    aid: detail?.aid ?? null,
-    cid: playback.cid,
-    videoId: playback.videoId,
-    accountRevision,
-    mediaTimeSeconds: committedTime,
-    enabled: Boolean(detail?.aid) && !mediaError && !error,
-  });
+  const lastHistoryProgressRef = useRef(0);
 
   const handleAudioStore = useCallback((store: AudioStore | null) => {
     audioStoreRef.current = store;
@@ -686,6 +715,7 @@ function VideoStage({
     if (
       paused ||
       commentsOpen ||
+      danmakuSettingsOpen ||
       speedMenuOpen ||
       qualityMenuOpen ||
       volumePanelOpen
@@ -696,12 +726,31 @@ function VideoStage({
       hideTimer.current = null;
       setControlsVisible(false);
     }, 2400);
-  }, [commentsOpen, paused, qualityMenuOpen, speedMenuOpen, volumePanelOpen]);
+  }, [
+    commentsOpen,
+    danmakuSettingsOpen,
+    paused,
+    qualityMenuOpen,
+    speedMenuOpen,
+    volumePanelOpen,
+  ]);
 
   const revealControls = useCallback(() => {
     setControlsVisible(true);
     scheduleHideControls();
   }, [scheduleHideControls]);
+
+  useEffect(() => {
+    if (!danmakuSettingsOpen) {
+      scheduleHideControls();
+      return;
+    }
+    if (hideTimer.current) {
+      window.clearTimeout(hideTimer.current);
+      hideTimer.current = null;
+    }
+    setControlsVisible(true);
+  }, [danmakuSettingsOpen, scheduleHideControls]);
 
   const openComments = useCallback(() => {
     onCommentsOpenChange(true);
@@ -713,6 +762,14 @@ function VideoStage({
 
   useEffect(() => {
     if (isSwitchingQuality || isSeeking) return;
+    const previous = lastHistoryProgressRef.current;
+    if (
+      currentTime >= previous &&
+      currentTime - previous < HISTORY_PROGRESS_PUBLISH_INTERVAL_SECONDS
+    ) {
+      return;
+    }
+    lastHistoryProgressRef.current = currentTime;
     onCurrentTimeChange(currentTime);
   }, [currentTime, isSeeking, isSwitchingQuality, onCurrentTimeChange]);
 
@@ -831,7 +888,7 @@ function VideoStage({
         activeSourceSelection.audioIndex + 1 < audioSourceUrls.length
           ? activeSourceSelection.audioIndex + 1
           : activeSourceSelection.audioIndex;
-      targetTimeRef.current = currentTime;
+      targetTimeRef.current = readPlayerTimeSeconds(videoStore);
       setWasPlaying(!paused);
       videoStore.pause();
       if (audioCanPlay) {
@@ -857,7 +914,7 @@ function VideoStage({
     );
     if (!autoFallbackTriedRef.current && nextStreamIndex >= 0) {
       autoFallbackTriedRef.current = true;
-      targetTimeRef.current = currentTime;
+      targetTimeRef.current = readPlayerTimeSeconds(videoStore);
       setWasPlaying(!paused);
       setIsSwitchingQuality(true);
       videoStore.dismissError();
@@ -878,7 +935,6 @@ function VideoStage({
     audioCanPlay,
     audioSourceUrls,
     currentSrc,
-    currentTime,
     currentVideoUrl,
     mediaError,
     onStreamIndexChange,
@@ -967,33 +1023,63 @@ function VideoStage({
       !needsAudio ||
       paused ||
       isSeeking ||
-      isSwitchingQuality
+      isSwitchingQuality ||
+      mediaWaiting
     ) {
       return;
     }
-    const audioTime = audioStore.state.currentTime;
-    if (Math.abs(audioTime - currentTime) > 0.18) {
+
+    const correctDrift = () => {
+      const correction = audioCorrectionRef.current;
+      const now = performance.now();
+      if (
+        correction.inFlight ||
+        now - correction.lastStartedAt < AUDIO_DRIFT_CORRECTION_COOLDOWN_MS
+      ) {
+        return;
+      }
+      const videoTime = readPlayerTimeSeconds(videoStore);
+      const audioTime = audioStore.state.currentTime;
+      if (Math.abs(audioTime - videoTime) <= AUDIO_DRIFT_TOLERANCE_SECONDS) {
+        return;
+      }
+
+      correction.inFlight = true;
+      correction.lastStartedAt = now;
       log.debug("audio drift corrected", {
         videoId: playback.videoId,
-        videoTime: currentTime,
+        videoTime,
         audioTime,
-        drift: audioTime - currentTime,
+        drift: audioTime - videoTime,
       });
-      void audioStore.seek(currentTime).catch((err: unknown) => {
-        log.warn("audio drift correction failed", {
-          videoId: playback.videoId,
-          err,
+      void audioStore
+        .seek(videoTime)
+        .catch((err: unknown) => {
+          log.warn("audio drift correction failed", {
+            videoId: playback.videoId,
+            err,
+          });
+        })
+        .finally(() => {
+          correction.inFlight = false;
         });
-      });
-    }
+    };
+
+    correctDrift();
+    const timer = window.setInterval(
+      correctDrift,
+      AUDIO_DRIFT_CHECK_INTERVAL_MS
+    );
+    return () => window.clearInterval(timer);
   }, [
     audioCanPlay,
-    currentTime,
     isSeeking,
     isSwitchingQuality,
+    mediaWaiting,
     needsAudio,
     paused,
     playback.videoId,
+    videoStore,
   ]);
 
   useEffect(() => {
@@ -1072,7 +1158,8 @@ function VideoStage({
     const nextStream = playback.streams[index];
     if (index === streamIndex || !nextStream) return;
     if (!currentSrc || !videoStore.target) return;
-    targetTimeRef.current = currentTime;
+    const targetTime = readPlayerTimeSeconds(videoStore);
+    targetTimeRef.current = targetTime;
     setWasPlaying(!paused);
     videoStore.pause();
     if (audioCanPlay) {
@@ -1090,7 +1177,7 @@ function VideoStage({
       videoId: playback.videoId,
       fromQuality: selectedStream?.qualityId,
       toQuality: playback.streams[index].qualityId,
-      targetTime: currentTime,
+      targetTime,
       wasPlaying: !paused,
       audioUnchanged:
         playback.streams[index].audioUrl === selectedStream?.audioUrl,
@@ -1254,7 +1341,10 @@ function VideoStage({
         </AudioPlayer>
       ) : null}
 
-      <Container className="relative h-full min-h-0 w-full overflow-hidden bg-black [&:fullscreen]:h-screen [&:fullscreen]:w-screen">
+      <Container
+        ref={stageRef}
+        className="relative h-full min-h-0 w-full overflow-hidden bg-black [&:fullscreen]:h-screen [&:fullscreen]:w-screen"
+      >
         {selectedStream ? (
           <Video
             src={currentVideoUrl}
@@ -1268,10 +1358,18 @@ function VideoStage({
         ) : null}
 
         {detail?.aid ? (
-          <DanmakuCanvas
+          <VideoDanmakuLayer
             key={`${playback.cid}:${accountRevision}`}
-            items={danmaku.items}
-            mediaTimeMs={committedTime * 1_000}
+            aid={detail.aid}
+            cid={playback.cid}
+            videoId={playback.videoId}
+            accountRevision={accountRevision}
+            enabled={
+              danmakuPreferences.enabled &&
+              Boolean(detail.aid) &&
+              !mediaError &&
+              !error
+            }
             playing={
               !paused &&
               mediaReady &&
@@ -1282,8 +1380,9 @@ function VideoStage({
               !error
             }
             playbackRate={playbackRate}
-            visible={danmaku.visible}
-            onError={danmaku.onRenderError}
+            seeking={isSeeking}
+            visible={danmakuPreferences.enabled}
+            settings={danmakuStyle}
           />
         ) : null}
 
@@ -1304,7 +1403,7 @@ function VideoStage({
             qualityNotice={playback.qualityNotice}
             active={!mediaReady || !playing}
             ready={mediaReady}
-            currentTime={currentTime}
+            currentTime={readPlayerTimeSeconds(videoStore)}
             isFavorite={isFavorite}
             favoriteBusy={favoriteBusy}
             onBack={onBack}
@@ -1362,201 +1461,220 @@ function VideoStage({
                 onValueCommit={([value]) => void seekTo(value)}
               />
 
-              <div className="border-border bg-background/80 text-foreground flex h-10 items-center gap-2 rounded-md border px-2 backdrop-blur-xl sm:gap-3">
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  className={CONTROL_BUTTON_CLASS}
-                  aria-label={playing ? "暂停" : "播放"}
-                  title={playing ? "暂停" : "播放"}
-                  disabled={!mediaReady}
-                  onClick={() => void togglePlay()}
-                >
-                  {playing ? (
-                    <Pause className="fill-current" />
-                  ) : (
-                    <Play className="fill-current" />
-                  )}
-                </Button>
-                <span className="text-foreground/90 text-xs font-medium whitespace-nowrap tabular-nums">
-                  {formatPlayerTime(displayedTime)} /{" "}
-                  {formatPlayerTime(duration)}
-                </span>
-
-                <div className="ml-auto flex items-center gap-2 sm:gap-3">
-                  <div className="relative">
-                    <button
-                      type="button"
-                      className="text-foreground/90 hover:text-foreground focus-visible:ring-ring flex h-8 items-center gap-1 rounded-sm px-1 text-xs font-medium focus-visible:ring-2 focus-visible:outline-none"
-                      aria-label="清晰度"
-                      aria-haspopup="menu"
-                      aria-expanded={qualityMenuOpen}
-                      title="清晰度"
-                      onClick={() => setQualityMenuOpen((open) => !open)}
-                    >
-                      <Settings2 className="size-3.5" />
-                      {qualityLabel ? <span>{qualityLabel}</span> : null}
-                    </button>
-                    {qualityMenuOpen ? (
-                      <div
-                        role="menu"
-                        aria-label="清晰度"
-                        className="border-border bg-popover/95 text-popover-foreground absolute right-0 bottom-full z-40 mb-2 w-32 rounded-md border p-1.5 shadow-2xl backdrop-blur-md"
-                      >
-                        <div className="text-muted-foreground px-2 py-1 text-xs">
-                          清晰度
-                        </div>
-                        <div className="grid gap-1">
-                          {availableStreams.map((stream) => (
-                            <button
-                              key={stream.id}
-                              type="button"
-                              role="menuitemradio"
-                              aria-checked={
-                                playback.streams.indexOf(stream) === streamIndex
-                              }
-                              className="text-popover-foreground/85 hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring flex h-8 items-center justify-between rounded-md px-2 text-xs focus-visible:ring-2 focus-visible:outline-none"
-                              onClick={() =>
-                                changeQuality(playback.streams.indexOf(stream))
-                              }
-                            >
-                              <span>
-                                {QUALITY_LABELS[stream.qualityId] ??
-                                  stream.qualityLabel}
-                              </span>
-                              {playback.streams.indexOf(stream) ===
-                              streamIndex ? (
-                                <Check className="size-3.5 text-[var(--player-accent)]" />
-                              ) : null}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-
-                  <div className="relative">
-                    <button
-                      type="button"
-                      className="text-foreground/90 hover:text-foreground focus-visible:ring-ring h-8 rounded-sm px-0.5 text-xs font-medium tabular-nums focus-visible:ring-2 focus-visible:outline-none"
-                      aria-label={`播放速度 ${formatPlaybackRate(playbackRate)}`}
-                      aria-haspopup="menu"
-                      aria-expanded={speedMenuOpen}
-                      title="播放速度"
-                      onClick={() => setSpeedMenuOpen((open) => !open)}
-                    >
-                      {playbackRate === 1
-                        ? "倍速"
-                        : formatPlaybackRate(playbackRate)}
-                    </button>
-                    {speedMenuOpen ? (
-                      <div
-                        role="menu"
-                        aria-label="播放速度"
-                        className="border-border bg-popover/95 text-popover-foreground absolute right-0 bottom-full z-40 mb-2 w-40 rounded-md border p-1.5 shadow-2xl backdrop-blur-md"
-                      >
-                        <div className="text-muted-foreground px-2 py-1 text-xs">
-                          播放速度
-                        </div>
-                        <div className="grid grid-cols-2 gap-1">
-                          {PLAYBACK_RATES.map((rate) => (
-                            <button
-                              key={rate}
-                              type="button"
-                              role="menuitemradio"
-                              aria-checked={rate === playbackRate}
-                              className="text-popover-foreground/85 hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring flex h-8 items-center justify-between rounded-md px-2 text-xs tabular-nums focus-visible:ring-2 focus-visible:outline-none"
-                              onClick={() => changePlaybackRate(rate)}
-                            >
-                              <span>{formatPlaybackRate(rate)}</span>
-                              {rate === playbackRate ? (
-                                <Check className="size-3.5 text-[var(--player-accent)]" />
-                              ) : null}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-
-                  <div
-                    className="relative flex h-8 items-center"
-                    onMouseEnter={() => setVolumePanelOpen(true)}
-                    onMouseLeave={() => setVolumePanelOpen(false)}
-                    onFocus={() => setVolumePanelOpen(true)}
-                    onBlur={(event) => {
-                      if (
-                        !event.currentTarget.contains(
-                          event.relatedTarget as Node | null
-                        )
-                      ) {
-                        setVolumePanelOpen(false);
-                      }
-                    }}
-                  >
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="ghost"
-                      className={`${CONTROL_BUTTON_CLASS} -mr-1`}
-                      aria-label={
-                        userMuted || volume === 0 ? "取消静音" : "静音"
-                      }
-                      title={userMuted || volume === 0 ? "取消静音" : "静音"}
-                      onClick={toggleMuted}
-                    >
-                      {userMuted || volume === 0 ? <VolumeX /> : <Volume2 />}
-                    </Button>
-                    {volumePanelOpen ? (
-                      <div className="absolute bottom-full left-1/2 z-40 -translate-x-1/2 pb-2">
-                        <div className="border-border bg-popover/95 flex w-10 flex-col items-center gap-2 rounded-md border px-1 py-2.5 shadow-xl backdrop-blur-xl">
-                          <span className="text-foreground/80 text-[11px] font-medium tabular-nums">
-                            {Math.round((userMuted ? 0 : volume) * 100)}
-                          </span>
-                          <Slider
-                            aria-label="音量"
-                            aria-valuetext={`${Math.round((userMuted ? 0 : volume) * 100)}%`}
-                            orientation="vertical"
-                            className="[&_[data-slot=slider-thumb]]:bg-background [&_[data-slot=slider-track]]:bg-foreground/20 data-[orientation=vertical]:h-28 data-[orientation=vertical]:min-h-28 data-[orientation=vertical]:w-6 [&_[data-slot=slider-range]]:bg-[var(--player-accent)] [&_[data-slot=slider-thumb]]:size-3 [&_[data-slot=slider-thumb]]:border-[var(--player-accent)]"
-                            value={[userMuted ? 0 : volume]}
-                            max={1}
-                            step={0.02}
-                            onValueChange={([value]) => {
-                              setVolume(value);
-                              setUserMuted(value === 0);
-                            }}
-                          />
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-
-                  {pictureInPictureAvailability === "available" ? (
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="ghost"
-                      className={`${CONTROL_BUTTON_CLASS} hidden sm:inline-flex`}
-                      aria-label={isPictureInPicture ? "退出画中画" : "画中画"}
-                      title={isPictureInPicture ? "退出画中画" : "画中画"}
-                      onClick={() => void togglePictureInPicture()}
-                    >
-                      <PictureInPicture2 />
-                    </Button>
-                  ) : null}
-
+              <div className="relative">
+                <div
+                  aria-hidden="true"
+                  className="border-border bg-background/80 text-foreground pointer-events-none absolute inset-0 rounded-md border backdrop-blur-xl"
+                />
+                <div className="relative z-10 flex h-10 items-center gap-2 px-2 sm:gap-3">
                   <Button
                     type="button"
                     size="icon"
                     variant="ghost"
                     className={CONTROL_BUTTON_CLASS}
-                    aria-label={isFullscreen ? "退出全屏" : "全屏"}
-                    title={isFullscreen ? "退出全屏" : "全屏"}
-                    onClick={() => void toggleFullscreen()}
+                    aria-label={playing ? "暂停" : "播放"}
+                    title={playing ? "暂停" : "播放"}
+                    disabled={!mediaReady}
+                    onClick={() => void togglePlay()}
                   >
-                    {isFullscreen ? <Minimize /> : <Maximize />}
+                    {playing ? (
+                      <Pause className="fill-current" />
+                    ) : (
+                      <Play className="fill-current" />
+                    )}
                   </Button>
+                  <span className="text-foreground/90 text-xs font-medium whitespace-nowrap tabular-nums">
+                    {formatPlayerTime(displayedTime)} /{" "}
+                    {formatPlayerTime(duration)}
+                  </span>
+
+                  <div className="ml-auto flex items-center gap-2 sm:gap-3">
+                    <div className="relative">
+                      <button
+                        type="button"
+                        className="text-foreground/90 hover:text-foreground focus-visible:ring-ring flex h-8 items-center gap-1 rounded-sm px-1 text-xs font-medium focus-visible:ring-2 focus-visible:outline-none"
+                        aria-label="清晰度"
+                        aria-haspopup="menu"
+                        aria-expanded={qualityMenuOpen}
+                        title="清晰度"
+                        onClick={() => setQualityMenuOpen((open) => !open)}
+                      >
+                        <Settings2 className="size-3.5" />
+                        {qualityLabel ? <span>{qualityLabel}</span> : null}
+                      </button>
+                      {qualityMenuOpen ? (
+                        <div
+                          role="menu"
+                          aria-label="清晰度"
+                          className="border-border bg-popover/95 text-popover-foreground absolute right-0 bottom-full z-40 mb-2 w-32 rounded-md border p-1.5 shadow-2xl backdrop-blur-md"
+                        >
+                          <div className="text-muted-foreground px-2 py-1 text-xs">
+                            清晰度
+                          </div>
+                          <div className="grid gap-1">
+                            {availableStreams.map((stream) => (
+                              <button
+                                key={stream.id}
+                                type="button"
+                                role="menuitemradio"
+                                aria-checked={
+                                  playback.streams.indexOf(stream) ===
+                                  streamIndex
+                                }
+                                className="text-popover-foreground/85 hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring flex h-8 items-center justify-between rounded-md px-2 text-xs focus-visible:ring-2 focus-visible:outline-none"
+                                onClick={() =>
+                                  changeQuality(
+                                    playback.streams.indexOf(stream)
+                                  )
+                                }
+                              >
+                                <span>
+                                  {QUALITY_LABELS[stream.qualityId] ??
+                                    stream.qualityLabel}
+                                </span>
+                                {playback.streams.indexOf(stream) ===
+                                streamIndex ? (
+                                  <Check className="size-3.5 text-[var(--player-accent)]" />
+                                ) : null}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="relative">
+                      <button
+                        type="button"
+                        className="text-foreground/90 hover:text-foreground focus-visible:ring-ring h-8 rounded-sm px-0.5 text-xs font-medium tabular-nums focus-visible:ring-2 focus-visible:outline-none"
+                        aria-label={`播放速度 ${formatPlaybackRate(playbackRate)}`}
+                        aria-haspopup="menu"
+                        aria-expanded={speedMenuOpen}
+                        title="播放速度"
+                        onClick={() => setSpeedMenuOpen((open) => !open)}
+                      >
+                        {playbackRate === 1
+                          ? "倍速"
+                          : formatPlaybackRate(playbackRate)}
+                      </button>
+                      {speedMenuOpen ? (
+                        <div
+                          role="menu"
+                          aria-label="播放速度"
+                          className="border-border bg-popover/95 text-popover-foreground absolute right-0 bottom-full z-40 mb-2 w-40 rounded-md border p-1.5 shadow-2xl backdrop-blur-md"
+                        >
+                          <div className="text-muted-foreground px-2 py-1 text-xs">
+                            播放速度
+                          </div>
+                          <div className="grid grid-cols-2 gap-1">
+                            {PLAYBACK_RATES.map((rate) => (
+                              <button
+                                key={rate}
+                                type="button"
+                                role="menuitemradio"
+                                aria-checked={rate === playbackRate}
+                                className="text-popover-foreground/85 hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring flex h-8 items-center justify-between rounded-md px-2 text-xs tabular-nums focus-visible:ring-2 focus-visible:outline-none"
+                                onClick={() => changePlaybackRate(rate)}
+                              >
+                                <span>{formatPlaybackRate(rate)}</span>
+                                {rate === playbackRate ? (
+                                  <Check className="size-3.5 text-[var(--player-accent)]" />
+                                ) : null}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div
+                      className="relative flex h-8 items-center"
+                      onMouseEnter={() => setVolumePanelOpen(true)}
+                      onMouseLeave={() => setVolumePanelOpen(false)}
+                      onFocus={() => setVolumePanelOpen(true)}
+                      onBlur={(event) => {
+                        if (
+                          !event.currentTarget.contains(
+                            event.relatedTarget as Node | null
+                          )
+                        ) {
+                          setVolumePanelOpen(false);
+                        }
+                      }}
+                    >
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        className={`${CONTROL_BUTTON_CLASS} -mr-1`}
+                        aria-label={
+                          userMuted || volume === 0 ? "取消静音" : "静音"
+                        }
+                        title={userMuted || volume === 0 ? "取消静音" : "静音"}
+                        onClick={toggleMuted}
+                      >
+                        {userMuted || volume === 0 ? <VolumeX /> : <Volume2 />}
+                      </Button>
+                      {volumePanelOpen ? (
+                        <div className="absolute bottom-full left-1/2 z-40 -ml-5 pb-2">
+                          <div className="border-border bg-popover/95 flex w-10 flex-col items-center gap-2 rounded-md border px-1 py-2.5 shadow-xl backdrop-blur-xl">
+                            <span className="text-foreground/80 text-[11px] font-medium tabular-nums">
+                              {Math.round((userMuted ? 0 : volume) * 100)}
+                            </span>
+                            <Slider
+                              aria-label="音量"
+                              aria-valuetext={`${Math.round((userMuted ? 0 : volume) * 100)}%`}
+                              orientation="vertical"
+                              className="[&_[data-slot=slider-thumb]]:bg-background [&_[data-slot=slider-track]]:bg-foreground/20 data-[orientation=vertical]:h-28 data-[orientation=vertical]:min-h-28 data-[orientation=vertical]:w-6 [&_[data-slot=slider-range]]:bg-[var(--player-accent)] [&_[data-slot=slider-thumb]]:size-3 [&_[data-slot=slider-thumb]]:border-[var(--player-accent)]"
+                              value={[userMuted ? 0 : volume]}
+                              max={1}
+                              step={0.02}
+                              onValueChange={([value]) => {
+                                setVolume(value);
+                                setUserMuted(value === 0);
+                              }}
+                            />
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    {detail?.aid ? (
+                      <DanmakuControlButton
+                        portalContainerRef={stageRef}
+                        triggerClassName={CONTROL_BUTTON_CLASS}
+                        onOpenChange={setDanmakuSettingsOpen}
+                      />
+                    ) : null}
+
+                    {pictureInPictureAvailability === "available" ? (
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        className={`${CONTROL_BUTTON_CLASS} hidden sm:inline-flex`}
+                        aria-label={
+                          isPictureInPicture ? "退出画中画" : "画中画"
+                        }
+                        title={isPictureInPicture ? "退出画中画" : "画中画"}
+                        onClick={() => void togglePictureInPicture()}
+                      >
+                        <PictureInPicture2 />
+                      </Button>
+                    ) : null}
+
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className={CONTROL_BUTTON_CLASS}
+                      aria-label={isFullscreen ? "退出全屏" : "全屏"}
+                      title={isFullscreen ? "退出全屏" : "全屏"}
+                      onClick={() => void toggleFullscreen()}
+                    >
+                      {isFullscreen ? <Minimize /> : <Maximize />}
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1853,7 +1971,6 @@ export default function VideoView() {
               streamIndex={streamIndex}
               availableStreams={availableStreams}
               initialTime={initialPlaybackTime}
-              committedTime={currentTime}
               accountRevision={accountRevision}
               isFavorite={Boolean(favorite)}
               favoriteBusy={favoriteBusy || favoriteLoading}

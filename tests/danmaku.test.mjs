@@ -1,10 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { resolveDanmakuCanvasDpr } from "../src/lib/danmaku/canvas.ts";
+import {
+  resolveDanmakuCanvasDpr,
+  resolveDanmakuResponsiveScale,
+} from "../src/lib/danmaku/canvas.ts";
+import {
+  createVideoDanmakuClockSource,
+  DANMAKU_MEDIA_SYNC_INTERVAL_MS,
+  quantizeDanmakuMediaTimeMs,
+  quantizeDanmakuMediaTimeSeconds,
+  resolveDanmakuMediaTimeAction,
+  resolveSyncedDanmakuClockMs,
+} from "../src/lib/danmaku/media-clock.ts";
 import {
   chooseDanmakuLane,
   removeExpiredDanmaku,
+  resolveDanmakuDisplayHeight,
   resolveDanmakuEmoteDisplaySize,
   resolveDanmakuLaneHeight,
   resolveDanmakuLaneRange,
@@ -12,6 +24,15 @@ import {
   resolveDanmakuScrollX,
 } from "../src/lib/danmaku/layout.ts";
 import { PixelLruCache } from "../src/lib/danmaku/pixel-cache.ts";
+import {
+  DANMAKU_OPACITY_MAX,
+  DANMAKU_OPACITY_MIN,
+  DANMAKU_SCALE_MAX,
+  DANMAKU_SCALE_MIN,
+  DEFAULT_DANMAKU_PREFERENCES,
+  normalizeDanmakuPreferences,
+  resolveDanmakuPreferencesStyle,
+} from "../src/lib/danmaku/preferences.ts";
 import {
   DANMAKU_SEGMENT_CACHE_LIMIT,
   DanmakuSegmentLruCache,
@@ -31,11 +52,16 @@ import {
   DEFAULT_DANMAKU_STYLE,
   danmakuColorToCss,
   danmakuEmoteKind,
+  filterDanmakuItems,
   normalizeDanmakuEmote,
   normalizeDanmakuEmoteUrl,
   normalizeDanmakuItems,
   sanitizeDanmakuText,
 } from "../src/lib/danmaku/types.ts";
+import {
+  resolveDanmakuLayoutStyle,
+  resolveDanmakuStyleChange,
+} from "../src/lib/danmaku/style-change.ts";
 import {
   createVideoDanmakuState,
   videoDanmakuReducer,
@@ -81,6 +107,124 @@ test("sanitizes untrusted text without splitting emoji or retaining controls", (
 
   assert.match(text, /^hello\s+world 😀$/u);
   assert.equal(Array.from(sanitizeDanmakuText("a".repeat(600))).length, 512);
+  assert.equal(
+    Array.from(sanitizeDanmakuText("😀".repeat(10_000) + "tail")).length,
+    512
+  );
+});
+
+test("normalizes persisted danmaku preferences without invalid values leaking", () => {
+  assert.deepEqual(normalizeDanmakuPreferences(null), {
+    ...DEFAULT_DANMAKU_PREFERENCES,
+  });
+  assert.deepEqual(
+    normalizeDanmakuPreferences({
+      enabled: false,
+      opacity: 0,
+      scale: 4,
+      displayArea: 0,
+      speed: 9,
+      showScroll: false,
+      showFixed: false,
+      showColor: false,
+      syncPlaybackRate: false,
+      scaleWithPlayer: true,
+      avoidSubtitles: true,
+      fontFamily: "song",
+      bold: false,
+      strokeType: "projection",
+    }),
+    {
+      enabled: false,
+      opacity: DANMAKU_OPACITY_MIN,
+      scale: DANMAKU_SCALE_MAX,
+      displayArea: 0.25,
+      speed: 2,
+      showScroll: false,
+      showFixed: false,
+      showColor: false,
+      syncPlaybackRate: false,
+      scaleWithPlayer: true,
+      avoidSubtitles: true,
+      fontFamily: "song",
+      bold: false,
+      strokeType: "projection",
+    }
+  );
+  assert.deepEqual(
+    normalizeDanmakuPreferences({
+      enabled: "yes",
+      opacity: Number.NaN,
+      scale: 0.1,
+    }),
+    {
+      ...DEFAULT_DANMAKU_PREFERENCES,
+      opacity: DANMAKU_OPACITY_MAX,
+      scale: DANMAKU_SCALE_MIN,
+    }
+  );
+});
+
+test("maps danmaku preferences to render style and playback compensation", () => {
+  const synced = resolveDanmakuPreferencesStyle(DEFAULT_DANMAKU_PREFERENCES, 2);
+  assert.equal(synced.scrollSpeedPxPerSecond, 220);
+  assert.equal(synced.fixedDurationMs, 4_500);
+  assert.equal(synced.fontWeight, 700);
+  assert.equal(synced.strokeWidth, 1.5);
+
+  const fixedWallClock = resolveDanmakuPreferencesStyle(
+    {
+      ...DEFAULT_DANMAKU_PREFERENCES,
+      syncPlaybackRate: false,
+      fontFamily: "song",
+      bold: false,
+      strokeType: "projection",
+      avoidSubtitles: true,
+      displayArea: 0.75,
+    },
+    2
+  );
+  assert.equal(fixedWallClock.scrollSpeedPxPerSecond, 110);
+  assert.equal(fixedWallClock.fixedDurationMs, 9_000);
+  assert.equal(fixedWallClock.fontWeight, 400);
+  assert.match(fixedWallClock.fontFamily, /SimSun/u);
+  assert.equal(fixedWallClock.strokeWidth, 0);
+  assert.equal(fixedWallClock.shadowOffsetX, 2);
+  assert.equal(fixedWallClock.avoidSubtitles, true);
+});
+
+test("filters scrolling, fixed, and colored items without mutating input", () => {
+  const items = [
+    renderItem("scroll-white", 100),
+    renderItem("scroll-color", 200, { color: 0xff6699 }),
+    renderItem("top-color", 300, { mode: "top", color: 0x66ccff }),
+    renderItem("bottom-white", 400, { mode: "bottom" }),
+  ];
+
+  assert.strictEqual(
+    filterDanmakuItems(items, {
+      showScroll: true,
+      showFixed: true,
+      showColor: true,
+    }),
+    items
+  );
+  assert.deepEqual(
+    filterDanmakuItems(items, {
+      showScroll: true,
+      showFixed: false,
+      showColor: false,
+    }).map((item) => item.id),
+    ["scroll-white"]
+  );
+  assert.deepEqual(
+    filterDanmakuItems(items, {
+      showScroll: false,
+      showFixed: true,
+      showColor: true,
+    }).map((item) => item.id),
+    ["top-color", "bottom-white"]
+  );
 });
 
 test("normalizes items, deduplicates by id, and clamps visual fields", () => {
@@ -237,6 +381,43 @@ test("resolves canvas DPR within device, style, and pixel-budget limits", () => 
   assert.equal(fourK, 1);
 });
 
+test("limits the display area and keeps responsive scaling bounded", () => {
+  const halfArea = {
+    ...DEFAULT_DANMAKU_STYLE,
+    displayArea: 0.5,
+  };
+  assert.equal(resolveDanmakuDisplayHeight(1_080, halfArea), 540);
+  assert.equal(
+    resolveDanmakuDisplayHeight(1_080, {
+      ...halfArea,
+      avoidSubtitles: true,
+    }),
+    540
+  );
+  assert.equal(
+    resolveDanmakuDisplayHeight(1_080, {
+      ...DEFAULT_DANMAKU_STYLE,
+      avoidSubtitles: true,
+    }),
+    864
+  );
+  assert.equal(resolveDanmakuResponsiveScale(1_080, halfArea), 1);
+  assert.equal(
+    resolveDanmakuResponsiveScale(1_080, {
+      ...halfArea,
+      scaleWithPlayer: true,
+    }),
+    1.5
+  );
+  assert.equal(
+    resolveDanmakuResponsiveScale(360, {
+      ...halfArea,
+      scaleWithPlayer: true,
+    }),
+    0.75
+  );
+});
+
 test("evicts the least-recently-used texture pixels within budget", () => {
   const cache = new PixelLruCache(100);
 
@@ -265,6 +446,174 @@ test("finds inclusive lower and upper bounds in sorted item time", () => {
   assert.equal(lowerBoundByTime(items, 100), 1);
   assert.equal(upperBoundByTime(items, 100), 3);
   assert.equal(lowerBoundByTime(items, 150), 3);
+});
+
+test("separates normal media sync, forward gaps, and real seeks", () => {
+  assert.equal(
+    resolveDanmakuMediaTimeAction({
+      initialized: true,
+      clockMs: 10_000,
+      mediaTimeMs: 10_400,
+    }),
+    "sync"
+  );
+  assert.equal(
+    resolveDanmakuMediaTimeAction({
+      initialized: true,
+      clockMs: 10_000,
+      mediaTimeMs: 18_000,
+    }),
+    "resync"
+  );
+  assert.equal(
+    resolveDanmakuMediaTimeAction({
+      initialized: true,
+      clockMs: 10_000,
+      mediaTimeMs: 2_000,
+    }),
+    "resync"
+  );
+  assert.equal(
+    resolveDanmakuMediaTimeAction({
+      initialized: true,
+      clockMs: 10_000,
+      mediaTimeMs: 10_100,
+      forceRebuild: true,
+    }),
+    "rebuild"
+  );
+  assert.equal(
+    resolveDanmakuMediaTimeAction({
+      initialized: false,
+      clockMs: 0,
+      mediaTimeMs: 10_000,
+    }),
+    "rebuild"
+  );
+});
+
+test("quantizes player clock updates without changing renderer interpolation", () => {
+  assert.equal(DANMAKU_MEDIA_SYNC_INTERVAL_MS, 100);
+  assert.equal(quantizeDanmakuMediaTimeMs(10_099.9), 10_000);
+  assert.equal(quantizeDanmakuMediaTimeMs(-10), 0);
+  assert.equal(quantizeDanmakuMediaTimeMs(Number.NaN), 0);
+  assert.equal(quantizeDanmakuMediaTimeSeconds(12.399), 12.3);
+  assert.equal(quantizeDanmakuMediaTimeSeconds(Number.POSITIVE_INFINITY), 0);
+});
+
+test("publishes imperative video clock updates once per 100ms bucket", () => {
+  const state = { currentTime: 10.01 };
+  let notify = () => {};
+  const source = createVideoDanmakuClockSource({
+    get state() {
+      return state;
+    },
+    subscribe(listener) {
+      notify = listener;
+      return () => {
+        notify = () => {};
+      };
+    },
+  });
+  let updates = 0;
+  const unsubscribe = source.subscribe(() => {
+    updates += 1;
+  });
+
+  assert.equal(source.read(), 10_010);
+  state.currentTime = 10.099;
+  notify();
+  assert.equal(updates, 0);
+
+  state.currentTime = 10.1;
+  notify();
+  assert.equal(updates, 1);
+
+  state.currentTime = 10.199;
+  notify();
+  assert.equal(updates, 1);
+
+  state.currentTime = 2;
+  notify();
+  assert.equal(updates, 2);
+
+  unsubscribe();
+  state.currentTime = 3;
+  notify();
+  assert.equal(updates, 2);
+});
+
+test("keeps the canvas clock monotonic during ordinary media sync", () => {
+  assert.equal(resolveSyncedDanmakuClockMs(10_080, 10_000), 10_080);
+  assert.equal(resolveSyncedDanmakuClockMs(10_080, 10_120), 10_120);
+  assert.equal(resolveSyncedDanmakuClockMs(Number.NaN, -5), 0);
+});
+
+test("classifies style changes by renderer impact", () => {
+  const base = { ...DEFAULT_DANMAKU_STYLE };
+  assert.deepEqual(resolveDanmakuStyleChange(base, base), {
+    changed: false,
+    reflow: false,
+    visibility: false,
+    motion: false,
+  });
+  assert.deepEqual(
+    resolveDanmakuStyleChange(base, {
+      ...base,
+      fontFamily: '"SimHei", sans-serif',
+    }),
+    { changed: true, reflow: false, visibility: false, motion: false }
+  );
+  assert.deepEqual(
+    resolveDanmakuStyleChange(base, {
+      ...base,
+      opacity: 0.5,
+    }),
+    { changed: true, reflow: false, visibility: false, motion: false }
+  );
+  assert.deepEqual(
+    resolveDanmakuStyleChange(base, {
+      ...base,
+      displayArea: 0.5,
+    }),
+    { changed: true, reflow: true, visibility: false, motion: false }
+  );
+  assert.deepEqual(
+    resolveDanmakuStyleChange(base, {
+      ...base,
+      edgePadding: 24,
+    }),
+    { changed: true, reflow: true, visibility: false, motion: true }
+  );
+  assert.deepEqual(
+    resolveDanmakuStyleChange(base, {
+      ...base,
+      showScroll: false,
+    }),
+    { changed: true, reflow: false, visibility: true, motion: false }
+  );
+});
+
+test("updates active layout geometry without replacing birth visual style", () => {
+  const birthStyle = {
+    ...DEFAULT_DANMAKU_STYLE,
+    fontFamily: '"SimHei", sans-serif',
+    edgePadding: 12,
+    trackGap: 2,
+  };
+  const currentStyle = {
+    ...DEFAULT_DANMAKU_STYLE,
+    fontFamily: '"SimSun", serif',
+    edgePadding: 24,
+    trackGap: 8,
+  };
+  const merged = resolveDanmakuLayoutStyle(birthStyle, currentStyle);
+
+  assert.notStrictEqual(merged, birthStyle);
+  assert.equal(merged.fontFamily, birthStyle.fontFamily);
+  assert.equal(merged.edgePadding, currentStyle.edgePadding);
+  assert.equal(merged.trackGap, currentStyle.trackGap);
+  assert.strictEqual(resolveDanmakuLayoutStyle(merged, currentStyle), merged);
 });
 
 test("keeps mode-specific collision domains while sharing display lanes", () => {

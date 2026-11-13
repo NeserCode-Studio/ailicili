@@ -1,6 +1,7 @@
-import { memo, useRef } from "react";
+import { memo, useMemo, useRef } from "react";
 
 import { useDanmakuScheduler } from "@/hooks/useDanmakuScheduler";
+import type { DanmakuMediaClockSource } from "@/lib/danmaku/media-clock";
 import {
   resolveDanmakuStyle,
   type DanmakuRenderItem,
@@ -10,9 +11,11 @@ import { cn } from "@/lib/utils";
 
 export interface DanmakuCanvasProps {
   items: readonly DanmakuRenderItem[];
-  mediaTimeMs: number;
+  mediaTimeMs?: number;
+  mediaClock?: DanmakuMediaClockSource;
   playing: boolean;
   playbackRate?: number;
+  seeking?: boolean;
   visible?: boolean;
   settings?: Partial<DanmakuRenderStyle>;
   className?: string;
@@ -21,22 +24,26 @@ export interface DanmakuCanvasProps {
 
 export const DanmakuCanvas = memo(function DanmakuCanvas({
   items,
-  mediaTimeMs,
+  mediaTimeMs = 0,
+  mediaClock,
   playing,
   playbackRate = 1,
+  seeking = false,
   visible = true,
   settings,
   className,
   onError,
 }: DanmakuCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const style = resolveDanmakuStyle(settings);
+  const style = useMemo(() => resolveDanmakuStyle(settings), [settings]);
 
   useDanmakuScheduler(canvasRef, {
     items,
     mediaTimeMs,
+    mediaClock,
     playing,
     playbackRate,
+    seeking,
     visible,
     style,
     onError,

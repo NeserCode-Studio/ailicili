@@ -31,6 +31,9 @@ export interface DanmakuRenderStyle {
   fontStyle: "normal" | "italic";
   baseFontSize: number;
   scale: number;
+  scaleWithPlayer: boolean;
+  displayArea: number;
+  avoidSubtitles: boolean;
   opacity: number;
   scrollSpeedPxPerSecond: number;
   strokeColor: string;
@@ -48,6 +51,9 @@ export interface DanmakuRenderStyle {
   canvasPixelBudget: number;
   texturePixelBudget: number;
   maxTextWidthRatio: number;
+  showScroll: boolean;
+  showFixed: boolean;
+  showColor: boolean;
 }
 
 export const DEFAULT_DANMAKU_FONT_SIZE = 25;
@@ -58,6 +64,9 @@ export const DEFAULT_DANMAKU_STYLE: DanmakuRenderStyle = {
   fontStyle: "normal",
   baseFontSize: DEFAULT_DANMAKU_FONT_SIZE,
   scale: 1,
+  scaleWithPlayer: false,
+  displayArea: 1,
+  avoidSubtitles: false,
   opacity: 1,
   scrollSpeedPxPerSecond: 220,
   strokeColor: "rgba(0, 0, 0, 0.82)",
@@ -75,9 +84,13 @@ export const DEFAULT_DANMAKU_STYLE: DanmakuRenderStyle = {
   canvasPixelBudget: 8_388_608,
   texturePixelBudget: 12_582_912,
   maxTextWidthRatio: 0.82,
+  showScroll: true,
+  showFixed: true,
+  showColor: true,
 };
 
 const MAX_TEXT_CODE_POINTS = 512;
+const MAX_TEXT_INPUT_CODE_UNITS = 4_096;
 const MAX_EMOTE_LABEL_CODE_POINTS = 96;
 const MAX_EMOTE_ID_CODE_POINTS = 128;
 const MAX_EMOTE_URL_LENGTH = 2_048;
@@ -100,16 +113,23 @@ function finiteOr(value: number, fallback: number) {
 }
 
 function sanitizeText(value: string, maximumCodePoints: number, trim: boolean) {
-  const normalized = value.normalize("NFC");
-  const cleaned = Array.from(normalized)
-    .slice(0, maximumCodePoints)
-    .map((character) => {
-      const codePoint = character.codePointAt(0) ?? 0;
-      return codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f)
+  const bounded =
+    value.length > MAX_TEXT_INPUT_CODE_UNITS
+      ? value.slice(0, MAX_TEXT_INPUT_CODE_UNITS)
+      : value;
+  const normalized = bounded.normalize("NFC");
+  let cleaned = "";
+  let codePoints = 0;
+
+  for (const character of normalized) {
+    if (codePoints >= maximumCodePoints) break;
+    const codePoint = character.codePointAt(0) ?? 0;
+    cleaned +=
+      codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f)
         ? " "
         : character;
-    })
-    .join("");
+    codePoints += 1;
+  }
 
   return trim ? cleaned.trim() : cleaned;
 }
@@ -290,6 +310,9 @@ export function resolveDanmakuStyle(
       72
     ),
     scale: clamp(finiteOr(merged.scale, 1), 0.25, 3),
+    scaleWithPlayer: merged.scaleWithPlayer === true,
+    displayArea: clamp(finiteOr(merged.displayArea, 1), 0.1, 1),
+    avoidSubtitles: merged.avoidSubtitles === true,
     opacity: clamp(finiteOr(merged.opacity, 1), 0, 1),
     scrollSpeedPxPerSecond: clamp(
       finiteOr(merged.scrollSpeedPxPerSecond, 220),
@@ -327,7 +350,31 @@ export function resolveDanmakuStyle(
       )
     ),
     maxTextWidthRatio: clamp(finiteOr(merged.maxTextWidthRatio, 0.82), 0.2, 1),
+    showScroll: merged.showScroll !== false,
+    showFixed: merged.showFixed !== false,
+    showColor: merged.showColor !== false,
   };
+}
+
+export function filterDanmakuItems(
+  items: readonly DanmakuRenderItem[],
+  filters: Pick<DanmakuRenderStyle, "showScroll" | "showFixed" | "showColor">
+): readonly DanmakuRenderItem[] {
+  if (filters.showScroll && filters.showFixed && filters.showColor) {
+    return items;
+  }
+
+  return items.filter((item) => isDanmakuItemVisible(item, filters));
+}
+
+export function isDanmakuItemVisible(
+  item: DanmakuRenderItem,
+  filters: Pick<DanmakuRenderStyle, "showScroll" | "showFixed" | "showColor">
+) {
+  if (item.mode === "scroll" && !filters.showScroll) return false;
+  if (item.mode !== "scroll" && !filters.showFixed) return false;
+  if (!filters.showColor && item.color !== 0xffffff) return false;
+  return true;
 }
 
 export function normalizeDanmakuItems(

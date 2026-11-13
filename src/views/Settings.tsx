@@ -5,9 +5,11 @@ import { useI18n, useToast } from "@/composables";
 import AccountCenter from "@/components/account/AccountCenter";
 import {
   SettingInputItem,
+  SettingItemGroup,
   SettingOptionalItem,
   SettingSelectItem,
 } from "@/components/SettingItems";
+import { DanmakuSettingsPanel } from "@/components/danmaku/DanmakuControl";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -83,6 +85,26 @@ const SETTING_INDEX: SettingIndexItem[] = [
       "推荐",
       "个性化",
       "热门",
+    ],
+  },
+  {
+    id: "danmaku",
+    group: "general",
+    labelKey: "Settings.danmaku.title",
+    keywords: [
+      "danmaku",
+      "subtitle",
+      "overlay",
+      "font",
+      "speed",
+      "area",
+      "弹幕",
+      "字体",
+      "速度",
+      "显示区域",
+      "透明度",
+      "字号",
+      "显示",
     ],
   },
 ];
@@ -385,6 +407,14 @@ export default function Settings({
         <TabsContent value="general" className="mt-5">
           <div className="flex flex-col gap-4">
             <p className="text-muted-sm">{t("Settings.general.description")}</p>
+            <SettingItemGroup
+              title={t("Settings.danmaku.title")}
+              description={t("Settings.danmaku.description")}
+            >
+              <div className="border-border/60 bg-card/55 rounded-lg border p-4">
+                <DanmakuSettingsPanel />
+              </div>
+            </SettingItemGroup>
             <SettingInputItem
               type="text"
               value={title ?? ""}

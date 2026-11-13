@@ -33,14 +33,14 @@ function SettingItemShell({
 }) {
   return (
     <div
-      className={`group stack-3 rounded-xl border border-border/60 bg-card p-4 transition-colors hover:border-border hover:bg-accent/30 sm:flex-row sm:items-center sm:justify-between sm:gap-6 ${className}`}
+      className={`group stack-3 border-border/60 bg-card hover:border-border hover:bg-accent/30 rounded-xl border p-4 transition-colors sm:flex-row sm:items-center sm:justify-between sm:gap-6 ${className}`}
     >
       <div className="flex min-w-0 flex-col gap-1">
         {title ? (
           <span className="text-sm leading-tight font-medium">{title}</span>
         ) : null}
         {description ? (
-          <span className="text-xs leading-relaxed text-muted-foreground">
+          <span className="text-muted-foreground text-xs leading-relaxed">
             {description}
           </span>
         ) : null}
@@ -61,9 +61,7 @@ export function SettingItemGroup({
     <section className="stack-3">
       <div className="stack-1">
         <h3 className="text-sm font-semibold tracking-tight">{title}</h3>
-        {description ? (
-          <p className="text-muted-xs">{description}</p>
-        ) : null}
+        {description ? <p className="text-muted-xs">{description}</p> : null}
       </div>
       <div className="stack-3">{children}</div>
     </section>

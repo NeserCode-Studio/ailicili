@@ -480,13 +480,15 @@ fn normalize_live_emoticon_url(value: &str) -> Option<String> {
 }
 
 fn is_valid_websocket_host(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 253
-        && value
+    let host = value.to_ascii_lowercase();
+    !host.is_empty()
+        && host.len() <= 253
+        && host
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
-        && !value.starts_with('.')
-        && !value.ends_with('.')
+        && !host.starts_with('.')
+        && !host.ends_with('.')
+        && (host == "bilibili.com" || host.ends_with(".bilibili.com"))
 }
 
 fn parse_room_card(item: &Value) -> Option<LiveRoomCard> {
@@ -877,6 +879,9 @@ mod tests {
             "https://example.invalid",
             "bad host",
             ".example.invalid",
+            "example.invalid",
+            "bilibili.com.example.invalid",
+            "evilbilibili.com",
         ] {
             let root = serde_json::json!({
                 "data": {

@@ -6,6 +6,7 @@ import type {
 
 const DANMAKU_TRACK_LINE_HEIGHT = 1.2;
 const DANMAKU_EMOTE_MAX_TRACK_RATIO = 1.15;
+const DANMAKU_SUBTITLE_SAFE_AREA = 0.2;
 
 export interface DanmakuMotionItem {
   id: string;
@@ -36,6 +37,22 @@ export function resolveDanmakuLaneHeight(style: DanmakuRenderStyle) {
     1,
     Math.ceil(fontSize * DANMAKU_TRACK_LINE_HEIGHT + style.trackGap)
   );
+}
+
+export function resolveDanmakuDisplayHeight(
+  viewportHeight: number,
+  style: DanmakuRenderStyle
+) {
+  const height = Math.max(
+    0,
+    Number.isFinite(viewportHeight) ? viewportHeight : 0
+  );
+  const subtitleReserve = style.avoidSubtitles ? DANMAKU_SUBTITLE_SAFE_AREA : 0;
+  const visibleRatio = Math.max(
+    0.1,
+    Math.min(style.displayArea, 1 - subtitleReserve)
+  );
+  return Math.max(1, height * visibleRatio);
 }
 
 export function resolveDanmakuEmoteDisplaySize(

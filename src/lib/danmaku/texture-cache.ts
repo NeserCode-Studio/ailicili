@@ -13,6 +13,13 @@ export interface DanmakuTexture {
   text: string;
 }
 
+export interface DanmakuTextureFactoryStats {
+  getCount: number;
+  cacheMissCount: number;
+  createTotalMs: number;
+  createMaximumMs: number;
+}
+
 type EmoteImages = ReadonlyMap<string, CanvasImageSource>;
 
 type TexturePartKey =
@@ -99,6 +106,10 @@ export class DanmakuTextureFactory {
   private readonly scratchContext: CanvasRenderingContext2D;
   private readonly cache: PixelLruCache<string, DanmakuTexture>;
   private rasterScale = 1;
+  private getCount = 0;
+  private cacheMissCount = 0;
+  private createTotalMs = 0;
+  private createMaximumMs = 0;
 
   constructor(pixelBudget: number) {
     const scratch = document.createElement("canvas");
@@ -115,6 +126,15 @@ export class DanmakuTextureFactory {
 
   get cachedTexturePixels() {
     return this.cache.pixelCount;
+  }
+
+  getStats(): DanmakuTextureFactoryStats {
+    return {
+      getCount: this.getCount,
+      cacheMissCount: this.cacheMissCount,
+      createTotalMs: this.createTotalMs,
+      createMaximumMs: this.createMaximumMs,
+    };
   }
 
   setPixelBudget(pixelBudget: number) {
@@ -138,6 +158,7 @@ export class DanmakuTextureFactory {
     maxWidth: number,
     emoteImages: EmoteImages
   ) {
+    this.getCount += 1;
     const fontSize = item.fontSize * style.scale;
     const fillColor = danmakuColorToCss(item.color);
     const key: TextureKey = {
@@ -170,6 +191,7 @@ export class DanmakuTextureFactory {
     const cached = this.cache.get(serializedKey);
     if (cached) return cached;
 
+    const createStartedAt = performance.now();
     const texture = this.createTexture(
       item,
       style,
@@ -178,6 +200,10 @@ export class DanmakuTextureFactory {
       fillColor,
       emoteImages
     );
+    const createDurationMs = performance.now() - createStartedAt;
+    this.cacheMissCount += 1;
+    this.createTotalMs += createDurationMs;
+    this.createMaximumMs = Math.max(this.createMaximumMs, createDurationMs);
     this.cache.set(
       serializedKey,
       texture,

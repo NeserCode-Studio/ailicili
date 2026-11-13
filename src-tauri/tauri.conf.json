@@ -23,7 +23,7 @@
         "maximizable": true,
         "visible": true,
         "focus": true,
-        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-accelerated-video-decode"
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,D3D11VideoDecoderUseSharedHandle"
       },
       {
         "label": "tray",
@@ -38,7 +38,7 @@
         "width": 220,
         "height": 280,
         "shadow": true,
-        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-accelerated-video-decode"
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,D3D11VideoDecoderUseSharedHandle"
       }
     ],
     "security": {

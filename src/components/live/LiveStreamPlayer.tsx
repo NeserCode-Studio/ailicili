@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ArrowLeft,
   Check,
@@ -24,6 +25,7 @@ import type { CommandError } from "@/api/account";
 import type { LiveRoomInfo, LiveStatus } from "@/api/live";
 import type { StreamSource } from "@/api/media";
 import type { PlatformId } from "@/api/platforms";
+import { DanmakuControlButton } from "@/components/danmaku/DanmakuControl";
 import { DanmakuCanvas } from "@/components/danmaku/DanmakuCanvas";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -32,11 +34,16 @@ import { useAccount } from "@/contexts/account-context";
 import { useLiveDanmaku } from "@/hooks/useLiveDanmaku";
 import { LiveFlvLoader, LiveHlsLoader } from "@/lib/bilibili-live-loader";
 import { commandErrorMessage } from "@/lib/command-error";
+import {
+  resolveDanmakuPreferencesStyle,
+  useDanmakuPreferences,
+} from "@/lib/danmaku/preferences";
 import { createLogger } from "@/lib/logger";
 import {
   readPlayerPreferences,
   savePlayerPreferences,
 } from "@/lib/player-preferences";
+import { PLAYER_CONTROL_SURFACE_CLASS } from "@/lib/player-surface";
 
 const log = createLogger("Media/LiveStream");
 const CONTROL_BUTTON_CLASS =
@@ -49,6 +56,7 @@ const PAUSE_RECOVERY_DELAY_MS = 1_200;
 const AUTO_REFRESH_COOLDOWN_MS = 5_000;
 const AUTO_REFRESH_LIMIT = 2;
 const STABLE_PLAYBACK_MS = 15_000;
+const CURSOR_HIDE_DELAY_MS = 5_000;
 
 type LiveProtocol = "hls" | "flv";
 
@@ -412,12 +420,17 @@ export default function LiveStreamPlayer({
   onQualityLocked,
 }: LiveStreamPlayerProps) {
   const { t } = useI18n();
+  const danmakuPreferences = useDanmakuPreferences();
+  const danmakuStyle = useMemo(
+    () => resolveDanmakuPreferencesStyle(danmakuPreferences, 1),
+    [danmakuPreferences]
+  );
   const { accountRevisions, accountsByPlatform, platformCatalog } =
     useAccount();
   const stageRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const hideTimerRef = useRef<number | null>(null);
   const surfaceClickTimerRef = useRef<number | null>(null);
+  const cursorHideTimerRef = useRef<number | null>(null);
   const pauseRecoveryTimerRef = useRef<number | null>(null);
   const stallRecoveryTimerRef = useRef<number | null>(null);
   const stablePlaybackTimerRef = useRef<number | null>(null);
@@ -441,6 +454,8 @@ export default function LiveStreamPlayer({
   const [ready, setReady] = useState(false);
   const [playerError, setPlayerError] = useState<string | null>(null);
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [cursorVisible, setCursorVisible] = useState(true);
+  const [windowMaximized, setWindowMaximized] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [protocolMenuOpen, setProtocolMenuOpen] = useState(false);
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
@@ -490,6 +505,7 @@ export default function LiveStreamPlayer({
     roomId,
     enabled:
       supportsLiveDanmaku &&
+      danmakuPreferences.enabled &&
       !offline &&
       liveStatus === "live" &&
       ready &&
@@ -576,55 +592,49 @@ export default function LiveStreamPlayer({
       document.removeEventListener("fullscreenchange", onFullscreenChange);
   }, []);
 
-  const clearHideTimer = useCallback(() => {
-    if (hideTimerRef.current === null) return;
-    window.clearTimeout(hideTimerRef.current);
-    hideTimerRef.current = null;
+  useEffect(() => {
+    const currentWindow = getCurrentWindow();
+    let cancelled = false;
+
+    const syncMaximized = async () => {
+      const maximized = await currentWindow.isMaximized().catch(() => false);
+      if (!cancelled) setWindowMaximized(maximized);
+    };
+
+    void syncMaximized();
+    const unlisten = currentWindow.onResized(() => {
+      void syncMaximized();
+    });
+
+    return () => {
+      cancelled = true;
+      void unlisten.then((stop) => stop());
+    };
   }, []);
 
-  const scheduleHideControls = useCallback(() => {
-    clearHideTimer();
-    if (
-      !playing ||
-      loading ||
-      sourceErrorText ||
-      protocolMenuOpen ||
-      qualityMenuOpen ||
-      volumePanelOpen
-    ) {
-      setControlsVisible(true);
-      return;
-    }
-    hideTimerRef.current = window.setTimeout(() => {
-      hideTimerRef.current = null;
-      setControlsVisible(false);
-    }, 2400);
-  }, [
-    clearHideTimer,
-    loading,
-    playing,
-    protocolMenuOpen,
-    qualityMenuOpen,
-    sourceErrorText,
-    volumePanelOpen,
-  ]);
+  const clearCursorHideTimer = useCallback(() => {
+    if (cursorHideTimerRef.current === null) return;
+    window.clearTimeout(cursorHideTimerRef.current);
+    cursorHideTimerRef.current = null;
+  }, []);
 
-  const revealControls = useCallback(() => {
-    setControlsVisible(true);
-    scheduleHideControls();
-  }, [scheduleHideControls]);
+  const showCursor = useCallback(() => {
+    setCursorVisible(true);
+    clearCursorHideTimer();
+    if (!fullscreen && !windowMaximized) return;
+    cursorHideTimerRef.current = window.setTimeout(() => {
+      cursorHideTimerRef.current = null;
+      setCursorVisible(false);
+    }, CURSOR_HIDE_DELAY_MS);
+  }, [clearCursorHideTimer, fullscreen, windowMaximized]);
 
   useEffect(() => {
-    if (!playing || loading || sourceErrorText) {
-      setControlsVisible(true);
-      return;
-    }
-    scheduleHideControls();
-  }, [loading, playing, scheduleHideControls, sourceErrorText]);
+    showCursor();
+    return clearCursorHideTimer;
+  }, [clearCursorHideTimer, showCursor]);
 
   useEffect(() => {
     return () => {
-      clearHideTimer();
       if (surfaceClickTimerRef.current !== null) {
         window.clearTimeout(surfaceClickTimerRef.current);
       }
@@ -638,7 +648,7 @@ export default function LiveStreamPlayer({
         window.clearTimeout(stablePlaybackTimerRef.current);
       }
     };
-  }, [clearHideTimer]);
+  }, []);
 
   const reloadForRecovery = useCallback(
     (reason: string) => {
@@ -1208,13 +1218,6 @@ export default function LiveStreamPlayer({
   ]);
 
   useEffect(() => {
-    if (protocolMenuOpen || qualityMenuOpen || volumePanelOpen) {
-      clearHideTimer();
-      setControlsVisible(true);
-    }
-  }, [clearHideTimer, protocolMenuOpen, qualityMenuOpen, volumePanelOpen]);
-
-  useEffect(() => {
     if (!protocolMenuOpen && !qualityMenuOpen && !volumePanelOpen) return;
     const closeMenus = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -1229,7 +1232,6 @@ export default function LiveStreamPlayer({
   const togglePlay = () => {
     const video = videoRef.current;
     if (!video || recovering) return;
-    revealControls();
     if (video.paused) {
       playRequestedRef.current = true;
       lastProgressAtRef.current = performance.now();
@@ -1322,7 +1324,6 @@ export default function LiveStreamPlayer({
   };
 
   const handleSurfaceClick = () => {
-    revealControls();
     if (protocolMenuOpen) {
       setProtocolMenuOpen(false);
       return;
@@ -1341,7 +1342,7 @@ export default function LiveStreamPlayer({
     }
     surfaceClickTimerRef.current = window.setTimeout(() => {
       surfaceClickTimerRef.current = null;
-      togglePlay();
+      setControlsVisible((visible) => !visible);
     }, 280);
   };
 
@@ -1353,9 +1354,12 @@ export default function LiveStreamPlayer({
   return (
     <div
       ref={stageRef}
-      className="group relative h-full min-h-0 w-full overflow-hidden bg-black [&:fullscreen]:h-screen [&:fullscreen]:w-screen"
-      onMouseMove={revealControls}
-      onMouseLeave={scheduleHideControls}
+      className={`group relative h-full min-h-0 w-full overflow-hidden bg-black [&:fullscreen]:h-screen [&:fullscreen]:w-screen ${
+        cursorVisible ? "cursor-default" : "cursor-none [&_*]:cursor-none!"
+      }`}
+      onPointerEnter={showCursor}
+      onPointerMove={showCursor}
+      onPointerDown={showCursor}
     >
       <video
         ref={videoRef}
@@ -1371,7 +1375,8 @@ export default function LiveStreamPlayer({
         mediaTimeMs={liveDanmaku.clockMs}
         playing={danmakuPlaying}
         playbackRate={1}
-        visible={liveDanmaku.visible}
+        visible={danmakuPreferences.enabled && liveDanmaku.visible}
+        settings={danmakuStyle}
         onError={liveDanmaku.onRenderError}
       />
 
@@ -1410,171 +1415,103 @@ export default function LiveStreamPlayer({
 
       <div className="absolute inset-0">
         <div
-          className="absolute inset-0 cursor-pointer"
+          className="absolute inset-0"
           aria-hidden="true"
           onClick={handleSurfaceClick}
           onDoubleClick={handleSurfaceDoubleClick}
         />
 
         <div
-          className={`absolute inset-x-0 bottom-0 z-30 transition-[transform,opacity] duration-200 motion-reduce:transition-none ${
+          key={controlsVisible ? "controls-visible" : "controls-hidden"}
+          className={`absolute inset-x-0 bottom-0 z-30 will-change-transform ${
             controlsVisible
-              ? "translate-y-0 opacity-100"
-              : "pointer-events-none translate-y-2 opacity-0"
+              ? "animate-in fade-in slide-in-from-bottom duration-200 ease-out motion-reduce:animate-none"
+              : "animate-out fade-out slide-out-to-bottom fill-mode-forwards pointer-events-none duration-200 ease-out motion-reduce:translate-y-full motion-reduce:animate-none motion-reduce:opacity-0"
           }`}
           onClick={(event) => event.stopPropagation()}
           onDoubleClick={(event) => event.stopPropagation()}
-          onMouseEnter={revealControls}
         >
-          <div className="from-background/95 via-background/55 pointer-events-none absolute inset-0 bg-gradient-to-t to-transparent" />
           <div className="relative px-3 pb-3 sm:px-4">
-            <div className="border-border bg-background/80 text-foreground flex h-10 items-center gap-2 rounded-md border px-2 backdrop-blur-xl sm:gap-3">
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                className={CONTROL_BUTTON_CLASS}
-                aria-label={
-                  playing ? t("Live.player.pause") : t("Live.player.play")
-                }
-                title={playing ? t("Live.player.pause") : t("Live.player.play")}
-                disabled={!ready || loading}
-                onClick={togglePlay}
-              >
-                {playing ? (
-                  <Pause className="fill-current" />
-                ) : (
-                  <Play className="fill-current" />
-                )}
-              </Button>
+            <div className="relative">
+              <div
+                aria-hidden="true"
+                className={`${PLAYER_CONTROL_SURFACE_CLASS} pointer-events-none absolute inset-0 rounded-md border`}
+              />
+              <div className="relative z-10 flex h-10 items-center gap-2 px-2 sm:gap-3">
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className={CONTROL_BUTTON_CLASS}
+                  aria-label={
+                    playing ? t("Live.player.pause") : t("Live.player.play")
+                  }
+                  title={
+                    playing ? t("Live.player.pause") : t("Live.player.play")
+                  }
+                  disabled={!ready || loading}
+                  onClick={togglePlay}
+                >
+                  {playing ? (
+                    <Pause className="fill-current" />
+                  ) : (
+                    <Play className="fill-current" />
+                  )}
+                </Button>
 
-              <div className="ml-auto flex items-center gap-2 sm:gap-3">
-                <div className="relative">
-                  <button
-                    type="button"
-                    className="text-foreground/90 hover:text-foreground focus-visible:ring-ring flex h-8 min-w-12 items-center justify-center gap-1 rounded-sm px-1 text-xs font-medium focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-45"
-                    aria-label={t("Live.player.protocol")}
-                    aria-haspopup={
-                      availableProtocols.length > 1 ? "menu" : undefined
-                    }
-                    aria-expanded={
-                      availableProtocols.length > 1
-                        ? protocolMenuOpen
-                        : undefined
-                    }
-                    title={t("Live.player.protocol")}
-                    disabled={availableProtocols.length === 0}
-                    onClick={() => {
-                      if (availableProtocols.length <= 1) return;
-                      setQualityMenuOpen(false);
-                      setVolumePanelOpen(false);
-                      setProtocolMenuOpen((open) => !open);
-                    }}
-                  >
-                    <span>{protocolName(activeProtocol)}</span>
-                    {availableProtocols.length > 1 ? (
-                      <Check
-                        className={`size-3 transition-opacity ${
-                          protocolMenuOpen ? "opacity-100" : "opacity-0"
-                        }`}
-                      />
-                    ) : null}
-                  </button>
-                  {protocolMenuOpen ? (
-                    <div
-                      role="menu"
-                      aria-label={t("Live.player.protocol")}
-                      className="border-border bg-popover/95 text-popover-foreground absolute right-0 bottom-full z-40 mb-2 w-28 rounded-md border p-1.5 shadow-2xl backdrop-blur-md"
-                    >
-                      <div className="text-muted-foreground px-2 py-1 text-xs">
-                        {t("Live.player.protocol")}
-                      </div>
-                      <div className="grid gap-1">
-                        {availableProtocols.map((protocol) => (
-                          <button
-                            key={protocol}
-                            type="button"
-                            role="menuitemradio"
-                            aria-checked={activeProtocol === protocol}
-                            className="text-popover-foreground/85 hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring flex h-8 items-center justify-between rounded-md px-2 text-xs focus-visible:ring-2 focus-visible:outline-none"
-                            onClick={() => selectProtocol(protocol)}
-                          >
-                            <span>{protocolName(protocol)}</span>
-                            {activeProtocol === protocol ? (
-                              <Check className="size-3.5 text-[var(--player-accent)]" />
-                            ) : null}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-
-                {qualityOptions.length > 0 ? (
+                <div className="ml-auto flex items-center gap-2 sm:gap-3">
                   <div className="relative">
                     <button
                       type="button"
-                      className={`text-foreground/90 hover:text-foreground focus-visible:ring-ring flex h-8 items-center gap-1 rounded-sm px-1 text-xs font-medium focus-visible:ring-2 focus-visible:outline-none ${
-                        qualityLocked ? "cursor-not-allowed opacity-55" : ""
-                      }`}
-                      aria-label={
-                        qualityLocked
-                          ? t("Live.quality.locked")
-                          : t("Live.player.quality")
+                      className="text-foreground/90 hover:text-foreground focus-visible:ring-ring flex h-8 min-w-12 items-center justify-center gap-1 rounded-sm px-1 text-xs font-medium focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-45"
+                      aria-label={t("Live.player.protocol")}
+                      aria-haspopup={
+                        availableProtocols.length > 1 ? "menu" : undefined
                       }
-                      aria-disabled={qualityLocked}
-                      aria-haspopup={qualityLocked ? undefined : "menu"}
                       aria-expanded={
-                        qualityLocked ? undefined : qualityMenuOpen
+                        availableProtocols.length > 1
+                          ? protocolMenuOpen
+                          : undefined
                       }
-                      title={
-                        qualityLocked
-                          ? t("Live.quality.locked")
-                          : t("Live.player.quality")
-                      }
-                      disabled={!qualityLocked && playerLoading}
+                      title={t("Live.player.protocol")}
+                      disabled={availableProtocols.length === 0}
                       onClick={() => {
-                        if (qualityLocked) {
-                          onQualityLocked();
-                          return;
-                        }
-                        setProtocolMenuOpen(false);
+                        if (availableProtocols.length <= 1) return;
+                        setQualityMenuOpen(false);
                         setVolumePanelOpen(false);
-                        setQualityMenuOpen((open) => !open);
+                        setProtocolMenuOpen((open) => !open);
                       }}
                     >
-                      {qualityLocked ? (
-                        <Lock className="size-3.5" />
-                      ) : (
-                        <Settings2 className="size-3.5" />
-                      )}
-                      <span>
-                        {currentQuality?.label ??
-                          currentQualityLabel ??
-                          t("Live.quality.default")}
-                      </span>
+                      <span>{protocolName(activeProtocol)}</span>
+                      {availableProtocols.length > 1 ? (
+                        <Check
+                          className={`size-3 transition-opacity ${
+                            protocolMenuOpen ? "opacity-100" : "opacity-0"
+                          }`}
+                        />
+                      ) : null}
                     </button>
-                    {!qualityLocked && qualityMenuOpen ? (
+                    {protocolMenuOpen ? (
                       <div
                         role="menu"
-                        aria-label={t("Live.player.quality")}
-                        className="border-border bg-popover/95 text-popover-foreground absolute right-0 bottom-full z-40 mb-2 w-32 rounded-md border p-1.5 shadow-2xl backdrop-blur-md"
+                        aria-label={t("Live.player.protocol")}
+                        className={`${PLAYER_CONTROL_SURFACE_CLASS} absolute right-0 bottom-full z-40 mb-2 w-28 rounded-md border p-1.5 shadow-2xl`}
                       >
                         <div className="text-muted-foreground px-2 py-1 text-xs">
-                          {t("Live.player.quality")}
+                          {t("Live.player.protocol")}
                         </div>
                         <div className="grid gap-1">
-                          {qualityOptions.map((quality) => (
+                          {availableProtocols.map((protocol) => (
                             <button
-                              key={quality.id}
+                              key={protocol}
                               type="button"
                               role="menuitemradio"
-                              aria-checked={quality.id === currentQuality?.id}
-                              className="text-popover-foreground/85 hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring flex h-8 items-center justify-between rounded-md px-2 text-xs focus-visible:ring-2 focus-visible:outline-none"
-                              onClick={() => selectQuality(quality.id)}
+                              aria-checked={activeProtocol === protocol}
+                              className="text-foreground/85 hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring flex h-8 items-center justify-between rounded-md px-2 text-xs focus-visible:ring-2 focus-visible:outline-none"
+                              onClick={() => selectProtocol(protocol)}
                             >
-                              <span>{quality.label}</span>
-                              {quality.id === currentQuality?.id ? (
+                              <span>{protocolName(protocol)}</span>
+                              {activeProtocol === protocol ? (
                                 <Check className="size-3.5 text-[var(--player-accent)]" />
                               ) : null}
                             </button>
@@ -1583,106 +1520,190 @@ export default function LiveStreamPlayer({
                       </div>
                     ) : null}
                   </div>
-                ) : null}
 
-                <div
-                  className="relative flex h-8 items-center"
-                  onMouseEnter={() => {
-                    setProtocolMenuOpen(false);
-                    setQualityMenuOpen(false);
-                    setVolumePanelOpen(true);
-                  }}
-                  onMouseLeave={() => setVolumePanelOpen(false)}
-                  onFocus={() => setVolumePanelOpen(true)}
-                  onBlur={(event) => {
-                    if (
-                      !event.currentTarget.contains(
-                        event.relatedTarget as Node | null
-                      )
-                    ) {
-                      setVolumePanelOpen(false);
-                    }
-                  }}
-                >
+                  {qualityOptions.length > 0 ? (
+                    <div className="relative">
+                      <button
+                        type="button"
+                        className={`text-foreground/90 hover:text-foreground focus-visible:ring-ring flex h-8 items-center gap-1 rounded-sm px-1 text-xs font-medium focus-visible:ring-2 focus-visible:outline-none ${
+                          qualityLocked ? "cursor-not-allowed opacity-55" : ""
+                        }`}
+                        aria-label={
+                          qualityLocked
+                            ? t("Live.quality.locked")
+                            : t("Live.player.quality")
+                        }
+                        aria-disabled={qualityLocked}
+                        aria-haspopup={qualityLocked ? undefined : "menu"}
+                        aria-expanded={
+                          qualityLocked ? undefined : qualityMenuOpen
+                        }
+                        title={
+                          qualityLocked
+                            ? t("Live.quality.locked")
+                            : t("Live.player.quality")
+                        }
+                        disabled={!qualityLocked && playerLoading}
+                        onClick={() => {
+                          if (qualityLocked) {
+                            onQualityLocked();
+                            return;
+                          }
+                          setProtocolMenuOpen(false);
+                          setVolumePanelOpen(false);
+                          setQualityMenuOpen((open) => !open);
+                        }}
+                      >
+                        {qualityLocked ? (
+                          <Lock className="size-3.5" />
+                        ) : (
+                          <Settings2 className="size-3.5" />
+                        )}
+                        <span>
+                          {currentQuality?.label ??
+                            currentQualityLabel ??
+                            t("Live.quality.default")}
+                        </span>
+                      </button>
+                      {!qualityLocked && qualityMenuOpen ? (
+                        <div
+                          role="menu"
+                          aria-label={t("Live.player.quality")}
+                          className={`${PLAYER_CONTROL_SURFACE_CLASS} absolute right-0 bottom-full z-40 mb-2 w-32 rounded-md border p-1.5 shadow-2xl`}
+                        >
+                          <div className="text-muted-foreground px-2 py-1 text-xs">
+                            {t("Live.player.quality")}
+                          </div>
+                          <div className="grid gap-1">
+                            {qualityOptions.map((quality) => (
+                              <button
+                                key={quality.id}
+                                type="button"
+                                role="menuitemradio"
+                                aria-checked={quality.id === currentQuality?.id}
+                                className="text-foreground/85 hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring flex h-8 items-center justify-between rounded-md px-2 text-xs focus-visible:ring-2 focus-visible:outline-none"
+                                onClick={() => selectQuality(quality.id)}
+                              >
+                                <span>{quality.label}</span>
+                                {quality.id === currentQuality?.id ? (
+                                  <Check className="size-3.5 text-[var(--player-accent)]" />
+                                ) : null}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  <div
+                    className="relative flex h-8 items-center"
+                    onMouseEnter={() => {
+                      setProtocolMenuOpen(false);
+                      setQualityMenuOpen(false);
+                      setVolumePanelOpen(true);
+                    }}
+                    onMouseLeave={() => setVolumePanelOpen(false)}
+                    onFocus={() => setVolumePanelOpen(true)}
+                    onBlur={(event) => {
+                      if (
+                        !event.currentTarget.contains(
+                          event.relatedTarget as Node | null
+                        )
+                      ) {
+                        setVolumePanelOpen(false);
+                      }
+                    }}
+                  >
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className={`${CONTROL_BUTTON_CLASS} -mr-1`}
+                      aria-label={
+                        muted || volume === 0
+                          ? t("Live.player.unmute")
+                          : t("Live.player.mute")
+                      }
+                      title={
+                        muted || volume === 0
+                          ? t("Live.player.unmute")
+                          : t("Live.player.mute")
+                      }
+                      onClick={toggleMuted}
+                    >
+                      {muted || volume === 0 ? <VolumeX /> : <Volume2 />}
+                    </Button>
+                    {volumePanelOpen ? (
+                      <div className="absolute bottom-full left-1/2 z-40 -ml-5 pb-2">
+                        <div
+                          className={`${PLAYER_CONTROL_SURFACE_CLASS} flex w-10 flex-col items-center gap-2 rounded-md border px-1 py-2.5 shadow-xl`}
+                        >
+                          <span className="text-foreground/80 text-[11px] font-medium tabular-nums">
+                            {Math.round((muted ? 0 : volume) * 100)}
+                          </span>
+                          <Slider
+                            aria-label={t("Live.player.volume")}
+                            aria-valuetext={`${Math.round((muted ? 0 : volume) * 100)}%`}
+                            orientation="vertical"
+                            className="[&_[data-slot=slider-thumb]]:bg-background [&_[data-slot=slider-track]]:bg-foreground/20 data-[orientation=vertical]:h-28 data-[orientation=vertical]:min-h-28 data-[orientation=vertical]:w-6 [&_[data-slot=slider-range]]:bg-[var(--player-accent)] [&_[data-slot=slider-thumb]]:size-3 [&_[data-slot=slider-thumb]]:border-[var(--player-accent)]"
+                            value={[muted ? 0 : volume]}
+                            max={1}
+                            step={0.02}
+                            onValueChange={([value]) => {
+                              setVolume(value);
+                              setMuted(value === 0);
+                            }}
+                          />
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {supportsLiveDanmaku ? (
+                    <DanmakuControlButton
+                      portalContainerRef={stageRef}
+                      triggerClassName={CONTROL_BUTTON_CLASS}
+                    />
+                  ) : null}
+
                   <Button
                     type="button"
                     size="icon"
                     variant="ghost"
-                    className={`${CONTROL_BUTTON_CLASS} -mr-1`}
+                    className={CONTROL_BUTTON_CLASS}
+                    aria-label={t("Live.player.refresh")}
+                    title={t("Live.player.refresh")}
+                    onClick={() => void refreshPlayback()}
+                    disabled={refreshing}
+                  >
+                    {refreshing ? (
+                      <Loader2 className="animate-spin" />
+                    ) : (
+                      <RefreshCw />
+                    )}
+                  </Button>
+
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className={CONTROL_BUTTON_CLASS}
                     aria-label={
-                      muted || volume === 0
-                        ? t("Live.player.unmute")
-                        : t("Live.player.mute")
+                      fullscreen
+                        ? t("Live.player.exitFullscreen")
+                        : t("Live.player.fullscreen")
                     }
                     title={
-                      muted || volume === 0
-                        ? t("Live.player.unmute")
-                        : t("Live.player.mute")
+                      fullscreen
+                        ? t("Live.player.exitFullscreen")
+                        : t("Live.player.fullscreen")
                     }
-                    onClick={toggleMuted}
+                    onClick={() => void toggleFullscreen()}
                   >
-                    {muted || volume === 0 ? <VolumeX /> : <Volume2 />}
+                    {fullscreen ? <Minimize /> : <Maximize />}
                   </Button>
-                  {volumePanelOpen ? (
-                    <div className="absolute bottom-full left-1/2 z-40 -translate-x-1/2 pb-2">
-                      <div className="border-border bg-popover/95 flex w-10 flex-col items-center gap-2 rounded-md border px-1 py-2.5 shadow-xl backdrop-blur-xl">
-                        <span className="text-foreground/80 text-[11px] font-medium tabular-nums">
-                          {Math.round((muted ? 0 : volume) * 100)}
-                        </span>
-                        <Slider
-                          aria-label={t("Live.player.volume")}
-                          aria-valuetext={`${Math.round((muted ? 0 : volume) * 100)}%`}
-                          orientation="vertical"
-                          className="[&_[data-slot=slider-thumb]]:bg-background [&_[data-slot=slider-track]]:bg-foreground/20 data-[orientation=vertical]:h-28 data-[orientation=vertical]:min-h-28 data-[orientation=vertical]:w-6 [&_[data-slot=slider-range]]:bg-[var(--player-accent)] [&_[data-slot=slider-thumb]]:size-3 [&_[data-slot=slider-thumb]]:border-[var(--player-accent)]"
-                          value={[muted ? 0 : volume]}
-                          max={1}
-                          step={0.02}
-                          onValueChange={([value]) => {
-                            setVolume(value);
-                            setMuted(value === 0);
-                          }}
-                        />
-                      </div>
-                    </div>
-                  ) : null}
                 </div>
-
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  className={CONTROL_BUTTON_CLASS}
-                  aria-label={t("Live.player.refresh")}
-                  title={t("Live.player.refresh")}
-                  onClick={() => void refreshPlayback()}
-                  disabled={refreshing}
-                >
-                  {refreshing ? (
-                    <Loader2 className="animate-spin" />
-                  ) : (
-                    <RefreshCw />
-                  )}
-                </Button>
-
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  className={CONTROL_BUTTON_CLASS}
-                  aria-label={
-                    fullscreen
-                      ? t("Live.player.exitFullscreen")
-                      : t("Live.player.fullscreen")
-                  }
-                  title={
-                    fullscreen
-                      ? t("Live.player.exitFullscreen")
-                      : t("Live.player.fullscreen")
-                  }
-                  onClick={() => void toggleFullscreen()}
-                >
-                  {fullscreen ? <Minimize /> : <Maximize />}
-                </Button>
               </div>
             </div>
           </div>

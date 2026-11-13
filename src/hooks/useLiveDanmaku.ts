@@ -179,12 +179,12 @@ export function useLiveDanmaku({
           });
           return;
         }
-        pending.push(
-          ...items.map((item) => ({
+        for (const item of items) {
+          pending.push({
             ...item,
             timeMs: clock.toPlaybackTime(item.timeMs),
-          }))
-        );
+          });
+        }
         const overflow = pending.length - PENDING_QUEUE_LIMIT;
         if (overflow > 0) pending.splice(0, overflow);
       },
