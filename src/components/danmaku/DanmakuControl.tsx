@@ -419,7 +419,7 @@ export function DanmakuSettingsPanel({
         className={cn("w-full rounded-[inherit]", className)}
         viewportClassName="max-h-[min(65vh,26rem)]"
       >
-        <div className="space-y-2.5 p-2.5 pr-5">{body}</div>
+        <div className="space-y-2.5 p-2.5">{body}</div>
       </ScrollArea>
     );
   }

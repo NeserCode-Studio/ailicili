@@ -403,6 +403,18 @@ html.dark {
     0 0 0 4px var(--ring);
 }
 
+.player-progress-border {
+  padding: 1px;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+}
+
 @media (max-width: 640px) {
   .comment-lightbox {
     --yarl__icon_size: 18px;

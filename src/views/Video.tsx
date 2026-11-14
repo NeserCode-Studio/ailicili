@@ -27,6 +27,7 @@ import {
   VolumeX,
 } from "lucide-react";
 import { useParams, useSearchParams } from "react-router";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import {
   addLocalFavorite,
@@ -63,6 +64,7 @@ import {
   savePlayerPreferences,
   type PlaybackRate,
 } from "@/lib/player-preferences";
+import { PLAYER_AUTO_HIDE_DELAY_MS } from "@/lib/player-idle";
 import { Container } from "@videojs/react";
 import { Video, VideoPlayer, usePlayer } from "@videojs/react/video";
 import {
@@ -182,7 +184,7 @@ interface PlayerPausePanelProps {
   qualityNotice?: PlaybackInfo["qualityNotice"];
   active: boolean;
   ready: boolean;
-  currentTime: number;
+  hasStarted: boolean;
   isFavorite: boolean;
   favoriteBusy: boolean;
   onBack: () => void;
@@ -204,7 +206,7 @@ function PlayerPausePanel({
   qualityNotice,
   active,
   ready,
-  currentTime,
+  hasStarted,
   isFavorite,
   favoriteBusy,
   onBack,
@@ -218,7 +220,7 @@ function PlayerPausePanel({
 }: PlayerPausePanelProps) {
   const { t } = useI18n();
   const canContinue = ready && !error && Boolean(onContinue);
-  const showResume = ready && currentTime > 0.5;
+  const showPausedStatus = ready && hasStarted;
   const secondaryActions = [
     {
       id: "like",
@@ -248,7 +250,19 @@ function PlayerPausePanel({
       aria-label={t("Video.panelLabel")}
       aria-hidden={!active}
       inert={!active}
-      className={`text-foreground absolute inset-0 z-20 overflow-hidden transition-[opacity,transform,visibility] duration-200 ease-out motion-reduce:transition-none ${
+      onClick={(event) => {
+        if (!canContinue || event.detail > 1) return;
+        const target = event.target;
+        if (
+          target instanceof Element &&
+          target.closest("[data-player-pause-info]")
+        ) {
+          return;
+        }
+        event.stopPropagation();
+        onContinue?.();
+      }}
+      className={`text-foreground absolute inset-0 z-20 cursor-pointer overflow-hidden transition-[opacity,transform,visibility] duration-200 ease-out motion-reduce:transition-none ${
         active
           ? "visible translate-y-0 scale-100 opacity-100"
           : "pointer-events-none invisible translate-y-1 scale-[0.995] opacity-0"
@@ -267,6 +281,7 @@ function PlayerPausePanel({
         <div className="flex items-center justify-between gap-4">
           <button
             type="button"
+            data-player-pause-info=""
             aria-label={t("Video.back")}
             title={t("Video.back")}
             className="border-border bg-background/60 text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring inline-flex size-10 items-center justify-center rounded-full border transition-[background-color,color,transform] duration-150 focus-visible:ring-2 focus-visible:outline-none active:scale-95"
@@ -276,7 +291,10 @@ function PlayerPausePanel({
           </button>
         </div>
 
-        <div className="mt-auto grid min-w-0 gap-6 md:grid-cols-[minmax(0,1fr)_minmax(16rem,22rem)] md:items-end lg:gap-10">
+        <div
+          className="mt-auto grid min-w-0 cursor-default gap-6 md:grid-cols-[minmax(0,1fr)_minmax(16rem,22rem)] md:items-end lg:gap-10"
+          data-player-pause-info=""
+        >
           <div className="min-w-0">
             <div className="text-muted-foreground flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-sm">
               <span className="text-foreground/90 max-w-full truncate font-medium">
@@ -365,8 +383,8 @@ function PlayerPausePanel({
               {error
                 ? t("Video.unavailable")
                 : ready
-                  ? showResume
-                    ? t("Video.resume")
+                  ? showPausedStatus
+                    ? t("Video.paused")
                     : t("Video.play")
                   : t("Video.loading")}
             </Button>
@@ -595,6 +613,8 @@ function VideoStage({
 }: VideoStageProps) {
   const videoStore = usePlayer();
   const paused = usePlayer((state) => state.paused);
+  const mediaStarted = usePlayer((state) => Boolean(state.started));
+  const mediaEnded = usePlayer((state) => Boolean(state.ended));
   const currentTime = usePlayer((state) =>
     Math.max(
       0,
@@ -664,8 +684,12 @@ function VideoStage({
     lastStartedAt: Number.NEGATIVE_INFINITY,
   });
   const targetTimeRef = useRef(0);
+  const cursorHideTimer = useRef<number | null>(null);
   const [seekPreview, setSeekPreview] = useState<number | null>(null);
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [cursorVisible, setCursorVisible] = useState(true);
+  const [windowMaximized, setWindowMaximized] = useState(false);
+  const [progressSliderOpen, setProgressSliderOpen] = useState(false);
   const [speedMenuOpen, setSpeedMenuOpen] = useState(false);
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
   const [volumePanelOpen, setVolumePanelOpen] = useState(false);
@@ -725,7 +749,7 @@ function VideoStage({
     hideTimer.current = window.setTimeout(() => {
       hideTimer.current = null;
       setControlsVisible(false);
-    }, 2400);
+    }, PLAYER_AUTO_HIDE_DELAY_MS);
   }, [
     commentsOpen,
     danmakuSettingsOpen,
@@ -781,6 +805,53 @@ function VideoStage({
     }
     setControlsVisible(true);
   }, [commentsOpen, paused]);
+
+  useEffect(() => {
+    const currentWindow = getCurrentWindow();
+    let cancelled = false;
+
+    const syncMaximized = async () => {
+      const maximized = await currentWindow.isMaximized().catch(() => false);
+      if (!cancelled) setWindowMaximized(maximized);
+    };
+
+    void syncMaximized();
+    const unlisten = currentWindow.onResized(() => {
+      void syncMaximized();
+    });
+
+    return () => {
+      cancelled = true;
+      void unlisten.then((stop) => stop());
+    };
+  }, []);
+
+  const clearCursorHideTimer = useCallback(() => {
+    if (cursorHideTimer.current === null) return;
+    window.clearTimeout(cursorHideTimer.current);
+    cursorHideTimer.current = null;
+  }, []);
+
+  const showCursor = useCallback(() => {
+    setCursorVisible(true);
+    clearCursorHideTimer();
+    if (!isFullscreen && !windowMaximized) return;
+    cursorHideTimer.current = window.setTimeout(() => {
+      cursorHideTimer.current = null;
+      setCursorVisible(false);
+    }, PLAYER_AUTO_HIDE_DELAY_MS);
+  }, [clearCursorHideTimer, isFullscreen, windowMaximized]);
+
+  useEffect(() => {
+    showCursor();
+    return clearCursorHideTimer;
+  }, [clearCursorHideTimer, showCursor]);
+
+  useEffect(() => {
+    if (controlsVisible) return;
+    setProgressSliderOpen(false);
+    setSeekPreview(null);
+  }, [controlsVisible]);
 
   useEffect(() => {
     if (!mediaReady || initialSetupAppliedRef.current) return;
@@ -847,8 +918,9 @@ function VideoStage({
       if (surfaceClickTimer.current !== null) {
         window.clearTimeout(surfaceClickTimer.current);
       }
+      clearCursorHideTimer();
     };
-  }, []);
+  }, [clearCursorHideTimer]);
 
   useEffect(() => {
     if (canPlay && !mediaError && mediaUrlsMatch(currentSrc, currentVideoUrl)) {
@@ -1322,7 +1394,9 @@ function VideoStage({
     playback.durationMs / 1000,
     Number.isFinite(playerDuration) ? playerDuration : 0
   );
-  const displayedTime = seekPreview ?? currentTime;
+  const displayedTime = seekPreview ?? (mediaEnded ? duration : currentTime);
+  const playbackProgress =
+    duration > 0 ? Math.min(1, Math.max(0, displayedTime / duration)) : 0;
   const qualityLabel = selectedStream
     ? (QUALITY_LABELS[selectedStream.qualityId] ?? selectedStream.qualityLabel)
     : "";
@@ -1343,7 +1417,12 @@ function VideoStage({
 
       <Container
         ref={stageRef}
-        className="relative h-full min-h-0 w-full overflow-hidden bg-black [&:fullscreen]:h-screen [&:fullscreen]:w-screen"
+        className={`relative h-full min-h-0 w-full overflow-hidden bg-black [&:fullscreen]:h-screen [&:fullscreen]:w-screen ${
+          cursorVisible ? "cursor-default" : "cursor-none [&_*]:cursor-none!"
+        }`}
+        onPointerEnter={showCursor}
+        onPointerMove={showCursor}
+        onPointerDown={showCursor}
       >
         {selectedStream ? (
           <Video
@@ -1403,7 +1482,7 @@ function VideoStage({
             qualityNotice={playback.qualityNotice}
             active={!mediaReady || !playing}
             ready={mediaReady}
-            currentTime={readPlayerTimeSeconds(videoStore)}
+            hasStarted={mediaStarted}
             isFavorite={isFavorite}
             favoriteBusy={favoriteBusy}
             onBack={onBack}
@@ -1449,22 +1528,42 @@ function VideoStage({
             onClick={(event) => event.stopPropagation()}
             onDoubleClick={(event) => event.stopPropagation()}
           >
-            <div className="from-background/95 via-background/55 pointer-events-none absolute inset-0 bg-gradient-to-t to-transparent" />
-            <div className="relative flex flex-col gap-2 px-3 pb-3 sm:px-4">
-              <Slider
-                aria-label="播放进度"
-                className="[&_[data-slot=slider-thumb]]:bg-background [&_[data-slot=slider-track]]:bg-foreground/20 h-4 w-full [&_[data-slot=slider-range]]:bg-[var(--player-accent)] [&_[data-slot=slider-thumb]]:size-2 [&_[data-slot=slider-thumb]]:border-[var(--player-accent)] [&_[data-slot=slider-track]]:h-[3px] [&_[data-slot=slider-track]]:rounded-none"
-                value={[Math.min(displayedTime, duration)]}
-                max={duration || 1}
-                step={1}
-                onValueChange={([value]) => setSeekPreview(value)}
-                onValueCommit={([value]) => void seekTo(value)}
-              />
+            <div
+              className={`relative flex flex-col px-3 pb-3 sm:px-4 ${
+                progressSliderOpen ? "gap-2" : ""
+              }`}
+            >
+              {progressSliderOpen ? (
+                <Slider
+                  id="video-progress-slider"
+                  aria-label="播放进度"
+                  className="[&_[data-slot=slider-thumb]]:bg-background [&_[data-slot=slider-track]]:bg-foreground/20 h-4 w-full [&_[data-slot=slider-range]]:bg-[var(--player-accent)] [&_[data-slot=slider-thumb]]:size-2 [&_[data-slot=slider-thumb]]:border-[var(--player-accent)] [&_[data-slot=slider-track]]:h-[3px] [&_[data-slot=slider-track]]:rounded-none"
+                  value={[Math.min(displayedTime, duration)]}
+                  max={duration || 1}
+                  step={1}
+                  onValueChange={([value]) => setSeekPreview(value)}
+                  onValueCommit={([value]) => void seekTo(value)}
+                />
+              ) : null}
 
               <div className="relative">
                 <div
                   aria-hidden="true"
-                  className="border-border bg-background/80 text-foreground pointer-events-none absolute inset-0 rounded-md border backdrop-blur-xl"
+                  className="bg-background/80 text-foreground pointer-events-none absolute inset-0 rounded-md backdrop-blur-xl"
+                />
+                <div
+                  aria-hidden="true"
+                  className="player-progress-border bg-border pointer-events-none absolute inset-0 rounded-md"
+                />
+                <div
+                  aria-hidden="true"
+                  className="player-progress-border pointer-events-none absolute inset-0 rounded-md bg-[var(--player-accent)] transition-[clip-path] duration-150 ease-linear motion-reduce:transition-none"
+                  style={{
+                    clipPath: `inset(0 ${Math.max(
+                      0,
+                      100 - playbackProgress * 100
+                    )}% 0 0)`,
+                  }}
                 />
                 <div className="relative z-10 flex h-10 items-center gap-2 px-2 sm:gap-3">
                   <Button
@@ -1483,10 +1582,23 @@ function VideoStage({
                       <Play className="fill-current" />
                     )}
                   </Button>
-                  <span className="text-foreground/90 text-xs font-medium whitespace-nowrap tabular-nums">
+                  <button
+                    type="button"
+                    className="text-foreground/90 hover:text-foreground focus-visible:ring-ring flex h-8 items-center rounded-sm px-1 text-xs font-medium whitespace-nowrap tabular-nums focus-visible:ring-2 focus-visible:outline-none"
+                    aria-label={
+                      progressSliderOpen ? "隐藏播放进度" : "显示播放进度"
+                    }
+                    aria-controls="video-progress-slider"
+                    aria-expanded={progressSliderOpen}
+                    onClick={() => {
+                      revealControls();
+                      setSeekPreview(null);
+                      setProgressSliderOpen((open) => !open);
+                    }}
+                  >
                     {formatPlayerTime(displayedTime)} /{" "}
                     {formatPlayerTime(duration)}
-                  </span>
+                  </button>
 
                   <div className="ml-auto flex items-center gap-2 sm:gap-3">
                     <div className="relative">
@@ -1678,6 +1790,17 @@ function VideoStage({
                 </div>
               </div>
             </div>
+          </div>
+          <div
+            aria-hidden="true"
+            className={`bg-foreground/15 pointer-events-none absolute inset-x-0 bottom-0 z-20 h-0.5 overflow-hidden transition-opacity duration-200 motion-reduce:transition-none ${
+              controlsVisible ? "opacity-0" : "opacity-100"
+            }`}
+          >
+            <div
+              className="h-full origin-left bg-[var(--player-accent)] transition-transform duration-150 ease-linear motion-reduce:transition-none"
+              style={{ transform: `scaleX(${playbackProgress})` }}
+            />
           </div>
         </div>
       </Container>
@@ -1999,7 +2122,7 @@ export default function VideoView() {
             error={error}
             active
             ready={false}
-            currentTime={0}
+            hasStarted={false}
             isFavorite={Boolean(favorite)}
             favoriteBusy={favoriteBusy || favoriteLoading}
             onBack={() => navigator(backPath)}

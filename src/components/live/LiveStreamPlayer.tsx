@@ -43,6 +43,7 @@ import {
   readPlayerPreferences,
   savePlayerPreferences,
 } from "@/lib/player-preferences";
+import { PLAYER_AUTO_HIDE_DELAY_MS } from "@/lib/player-idle";
 import { PLAYER_CONTROL_SURFACE_CLASS } from "@/lib/player-surface";
 
 const log = createLogger("Media/LiveStream");
@@ -56,7 +57,6 @@ const PAUSE_RECOVERY_DELAY_MS = 1_200;
 const AUTO_REFRESH_COOLDOWN_MS = 5_000;
 const AUTO_REFRESH_LIMIT = 2;
 const STABLE_PLAYBACK_MS = 15_000;
-const CURSOR_HIDE_DELAY_MS = 5_000;
 
 type LiveProtocol = "hls" | "flv";
 
@@ -625,7 +625,7 @@ export default function LiveStreamPlayer({
     cursorHideTimerRef.current = window.setTimeout(() => {
       cursorHideTimerRef.current = null;
       setCursorVisible(false);
-    }, CURSOR_HIDE_DELAY_MS);
+    }, PLAYER_AUTO_HIDE_DELAY_MS);
   }, [clearCursorHideTimer, fullscreen, windowMaximized]);
 
   useEffect(() => {

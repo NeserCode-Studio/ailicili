@@ -156,6 +156,8 @@ function CommentPictures({
     setRequestedIndex(-1);
   }, [fullImagesSettled, requestedIndex]);
 
+  const closeLightbox = () => setActiveIndex(-1);
+
   if (pictures.length === 0) return null;
 
   const slides = pictures.map((picture, index) => ({
@@ -270,7 +272,7 @@ function CommentPictures({
 
       <Lightbox
         open={activeIndex >= 0}
-        close={() => setActiveIndex(-1)}
+        close={closeLightbox}
         index={Math.max(activeIndex, 0)}
         slides={slides}
         plugins={
@@ -335,6 +337,13 @@ function CommentPictures({
             style: {
               position: "absolute",
               inset: 0,
+            },
+            onClick: (event) => {
+              const target = event.target;
+              if (!(target instanceof Element)) return;
+              if (target.closest(".yarl__container")) return;
+              event.stopPropagation();
+              closeLightbox();
             },
           },
         }}

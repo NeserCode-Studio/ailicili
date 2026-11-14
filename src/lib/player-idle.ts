@@ -1,0 +1,1 @@
+export const PLAYER_AUTO_HIDE_DELAY_MS = 5_000;
