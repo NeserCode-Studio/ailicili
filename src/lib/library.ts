@@ -5,6 +5,7 @@ import type {
   VideoCard,
 } from "@/api/media";
 import type { PlatformId } from "@/api/platforms";
+import { historyResumeSeconds } from "@/lib/history";
 import { liveRoomPath } from "@/lib/live-routes";
 
 export function favoriteTargetForVideo(video: VideoCard): FavoriteTarget {
@@ -54,7 +55,7 @@ export function favoriteEntryPath(entry: FavoriteEntry): string {
 export function historyResumePath(entry: HistoryEntry): string {
   const params = new URLSearchParams({
     cid: String(entry.pageCid),
-    t: String(entry.progressSeconds),
+    t: String(historyResumeSeconds(entry)),
     from: "history",
   });
   return `/video/${encodeURIComponent(entry.card.videoId)}?${params.toString()}`;

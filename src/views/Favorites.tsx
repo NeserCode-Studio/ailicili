@@ -22,7 +22,11 @@ import { createLogger } from "@/lib/logger";
 
 const log = createLogger("Library/Favorites");
 
-export default function Favorites() {
+interface FavoritesProps {
+  active?: boolean;
+}
+
+export default function Favorites({ active = true }: FavoritesProps) {
   const { t, lang } = useI18n();
   const { navigator } = useNavigatorContext();
   const { success: toastSuccess, error: toastError } = useToast();
@@ -31,32 +35,55 @@ export default function Favorites() {
   const [error, setError] = useState<CommandError | null>(null);
   const [removingKey, setRemovingKey] = useState<string | null>(null);
   const requestIdRef = useRef(0);
+  const hasLoadedRef = useRef(false);
+  const wasActiveRef = useRef(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (background = false) => {
     const requestId = ++requestIdRef.current;
-    setLoading(true);
-    setError(null);
+    if (!background) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const entries = await listLocalFavorites();
       if (requestId !== requestIdRef.current) return;
+      setError(null);
       setItems(entries);
       log.info("favorites loaded", { count: entries.length });
     } catch (reason) {
       if (requestId !== requestIdRef.current) return;
       const normalized = asCommandError(reason);
+      if (background) {
+        log.warn("favorites background refresh failed", {
+          code: normalized.code,
+        });
+        return;
+      }
       setError(normalized);
       log.error("favorites load failed", { code: normalized.code });
     } finally {
-      if (requestId === requestIdRef.current) setLoading(false);
+      if (!background && requestId === requestIdRef.current) {
+        setLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
-    void load();
+    if (!active) {
+      wasActiveRef.current = false;
+      return;
+    }
+    const background = hasLoadedRef.current && !wasActiveRef.current;
+    hasLoadedRef.current = true;
+    wasActiveRef.current = true;
+    void load(background);
+  }, [active, load]);
+
+  useEffect(() => {
     return () => {
       requestIdRef.current += 1;
     };
-  }, [load]);
+  }, []);
 
   const remove = useCallback(
     async (entry: FavoriteEntry) => {

@@ -185,6 +185,13 @@ export async function clearLocalHistory(): Promise<HistoryEntry[]> {
   return invoke("clear_local_history");
 }
 
+export async function removeLocalHistory(
+  platform: PlatformId,
+  videoId: string
+): Promise<HistoryEntry[]> {
+  return invoke("remove_local_history", { platform, videoId });
+}
+
 export async function listLocalFavorites(): Promise<FavoriteEntry[]> {
   return invoke("list_local_favorites");
 }

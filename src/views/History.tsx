@@ -4,6 +4,7 @@ import { ArrowLeft, History, Loader2, Trash2 } from "lucide-react";
 import {
   clearLocalHistory,
   listLocalHistory,
+  removeLocalHistory,
   type HistoryEntry,
 } from "@/api/media";
 import { asCommandError, type CommandError } from "@/api/account";
@@ -27,58 +28,92 @@ import {
 import { Button } from "@/components/ui/button";
 import { useI18n, useToast } from "@/composables";
 import { useNavigatorContext } from "@/contexts/navigator";
+import { isHistoryEntryComplete } from "@/lib/history";
 import { historyResumePath } from "@/lib/library";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("Library/History");
 
-export default function HistoryView() {
+function historyEntryKey(entry: HistoryEntry) {
+  return `${entry.card.platform}:${entry.card.videoId}:${entry.pageCid}`;
+}
+
+interface HistoryViewProps {
+  active?: boolean;
+}
+
+export default function HistoryView({ active = true }: HistoryViewProps) {
   const { t, lang } = useI18n();
   const { navigator } = useNavigatorContext();
   const { success: toastSuccess, error: toastError } = useToast();
   const [items, setItems] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [clearing, setClearing] = useState(false);
+  const [removingKey, setRemovingKey] = useState<string | null>(null);
   const [error, setError] = useState<CommandError | null>(null);
   const requestIdRef = useRef(0);
+  const hasLoadedRef = useRef(false);
+  const wasActiveRef = useRef(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (background = false) => {
     const requestId = ++requestIdRef.current;
-    setLoading(true);
-    setError(null);
+    if (!background) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const entries = await listLocalHistory();
       if (requestId !== requestIdRef.current) return;
+      setError(null);
       setItems(entries);
       log.info("history loaded", { count: entries.length });
     } catch (reason) {
       if (requestId !== requestIdRef.current) return;
       const normalized = asCommandError(reason);
+      if (background) {
+        log.warn("history background refresh failed", {
+          code: normalized.code,
+        });
+        return;
+      }
       setError(normalized);
       log.error("history load failed", { code: normalized.code });
     } finally {
-      if (requestId === requestIdRef.current) setLoading(false);
+      if (!background && requestId === requestIdRef.current) {
+        setLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
-    void load();
+    if (!active) {
+      wasActiveRef.current = false;
+      return;
+    }
+    const background = hasLoadedRef.current && !wasActiveRef.current;
+    hasLoadedRef.current = true;
+    wasActiveRef.current = true;
+    void load(background);
+  }, [active, load]);
+
+  useEffect(() => {
     return () => {
       requestIdRef.current += 1;
     };
-  }, [load]);
+  }, []);
 
   const resume = (entry: HistoryEntry) => {
     log.info("resume history", {
       videoId: entry.card.videoId,
       cid: entry.pageCid,
       progressSeconds: entry.progressSeconds,
+      completed: isHistoryEntryComplete(entry),
     });
     navigator(historyResumePath(entry));
   };
 
   const clear = useCallback(async () => {
-    if (clearing || items.length === 0) return;
+    if (clearing || removingKey || items.length === 0) return;
 
     setClearing(true);
     try {
@@ -94,7 +129,37 @@ export default function HistoryView() {
     } finally {
       setClearing(false);
     }
-  }, [clearing, items.length, toastError, toastSuccess]);
+  }, [clearing, items.length, removingKey, toastError, toastSuccess]);
+
+  const remove = useCallback(
+    async (entry: HistoryEntry) => {
+      const key = historyEntryKey(entry);
+      if (clearing || removingKey) return;
+
+      setRemovingKey(key);
+      try {
+        const entries = await removeLocalHistory(
+          entry.card.platform,
+          entry.card.videoId
+        );
+        setItems(entries);
+        toastSuccess("Library.history.removed");
+        log.info("history entry removed", {
+          videoId: entry.card.videoId,
+          cid: entry.pageCid,
+        });
+      } catch (reason) {
+        toastError("Library.history.removeFailed");
+        log.error("history entry remove failed", {
+          videoId: entry.card.videoId,
+          code: asCommandError(reason).code,
+        });
+      } finally {
+        setRemovingKey(null);
+      }
+    },
+    [clearing, removingKey, toastError, toastSuccess]
+  );
 
   return (
     <div className="flex h-full w-full flex-col">
@@ -118,7 +183,7 @@ export default function HistoryView() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    disabled={clearing}
+                    disabled={clearing || removingKey !== null}
                   >
                     {clearing ? (
                       <Loader2 className="animate-spin" />
@@ -176,13 +241,16 @@ export default function HistoryView() {
           onAction={() => navigator("/")}
         />
       ) : (
-        <div className="mx-auto grid w-full max-w-[1200px] grid-cols-1 gap-4 p-4 xl:grid-cols-2">
+        <div className="video-grid">
           {items.map((entry) => (
             <HistoryCard
-              key={`${entry.card.platform}:${entry.card.videoId}:${entry.pageCid}`}
+              key={historyEntryKey(entry)}
               entry={entry}
               locale={lang}
+              removing={removingKey === historyEntryKey(entry)}
+              disabled={removingKey !== null || clearing}
               onResume={resume}
+              onRemove={(item) => void remove(item)}
             />
           ))}
         </div>

@@ -1,17 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertCircle,
-  Flame,
-  History,
-  LayoutGrid,
+  ArrowUp,
   Loader2,
   LogIn,
-  Radio,
   RefreshCw,
   Search,
   Settings2,
   Sparkles,
-  Star,
   X,
 } from "lucide-react";
 
@@ -36,10 +32,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useI18n } from "@/composables";
 import { useAccount } from "@/contexts/account-context";
-import { useNavigatorContext } from "@/contexts/navigator";
 import { useSettingsDialog } from "@/contexts/settings";
 import {
   BILIBILI_REGIONS,
@@ -48,16 +42,24 @@ import {
 } from "@/lib/bilibili-regions";
 import { commandErrorKey } from "@/lib/command-error";
 import { createLogger } from "@/lib/logger";
-import {
-  getRecommendationPriority,
-  useRecommendationPriority,
-} from "@/lib/preferences";
+import { useRecommendationPriority } from "@/lib/preferences";
+import { PLAYER_CONTROL_SURFACE_CLASS } from "@/lib/player-surface";
+import { cn } from "@/lib/utils";
 
 const log = createLogger("Media/Home");
 
 type BrowseMode = "popular" | "recommend" | "region";
 type FeedMode = BrowseMode | "search";
 type FallbackReason = "login" | "preference" | "request";
+
+const BROWSE_TABS = [
+  { value: "recommend", labelKey: "Home.feed.recommend" },
+  { value: "popular", labelKey: "Home.feed.popular" },
+  { value: "region", labelKey: "Home.feed.region" },
+] as const satisfies readonly {
+  value: BrowseMode;
+  labelKey: string;
+}[];
 
 interface FeedRequestResult {
   result: PagedVideos;
@@ -87,7 +89,7 @@ function mergeUnique(
 function FeedSkeleton() {
   return (
     <div className="video-grid" aria-busy="true">
-      {Array.from({ length: 8 }, (_, index) => (
+      {Array.from({ length: 10 }, (_, index) => (
         <div
           key={index}
           className="border-border/60 bg-card overflow-hidden rounded-lg border"
@@ -113,13 +115,10 @@ export default function Home() {
     openLogin,
     snapshot: accountSnapshot,
   } = useAccount();
-  const { navigator } = useNavigatorContext();
   const { openSettings } = useSettingsDialog();
   const recommendationPriority = useRecommendationPriority();
 
-  const [mode, setMode] = useState<FeedMode>(() =>
-    getRecommendationPriority() === "personalized" ? "recommend" : "popular"
-  );
+  const [mode, setMode] = useState<FeedMode>("recommend");
   const [selectedRegionId, setSelectedRegionId] = useState(DEFAULT_REGION_ID);
   const [items, setItems] = useState<VideoCardModel[]>([]);
   const [page, setPage] = useState(1);
@@ -133,6 +132,9 @@ export default function Home() {
     null
   );
   const [reloadToken, setReloadToken] = useState(0);
+  const [showBackToTop, setShowBackToTop] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const scrollViewportRef = useRef<HTMLElement | null>(null);
   const requestIdRef = useRef(0);
   const accountRevisionRef = useRef(0);
   const loadingMoreRef = useRef(false);
@@ -145,6 +147,24 @@ export default function Home() {
     ? (accountRevisions[videoPlatformId] ?? 0)
     : 0;
   accountRevisionRef.current = accountRevision;
+
+  useEffect(() => {
+    const viewport =
+      rootRef.current?.closest<HTMLElement>(
+        '[data-slot="scroll-area-viewport"]'
+      ) ?? null;
+    if (!viewport) return;
+
+    scrollViewportRef.current = viewport;
+    const syncBackToTop = () => setShowBackToTop(viewport.scrollTop > 280);
+    syncBackToTop();
+    viewport.addEventListener("scroll", syncBackToTop, { passive: true });
+
+    return () => {
+      viewport.removeEventListener("scroll", syncBackToTop);
+      scrollViewportRef.current = null;
+    };
+  }, []);
 
   const recommendationEligibility: FallbackReason | null =
     recommendationPriority !== "personalized"
@@ -349,10 +369,19 @@ export default function Home() {
 
   const refresh = () => setReloadToken((value) => value + 1);
 
+  const scrollToTop = () => {
+    scrollViewportRef.current?.scrollTo({
+      top: 0,
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "auto"
+        : "smooth",
+    });
+  };
+
   const clearSearch = () => {
     setKeyword("");
     setSearchQuery("");
-    setMode("popular");
+    setMode("recommend");
     setReloadToken((value) => value + 1);
   };
 
@@ -367,10 +396,10 @@ export default function Home() {
     setReloadToken((value) => value + 1);
   };
 
-  const changeBrowseMode = (value: string) => {
-    if (value === "popular" || value === "recommend" || value === "region") {
-      setMode(value);
-    }
+  const changeBrowseMode = (value: BrowseMode) => {
+    setKeyword("");
+    setSearchQuery("");
+    setMode(value);
   };
 
   const emptyMessage =
@@ -396,153 +425,95 @@ export default function Home() {
         : t("Home.recommend.fallback");
 
   return (
-    <div className="view-home">
-      <header className="border-border/60 border-b">
-        <div className="flex flex-wrap items-center gap-3 px-4 py-3">
-          <div className="min-w-0">
-            <h1 className="truncate text-lg font-semibold">
-              {t("Home.title")}
-            </h1>
-            <p className="text-muted-xs mt-0.5 truncate">
-              {t(`Home.feed.${mode}`)}
-            </p>
-          </div>
+    <div ref={rootRef} className="view-home">
+      <header
+        className={`border-border/60 sticky top-0 z-30 border-b ${PLAYER_CONTROL_SURFACE_CLASS}`}
+      >
+        <div className="mx-auto flex w-full max-w-[1440px] items-center gap-3 px-4 py-2.5">
+          <div className="flex min-w-0 items-center gap-2">
+            <nav
+              className="flex min-w-0 items-center overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              aria-label={t("Home.feed.label")}
+            >
+              {BROWSE_TABS.map((tab) => {
+                const active = mode === tab.value;
+                return (
+                  <button
+                    key={tab.value}
+                    type="button"
+                    className={cn(
+                      "focus-visible:ring-ring relative flex h-9 shrink-0 items-center rounded-sm px-3 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none",
+                      active
+                        ? "text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-[var(--player-accent)]"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                    aria-pressed={active}
+                    onClick={() => changeBrowseMode(tab.value)}
+                  >
+                    {t(tab.labelKey)}
+                  </button>
+                );
+              })}
+            </nav>
 
-          <div className="flex items-center gap-1">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => navigator("/live")}
-            >
-              <Radio />
-              {t("Home.live")}
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => navigator("/favorites")}
-            >
-              <Star />
-              {t("Library.favorites.title")}
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => navigator("/history")}
-            >
-              <History />
-              {t("Library.history.title")}
-            </Button>
+            {mode === "region" ? (
+              <Select
+                value={String(selectedRegionId)}
+                onValueChange={(value) => setSelectedRegionId(Number(value))}
+              >
+                <SelectTrigger
+                  size="sm"
+                  className="h-8 w-32 shrink-0 border-0 bg-transparent px-2 text-xs shadow-none"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {BILIBILI_REGIONS.map((region) => (
+                    <SelectItem key={region.id} value={String(region.id)}>
+                      {regionName(region, lang)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : null}
           </div>
 
           <form
-            className="ml-auto flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2"
+            className="ml-auto max-w-sm min-w-32 flex-1"
             onSubmit={(event) => {
               event.preventDefault();
               submitSearch();
             }}
           >
-            <div className="relative min-w-40 flex-1 sm:max-w-80">
-              <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
+            <div className="relative w-full">
               <Input
                 value={keyword}
                 onChange={(event) => setKeyword(event.target.value)}
                 placeholder={t("Home.search.placeholder")}
-                className="w-full pl-9"
+                className="h-9 w-full pr-10"
               />
-            </div>
-            <Button type="submit" variant="outline" size="sm">
-              <Search />
-              {t("Home.search")}
-            </Button>
-            {mode === "search" || keyword ? (
               <Button
-                type="button"
+                type="submit"
                 variant="ghost"
-                size="sm"
-                onClick={clearSearch}
+                size="icon"
+                className="text-muted-foreground hover:text-foreground absolute top-1/2 right-1 size-7 -translate-y-1/2"
+                aria-label={t("Home.search")}
+                title={t("Home.search")}
               >
-                <X />
-                {t("Home.clearSearch")}
+                <Search className="size-3.5" />
               </Button>
-            ) : null}
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={refresh}
-              disabled={loading}
-            >
-              <RefreshCw className={loading ? "animate-spin" : ""} />
-              {t("Home.refresh")}
-            </Button>
+            </div>
           </form>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
-          <ToggleGroup
-            type="single"
-            variant="outline"
-            size="sm"
-            value={mode === "search" ? "" : mode}
-            onValueChange={changeBrowseMode}
-            className="w-full max-w-full overflow-x-auto [scrollbar-width:none] sm:w-auto [&::-webkit-scrollbar]:hidden"
-            aria-label={t("Home.feed.label")}
-          >
-            <ToggleGroupItem
-              value="popular"
-              className="min-w-fit flex-none gap-1.5 px-2"
-            >
-              <Flame className="h-3.5 w-3.5" />
-              {t("Home.feed.popular")}
-            </ToggleGroupItem>
-            <ToggleGroupItem
-              value="recommend"
-              className="min-w-fit flex-none gap-1.5 px-2"
-            >
-              <Sparkles className="h-3.5 w-3.5" />
-              {t("Home.feed.recommend")}
-            </ToggleGroupItem>
-            <ToggleGroupItem
-              value="region"
-              className="min-w-fit flex-none gap-1.5 px-2"
-            >
-              <LayoutGrid className="h-3.5 w-3.5" />
-              {t("Home.feed.region")}
-            </ToggleGroupItem>
-          </ToggleGroup>
-
-          {mode === "region" ? (
-            <Select
-              value={String(selectedRegionId)}
-              onValueChange={(value) => setSelectedRegionId(Number(value))}
-            >
-              <SelectTrigger size="sm" className="w-full sm:w-52">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {BILIBILI_REGIONS.map((region) => (
-                  <SelectItem key={region.id} value={String(region.id)}>
-                    {regionName(region, lang)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : null}
-
-          {mode === "search" ? (
-            <div className="text-muted-sm flex min-w-0 items-center gap-2">
-              <Search className="h-3.5 w-3.5 shrink-0" />
-              <span className="shrink-0">{t("Home.search.results")}</span>
-              <span className="text-foreground max-w-48 truncate font-medium">
-                {searchQuery}
-              </span>
-            </div>
-          ) : null}
-        </div>
+        {mode === "search" ? (
+          <div className="text-muted-xs mx-auto flex w-full max-w-[1440px] min-w-0 items-center gap-2 px-4 pb-2">
+            <span className="shrink-0">{t("Home.search.results")}</span>
+            <span className="text-foreground truncate font-medium">
+              {searchQuery}
+            </span>
+          </div>
+        ) : null}
       </header>
 
       {fallbackReason ? (
@@ -669,6 +640,35 @@ export default function Home() {
           </div>
         </>
       )}
+
+      <div className="fixed right-4 bottom-4 z-40 flex flex-col gap-2 sm:right-6 sm:bottom-6">
+        {showBackToTop ? (
+          <button
+            type="button"
+            className={`${PLAYER_CONTROL_SURFACE_CLASS} hover:bg-accent/80 focus-visible:ring-ring inline-flex size-9 items-center justify-center rounded-full border shadow-lg transition-colors focus-visible:ring-2 focus-visible:outline-none`}
+            aria-label={t("Home.backToTop")}
+            title={t("Home.backToTop")}
+            onClick={scrollToTop}
+          >
+            <ArrowUp className="size-4" />
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className={`${PLAYER_CONTROL_SURFACE_CLASS} hover:bg-accent/80 focus-visible:ring-ring inline-flex size-9 items-center justify-center rounded-full border shadow-lg transition-colors focus-visible:ring-2 focus-visible:outline-none disabled:cursor-default disabled:opacity-60`}
+          aria-label={t("Home.refresh")}
+          title={t("Home.refresh")}
+          disabled={loading}
+          onClick={refresh}
+        >
+          <RefreshCw
+            className={cn(
+              "size-4",
+              loading && "animate-spin motion-reduce:animate-none"
+            )}
+          />
+        </button>
+      </div>
     </div>
   );
 }

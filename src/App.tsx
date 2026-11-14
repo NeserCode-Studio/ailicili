@@ -2,8 +2,10 @@ import "./App.css";
 
 import Titlebar from "@/components/framework/Titlebar";
 import CommandDialog from "@/components/framework/CommandDialog";
+import AppSidebar from "@/components/framework/AppSidebar";
+import RetainedRoute from "@/components/framework/RetainedRoute";
 import { Toaster } from "@/components/ui/sonner";
-import { Routes, Route, useNavigate } from "react-router";
+import { Routes, Route, useLocation, useNavigate } from "react-router";
 
 import { useTheme, useI18nLogic } from "@/composables";
 import {
@@ -69,6 +71,10 @@ function App() {
   const { lang, t, setLanguage } = useI18nLogic();
   /* Navigator */
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const isRetainedPath = ["/", "/live", "/favorites", "/history"].includes(
+    pathname
+  );
   /* Theme */
   const [theme, setThemeMode] = useTheme({
     localStorageKey: "theme-mode",
@@ -186,32 +192,58 @@ function App() {
 
                     <div
                       id="container"
-                      className="app-body isolate overflow-hidden"
+                      className="app-body isolate items-stretch justify-start overflow-hidden"
                     >
-                      <ScrollArea className="h-[calc(100vh-2rem)] w-full">
-                        <Suspense fallback={null}>
-                          <Routes>
-                            <Route path="/" index element={<Home />} />
-                            <Route
-                              path="/video/:videoId"
-                              element={<VideoView />}
-                            />
-                            <Route path="/live" element={<LiveView />} />
-                            <Route
-                              path="/live/:platformId/:roomId"
-                              element={<LiveRoomView />}
-                            />
-                            <Route
-                              path="/live/:roomId"
-                              element={<LegacyLiveRoomRedirect />}
-                            />
-                            <Route path="/favorites" element={<Favorites />} />
-                            <Route path="/history" element={<HistoryView />} />
-                            <Route path="/software" element={<Software />} />
-                            <Route path="/framework" element={<Framework />} />
-                          </Routes>
-                        </Suspense>
-                      </ScrollArea>
+                      <div className="flex h-full min-h-0 w-full">
+                        <AppSidebar />
+                        <div className="bg-background relative min-h-0 min-w-0 flex-1">
+                          <Suspense fallback={null}>
+                            <RetainedRoute active={pathname === "/"}>
+                              <Home />
+                            </RetainedRoute>
+                            <RetainedRoute active={pathname === "/live"}>
+                              <LiveView active={pathname === "/live"} />
+                            </RetainedRoute>
+                            <RetainedRoute active={pathname === "/favorites"}>
+                              <Favorites active={pathname === "/favorites"} />
+                            </RetainedRoute>
+                            <RetainedRoute active={pathname === "/history"}>
+                              <HistoryView active={pathname === "/history"} />
+                            </RetainedRoute>
+                            {!isRetainedPath ? (
+                              <div className="h-full min-h-0 w-full">
+                                <ScrollArea
+                                  key={pathname}
+                                  className="h-full w-full"
+                                >
+                                  <Routes>
+                                    <Route
+                                      path="/video/:videoId"
+                                      element={<VideoView />}
+                                    />
+                                    <Route
+                                      path="/live/:platformId/:roomId"
+                                      element={<LiveRoomView />}
+                                    />
+                                    <Route
+                                      path="/live/:roomId"
+                                      element={<LegacyLiveRoomRedirect />}
+                                    />
+                                    <Route
+                                      path="/software"
+                                      element={<Software />}
+                                    />
+                                    <Route
+                                      path="/framework"
+                                      element={<Framework />}
+                                    />
+                                  </Routes>
+                                </ScrollArea>
+                              </div>
+                            ) : null}
+                          </Suspense>
+                        </div>
+                      </div>
                     </div>
                   </main>
                   <AccountDialog />

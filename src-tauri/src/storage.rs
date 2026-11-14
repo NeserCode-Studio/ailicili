@@ -9,7 +9,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{FavoriteEntry, FavoriteTarget, HistoryEntry};
+use crate::domain::{FavoriteEntry, FavoriteTarget, HistoryEntry, PlatformId};
 
 const LIBRARY_FILE: &str = "library.json";
 const LIBRARY_BACKUP_FILE: &str = "library.bak.json";
@@ -74,6 +74,10 @@ pub fn clear_history() -> Result<Vec<HistoryEntry>, String> {
     with_data_dir(clear_history_in)
 }
 
+pub fn remove_history(platform: PlatformId, video_id: String) -> Result<Vec<HistoryEntry>, String> {
+    with_data_dir(move |root| remove_history_in(root, &platform, &video_id))
+}
+
 pub fn list_favorites() -> Result<Vec<FavoriteEntry>, String> {
     with_data_dir(|root| list_favorites_in(root))
 }
@@ -121,6 +125,22 @@ fn clear_history_in(root: &Path) -> Result<Vec<HistoryEntry>, String> {
     let changed = !document.history.is_empty();
     document.history.clear();
     if changed {
+        write_library(root, &document)?;
+    }
+    Ok(document.history)
+}
+
+fn remove_history_in(
+    root: &Path,
+    platform: &PlatformId,
+    video_id: &str,
+) -> Result<Vec<HistoryEntry>, String> {
+    let mut document = load_library(root)?;
+    let previous_len = document.history.len();
+    document
+        .history
+        .retain(|item| item.card.platform != *platform || item.card.video_id != video_id);
+    if document.history.len() != previous_len {
         write_library(root, &document)?;
     }
     Ok(document.history)
@@ -466,6 +486,25 @@ mod tests {
 
         assert!(history.is_empty());
         assert!(list_history_in(&test_dir.0).unwrap().is_empty());
+        assert_eq!(list_favorites_in(&test_dir.0).unwrap(), vec![favorite]);
+    }
+
+    #[test]
+    fn removing_history_only_removes_matching_video() {
+        let test_dir = TestDir::new();
+        let favorite = favorite_entry(FavoriteKind::Video, "BV1", "Favorite", 10);
+        save_history_entry_in(&test_dir.0, history_entry("BV1", 30)).unwrap();
+        save_history_entry_in(&test_dir.0, history_entry("BV2", 40)).unwrap();
+        save_favorite_in(&test_dir.0, favorite.clone()).unwrap();
+
+        let history = remove_history_in(&test_dir.0, &PlatformId::bilibili(), "BV1").unwrap();
+
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].card.video_id, "BV2");
+        let persisted = list_history_in(&test_dir.0).unwrap();
+        assert_eq!(persisted.len(), 1);
+        assert_eq!(persisted[0].card.video_id, "BV2");
+        assert_eq!(persisted[0].progress_seconds, 40);
         assert_eq!(list_favorites_in(&test_dir.0).unwrap(), vec![favorite]);
     }
 

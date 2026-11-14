@@ -87,7 +87,11 @@ function LiveGridSkeleton() {
   );
 }
 
-export default function Live() {
+interface LiveProps {
+  active?: boolean;
+}
+
+export default function Live({ active = true }: LiveProps) {
   const { t } = useI18n();
   const { navigator } = useNavigatorContext();
   const {
@@ -113,6 +117,9 @@ export default function Live() {
   const requestIdRef = useRef(0);
   const accountRevisionRef = useRef(0);
   const loadingMoreRef = useRef(false);
+  const hasLoadedRef = useRef(false);
+  const wasActiveRef = useRef(false);
+  const backgroundRefreshRef = useRef(false);
   const livePlatforms = useMemo(
     () =>
       platformCatalog.filter(
@@ -152,10 +159,42 @@ export default function Live() {
   }, [livePlatforms, selectedPlatformId]);
 
   useEffect(() => {
+    if (!active) {
+      wasActiveRef.current = false;
+      return;
+    }
+    const background = hasLoadedRef.current && !wasActiveRef.current;
+    if (background) {
+      backgroundRefreshRef.current = true;
+      setReloadToken((value) => value + 1);
+    }
+    hasLoadedRef.current = true;
+    wasActiveRef.current = true;
+  }, [active]);
+
+  useEffect(() => {
     const requestId = ++requestIdRef.current;
     const revision = accountRevisionRef.current;
+    const background = backgroundRefreshRef.current;
+    backgroundRefreshRef.current = false;
     if (!selectedPlatformId) {
-      setLoading(!accountLoading);
+      if (!background) {
+        setLoading(!accountLoading);
+        setLoadingMore(false);
+        setError(null);
+        setDiscovery(null);
+        setItems([]);
+        setPage(1);
+        setTotal(0);
+        setHasMore(false);
+      }
+      return () => {
+        requestIdRef.current += 1;
+      };
+    }
+
+    if (!background) {
+      setLoading(true);
       setLoadingMore(false);
       setError(null);
       setDiscovery(null);
@@ -163,19 +202,7 @@ export default function Live() {
       setPage(1);
       setTotal(0);
       setHasMore(false);
-      return () => {
-        requestIdRef.current += 1;
-      };
     }
-
-    setLoading(true);
-    setLoadingMore(false);
-    setError(null);
-    setDiscovery(null);
-    setItems([]);
-    setPage(1);
-    setTotal(0);
-    setHasMore(false);
 
     if (mode === "discovery") {
       void getLiveDiscovery(selectedPlatformId)
@@ -203,11 +230,19 @@ export default function Live() {
             return;
           }
           const normalized = asCommandError(reason);
+          if (background) {
+            log.warn("live discovery background refresh failed", {
+              code: normalized.code,
+            });
+            return;
+          }
           setError(normalized);
           log.error("live discovery failed", { code: normalized.code });
         })
         .finally(() => {
-          if (requestId === requestIdRef.current) setLoading(false);
+          if (!background && requestId === requestIdRef.current) {
+            setLoading(false);
+          }
         });
       return () => {
         requestIdRef.current += 1;
@@ -222,9 +257,13 @@ export default function Live() {
         ) {
           return;
         }
-        setItems(mergeRooms([], result.items));
-        setPage(result.page || 1);
-        setHasMore(result.hasMore);
+        setItems((current) =>
+          mergeRooms(background ? current : [], result.items)
+        );
+        if (!background) {
+          setPage(result.page || 1);
+          setHasMore(result.hasMore);
+        }
         setTotal(result.total);
         log.info("live search loaded", {
           page: result.page,
@@ -240,11 +279,19 @@ export default function Live() {
           return;
         }
         const normalized = asCommandError(reason);
+        if (background) {
+          log.warn("live search background refresh failed", {
+            code: normalized.code,
+          });
+          return;
+        }
         setError(normalized);
         log.error("live search failed", { code: normalized.code });
       })
       .finally(() => {
-        if (requestId === requestIdRef.current) setLoading(false);
+        if (!background && requestId === requestIdRef.current) {
+          setLoading(false);
+        }
       });
 
     return () => {

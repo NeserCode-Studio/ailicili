@@ -11,6 +11,10 @@ import {
 import {
   ArrowLeft,
   Check,
+  ChevronFirst,
+  ChevronLast,
+  ChevronLeft,
+  ChevronRight,
   CircleAlert,
   Loader2,
   Maximize,
@@ -34,9 +38,11 @@ import {
   getVideoDetail,
   getVideoPlayback,
   listLocalFavorites,
+  listLocalHistory,
   removeLocalFavorite,
   saveLocalHistory,
   type FavoriteEntry,
+  type HistoryEntry,
   type PlaybackInfo,
   type StreamSource,
   type VideoDetail,
@@ -46,6 +52,11 @@ import { CommentsSidebar } from "@/components/comments/CommentsSidebar";
 import { DanmakuControlButton } from "@/components/danmaku/DanmakuControl";
 import { VideoDanmakuLayer } from "@/components/danmaku/VideoDanmakuLayer";
 import { Button } from "@/components/ui/button";
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card";
 import { Slider } from "@/components/ui/slider";
 import { useI18n, useToast } from "@/composables";
 import { useAccount } from "@/contexts/account-context";
@@ -55,6 +66,7 @@ import {
   useDanmakuPreferences,
 } from "@/lib/danmaku/preferences";
 import { formatCount } from "@/lib/format";
+import { historyResumeSeconds, isHistoryProgressComplete } from "@/lib/history";
 import { createLogger } from "@/lib/logger";
 import { commandErrorMessage } from "@/lib/command-error";
 import { favoriteMatches, favoriteTargetForVideo } from "@/lib/library";
@@ -65,6 +77,7 @@ import {
   type PlaybackRate,
 } from "@/lib/player-preferences";
 import { PLAYER_AUTO_HIDE_DELAY_MS } from "@/lib/player-idle";
+import { PLAYER_CONTROL_SURFACE_CLASS } from "@/lib/player-surface";
 import { Container } from "@videojs/react";
 import { Video, VideoPlayer, usePlayer } from "@videojs/react/video";
 import {
@@ -79,8 +92,21 @@ const HISTORY_PROGRESS_PUBLISH_INTERVAL_SECONDS = 5;
 const AUDIO_DRIFT_TOLERANCE_SECONDS = 0.18;
 const AUDIO_DRIFT_CORRECTION_COOLDOWN_MS = 1_000;
 const AUDIO_DRIFT_CHECK_INTERVAL_MS = 1_000;
+const AUDIO_PLAYBACK_REFRESH_COOLDOWN_MS = 30_000;
+const VIDEO_LOAD_AUTO_RETRY_DELAY_MS = 500;
+const VIDEO_MEDIA_STALL_TIMEOUT_MS = 15_000;
+const VIDEO_PLAYBACK_REFRESH_TIMEOUT_MS = 15_000;
+const VIDEO_PLAYBACK_REFRESH_COOLDOWN_MS = 30_000;
+const RETRYABLE_VIDEO_LOAD_ERROR_CODES = new Set([
+  "networkError",
+  "invalidResponse",
+]);
 const CONTROL_BUTTON_CLASS =
   "size-8 rounded-sm text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring";
+const PLAYER_HOVER_OPEN_DELAY_MS = 180;
+const PLAYER_HOVER_CLOSE_DELAY_MS = 120;
+const SPEED_PAGER_BUTTON_CLASS =
+  "inline-flex size-6 items-center justify-center rounded-sm text-popover-foreground/80 hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:pointer-events-none disabled:opacity-30";
 const QUALITY_LABELS: Record<number, string> = {
   16: "360P",
   32: "480P",
@@ -104,11 +130,29 @@ function mediaUrlsMatch(currentSrc: string, targetUrl?: string) {
   }
 }
 
+function mediaUrlHost(url?: string) {
+  if (!url) return null;
+  try {
+    return new URL(url).host;
+  } catch {
+    return null;
+  }
+}
+
 function mediaSourceUrls(primaryUrl?: string, backupUrls?: string[]) {
   return [primaryUrl, ...(backupUrls ?? [])].filter(
     (url, index, urls): url is string =>
       Boolean(url) && urls.indexOf(url) === index
   );
+}
+
+function streamSourceKey(stream?: StreamSource) {
+  if (!stream) return undefined;
+  return `${stream.id}\n${stream.url}\n${stream.audioUrl ?? ""}`;
+}
+
+function shouldRetryVideoLoad(error: CommandError) {
+  return RETRYABLE_VIDEO_LOAD_ERROR_CODES.has(error.code);
 }
 
 function isPlaybackAbort(error: unknown) {
@@ -127,6 +171,7 @@ interface PlaybackMediaError {
 
 interface SourceSelection {
   streamId?: string;
+  streamKey?: string;
   videoIndex: number;
   audioIndex: number;
 }
@@ -219,6 +264,7 @@ function PlayerPausePanel({
   commentsEnabled,
 }: PlayerPausePanelProps) {
   const { t } = useI18n();
+  const sectionRef = useRef<HTMLElement>(null);
   const canContinue = ready && !error && Boolean(onContinue);
   const showPausedStatus = ready && hasStarted;
   const secondaryActions = [
@@ -245,10 +291,21 @@ function PlayerPausePanel({
     },
   ];
 
+  useEffect(() => {
+    if (active) return;
+    const focused = document.activeElement;
+    if (
+      focused instanceof HTMLElement &&
+      sectionRef.current?.contains(focused)
+    ) {
+      focused.blur();
+    }
+  }, [active]);
+
   return (
     <section
+      ref={sectionRef}
       aria-label={t("Video.panelLabel")}
-      aria-hidden={!active}
       inert={!active}
       onClick={(event) => {
         if (!canContinue || event.detail > 1) return;
@@ -268,13 +325,15 @@ function PlayerPausePanel({
           : "pointer-events-none invisible translate-y-1 scale-[0.995] opacity-0"
       }`}
     >
-      <div
-        className="bg-background/55 pointer-events-none absolute inset-0 backdrop-blur-[28px]"
-        style={{
-          maskImage: PAUSE_BLUR_MASK,
-          WebkitMaskImage: PAUSE_BLUR_MASK,
-        }}
-      />
+      {active ? (
+        <div
+          className="bg-background/55 pointer-events-none absolute inset-0 backdrop-blur-[28px]"
+          style={{
+            maskImage: PAUSE_BLUR_MASK,
+            WebkitMaskImage: PAUSE_BLUR_MASK,
+          }}
+        />
+      ) : null}
       <div className="from-background/95 via-background/55 to-background/10 pointer-events-none absolute inset-0 bg-gradient-to-t" />
 
       <div className="relative mx-auto flex h-full w-full max-w-[1440px] flex-col px-5 pt-5 pb-28 sm:px-8 sm:pb-32 lg:px-12 lg:pt-8">
@@ -581,6 +640,7 @@ interface VideoStageProps {
   commentsOpen: boolean;
   onStreamIndexChange: (index: number) => void;
   onCurrentTimeChange: (time: number) => void;
+  onRefreshPlayback: () => Promise<void>;
   onFavorite: () => void;
   onFavoriteHint: () => void;
   onCommentsOpenChange: (open: boolean) => void;
@@ -603,6 +663,7 @@ function VideoStage({
   commentsOpen,
   onStreamIndexChange,
   onCurrentTimeChange,
+  onRefreshPlayback,
   onFavorite,
   onFavoriteHint,
   onCommentsOpenChange,
@@ -627,6 +688,11 @@ function VideoStage({
     )
   );
   const playerDuration = usePlayer((state) => state.duration);
+  const durationSeconds = Math.max(
+    0,
+    Math.round(playback.durationMs / 1000),
+    Number.isFinite(playerDuration) ? Math.floor(playerDuration) : 0
+  );
   const isSeeking = usePlayer((state) => state.seeking);
   const currentSrc = usePlayer((state) => state.currentSrc);
   const isFullscreen = usePlayer((state) => state.isFullscreen);
@@ -641,6 +707,7 @@ function VideoStage({
 
   const selectedStream = playback.streams[streamIndex];
   const selectedStreamId = selectedStream?.id;
+  const selectedStreamKey = streamSourceKey(selectedStream);
   const videoSourceUrls = useMemo(
     () => mediaSourceUrls(selectedStream?.url, selectedStream?.backupUrls),
     [selectedStream?.backupUrls, selectedStream?.url]
@@ -658,9 +725,15 @@ function VideoStage({
     audioIndex: 0,
   });
   const activeSourceSelection =
-    sourceSelection.streamId === selectedStreamId
+    sourceSelection.streamId === selectedStreamId &&
+    sourceSelection.streamKey === selectedStreamKey
       ? sourceSelection
-      : { streamId: selectedStreamId, videoIndex: 0, audioIndex: 0 };
+      : {
+          streamId: selectedStreamId,
+          streamKey: selectedStreamKey,
+          videoIndex: 0,
+          audioIndex: 0,
+        };
   const currentVideoUrl =
     videoSourceUrls[activeSourceSelection.videoIndex] ?? selectedStream?.url;
   const currentAudioUrl =
@@ -675,8 +748,19 @@ function VideoStage({
   const audioCanPlay =
     !needsAudio ||
     (Boolean(currentAudioUrl) && readyAudioUrl === currentAudioUrl);
-  const mediaReady = canPlay && !mediaError && (!needsAudio || audioCanPlay);
+  const [mediaAttempt, setMediaAttempt] = useState(0);
+  const [readyMediaAttempt, setReadyMediaAttempt] = useState(0);
+  const [videoReloadKey, setVideoReloadKey] = useState(0);
+  const mediaAttemptReady = readyMediaAttempt === mediaAttempt;
+  const mediaReady =
+    canPlay &&
+    mediaAttemptReady &&
+    !mediaError &&
+    (!needsAudio || audioCanPlay);
   const [isSwitchingQuality, setIsSwitchingQuality] = useState(false);
+  const [switchingReason, setSwitchingReason] = useState<"quality" | "source">(
+    "source"
+  );
   const [wasPlaying, setWasPlaying] = useState(false);
   const [mediaWaiting, setMediaWaiting] = useState(false);
   const audioCorrectionRef = useRef({
@@ -707,9 +791,14 @@ function VideoStage({
   const hideTimer = useRef<number | null>(null);
   const surfaceClickTimer = useRef<number | null>(null);
   const handledMediaErrorKeyRef = useRef<string | null>(null);
+  const handledAudioErrorKeyRef = useRef<string | null>(null);
+  const lastAudioPlaybackRefreshAtRef = useRef(Number.NEGATIVE_INFINITY);
+  const lastVideoPlaybackRefreshAtRef = useRef(Number.NEGATIVE_INFINITY);
+  const lastMediaRecoveryKeyRef = useRef<string | null>(null);
   const autoFallbackTriedRef = useRef(false);
   const initialSetupAppliedRef = useRef(false);
   const lastHistoryProgressRef = useRef(0);
+  const [audioReloadKey, setAudioReloadKey] = useState(0);
 
   const handleAudioStore = useCallback((store: AudioStore | null) => {
     audioStoreRef.current = store;
@@ -729,6 +818,238 @@ function VideoStage({
       onPlaybackError(message);
     },
     [onPlaybackError, videoStore]
+  );
+
+  const markVideoAttemptReady = useCallback(() => {
+    setMediaWaiting(false);
+    setReadyMediaAttempt(mediaAttempt);
+  }, [mediaAttempt]);
+
+  const prepareMediaRecovery = useCallback(() => {
+    if (!isSwitchingQuality) {
+      if (!initialSetupAppliedRef.current) {
+        initialSetupAppliedRef.current = true;
+        const duration = playback.durationMs / 1000;
+        targetTimeRef.current =
+          duration > 0
+            ? Math.min(initialTime, Math.max(0, duration - 1))
+            : initialTime;
+        setWasPlaying(false);
+      } else {
+        targetTimeRef.current = readPlayerTimeSeconds(videoStore);
+        setWasPlaying(!paused);
+      }
+    }
+
+    videoStore.pause();
+    audioStoreRef.current?.pause();
+    videoStore.dismissError();
+    setMediaWaiting(true);
+    setSwitchingReason("source");
+    setIsSwitchingQuality(true);
+  }, [
+    initialTime,
+    isSwitchingQuality,
+    paused,
+    playback.durationMs,
+    videoStore,
+  ]);
+
+  const beginNextStreamFallback = useCallback(() => {
+    if (autoFallbackTriedRef.current) return false;
+    const nextStreamIndex = playback.streams.findIndex(
+      (stream, index) => index > streamIndex && canPlayDashStream(stream)
+    );
+    if (nextStreamIndex < 0) return false;
+
+    const nextStream = playback.streams[nextStreamIndex];
+    autoFallbackTriedRef.current = true;
+    handledMediaErrorKeyRef.current = null;
+    handledAudioErrorKeyRef.current = null;
+    setReadyAudioUrl(null);
+    setSourceSelection({
+      streamId: nextStream.id,
+      streamKey: streamSourceKey(nextStream),
+      videoIndex: 0,
+      audioIndex: 0,
+    });
+    setMediaAttempt((value) => value + 1);
+    onStreamIndexChange(nextStreamIndex);
+    log.warn("video stream fallback started", {
+      videoId: playback.videoId,
+      fromQuality: selectedStream?.qualityId,
+      toQuality: nextStream.qualityId,
+      targetTime: targetTimeRef.current,
+      willResume: wasPlaying,
+    });
+    return true;
+  }, [
+    onStreamIndexChange,
+    playback.streams,
+    playback.videoId,
+    selectedStream?.qualityId,
+    streamIndex,
+    wasPlaying,
+  ]);
+
+  const recoverFromMediaIssue = useCallback(
+    (reason: "mediaError" | "stalled" | "progressStalled") => {
+      if (
+        !selectedStream ||
+        !currentVideoUrl ||
+        error ||
+        mediaEnded ||
+        (reason === "mediaError" && !mediaError)
+      ) {
+        return;
+      }
+
+      const recoveryKey = `${selectedStreamKey}:${activeSourceSelection.videoIndex}:${activeSourceSelection.audioIndex}:${videoReloadKey}:${mediaAttempt}`;
+      if (lastMediaRecoveryKeyRef.current === recoveryKey) return;
+      lastMediaRecoveryKeyRef.current = recoveryKey;
+
+      const videoNeedsRecovery = !canPlay || !mediaAttemptReady;
+      const audioNeedsRecovery = needsAudio && !audioCanPlay;
+      const nextAudioSourceIndex = activeSourceSelection.audioIndex + 1;
+      if (
+        audioNeedsRecovery &&
+        !videoNeedsRecovery &&
+        nextAudioSourceIndex < audioSourceUrls.length
+      ) {
+        prepareMediaRecovery();
+        handledAudioErrorKeyRef.current = null;
+        setReadyAudioUrl(null);
+        setSourceSelection({
+          streamId: selectedStreamId,
+          streamKey: selectedStreamKey,
+          videoIndex: activeSourceSelection.videoIndex,
+          audioIndex: nextAudioSourceIndex,
+        });
+        log.warn("audio source stall fallback started", {
+          videoId: playback.videoId,
+          streamId: selectedStreamId,
+          sourceIndex: nextAudioSourceIndex,
+          reason,
+        });
+        return;
+      }
+
+      const nextVideoSourceIndex = activeSourceSelection.videoIndex + 1;
+      if (nextVideoSourceIndex < videoSourceUrls.length) {
+        prepareMediaRecovery();
+        handledMediaErrorKeyRef.current = null;
+        setSourceSelection({
+          streamId: selectedStreamId,
+          streamKey: selectedStreamKey,
+          videoIndex: nextVideoSourceIndex,
+          audioIndex: activeSourceSelection.audioIndex,
+        });
+        setMediaAttempt((value) => value + 1);
+        log.warn("video source stall fallback started", {
+          videoId: playback.videoId,
+          streamId: selectedStreamId,
+          sourceIndex: nextVideoSourceIndex,
+          reason,
+        });
+        return;
+      }
+
+      const now = performance.now();
+      if (
+        now - lastVideoPlaybackRefreshAtRef.current >=
+        VIDEO_PLAYBACK_REFRESH_COOLDOWN_MS
+      ) {
+        lastVideoPlaybackRefreshAtRef.current = now;
+        prepareMediaRecovery();
+        log.warn("video playback refresh recovery started", {
+          videoId: playback.videoId,
+          streamId: selectedStreamId,
+          urlHost: mediaUrlHost(currentVideoUrl),
+          reason,
+        });
+
+        let refreshTimeout: number | null = null;
+        void Promise.race([
+          onRefreshPlayback(),
+          new Promise<never>((_, reject) => {
+            refreshTimeout = window.setTimeout(
+              () => reject(new Error("Playback refresh timed out")),
+              VIDEO_PLAYBACK_REFRESH_TIMEOUT_MS
+            );
+          }),
+        ])
+          .then(() => {
+            handledMediaErrorKeyRef.current = null;
+            handledAudioErrorKeyRef.current = null;
+            setSourceSelection({
+              streamId: selectedStreamId,
+              streamKey: selectedStreamKey,
+              videoIndex: 0,
+              audioIndex: 0,
+            });
+            setMediaAttempt((value) => value + 1);
+            setVideoReloadKey((value) => value + 1);
+            setAudioReloadKey((value) => value + 1);
+            log.info("video playback refresh recovery ready", {
+              videoId: playback.videoId,
+              streamId: selectedStreamId,
+            });
+          })
+          .catch((err: unknown) => {
+            log.error("video playback refresh recovery failed", {
+              videoId: playback.videoId,
+              streamId: selectedStreamId,
+              code: asCommandError(err).code,
+            });
+            if (!beginNextStreamFallback()) {
+              setIsSwitchingQuality(false);
+              reportPlaybackError("视频线路恢复失败，请重试");
+            }
+          })
+          .finally(() => {
+            if (refreshTimeout !== null) {
+              window.clearTimeout(refreshTimeout);
+            }
+          });
+        return;
+      }
+
+      prepareMediaRecovery();
+      if (beginNextStreamFallback()) return;
+
+      setIsSwitchingQuality(false);
+      log.error("video media recovery exhausted", {
+        videoId: playback.videoId,
+        streamId: selectedStreamId,
+        urlHost: mediaUrlHost(currentVideoUrl),
+        reason,
+      });
+      reportPlaybackError("视频加载超时，请重试");
+    },
+    [
+      activeSourceSelection.audioIndex,
+      activeSourceSelection.videoIndex,
+      audioCanPlay,
+      audioSourceUrls.length,
+      beginNextStreamFallback,
+      canPlay,
+      currentVideoUrl,
+      error,
+      mediaAttempt,
+      mediaAttemptReady,
+      mediaEnded,
+      mediaError,
+      needsAudio,
+      onRefreshPlayback,
+      playback.videoId,
+      prepareMediaRecovery,
+      reportPlaybackError,
+      selectedStream,
+      selectedStreamId,
+      selectedStreamKey,
+      videoReloadKey,
+      videoSourceUrls.length,
+    ]
   );
 
   const scheduleHideControls = useCallback(() => {
@@ -765,7 +1086,12 @@ function VideoStage({
   }, [scheduleHideControls]);
 
   useEffect(() => {
-    if (!danmakuSettingsOpen) {
+    const floatingPanelOpen =
+      danmakuSettingsOpen ||
+      speedMenuOpen ||
+      qualityMenuOpen ||
+      volumePanelOpen;
+    if (!floatingPanelOpen) {
       scheduleHideControls();
       return;
     }
@@ -774,7 +1100,13 @@ function VideoStage({
       hideTimer.current = null;
     }
     setControlsVisible(true);
-  }, [danmakuSettingsOpen, scheduleHideControls]);
+  }, [
+    danmakuSettingsOpen,
+    qualityMenuOpen,
+    scheduleHideControls,
+    speedMenuOpen,
+    volumePanelOpen,
+  ]);
 
   const openComments = useCallback(() => {
     onCommentsOpenChange(true);
@@ -786,6 +1118,13 @@ function VideoStage({
 
   useEffect(() => {
     if (isSwitchingQuality || isSeeking) return;
+    if (mediaEnded) {
+      const completedTime = Math.max(currentTime, durationSeconds);
+      if (lastHistoryProgressRef.current === completedTime) return;
+      lastHistoryProgressRef.current = completedTime;
+      onCurrentTimeChange(completedTime);
+      return;
+    }
     const previous = lastHistoryProgressRef.current;
     if (
       currentTime >= previous &&
@@ -795,7 +1134,14 @@ function VideoStage({
     }
     lastHistoryProgressRef.current = currentTime;
     onCurrentTimeChange(currentTime);
-  }, [currentTime, isSeeking, isSwitchingQuality, onCurrentTimeChange]);
+  }, [
+    currentTime,
+    durationSeconds,
+    isSeeking,
+    isSwitchingQuality,
+    mediaEnded,
+    onCurrentTimeChange,
+  ]);
 
   useEffect(() => {
     if (!paused && !commentsOpen) return;
@@ -949,111 +1295,198 @@ function VideoStage({
     log.error("video playback failed", {
       videoId: playback.videoId,
       streamId: selectedStreamId,
-      currentSrc,
+      urlHost: mediaUrlHost(currentSrc),
       code: mediaError.code,
       message: mediaError.message,
     });
-
-    const nextVideoSourceIndex = activeSourceSelection.videoIndex + 1;
-    if (nextVideoSourceIndex < videoSourceUrls.length) {
-      const nextAudioSourceIndex =
-        activeSourceSelection.audioIndex + 1 < audioSourceUrls.length
-          ? activeSourceSelection.audioIndex + 1
-          : activeSourceSelection.audioIndex;
-      targetTimeRef.current = readPlayerTimeSeconds(videoStore);
-      setWasPlaying(!paused);
-      videoStore.pause();
-      if (audioCanPlay) {
-        audioStoreRef.current?.pause();
-      }
-      setIsSwitchingQuality(true);
-      videoStore.dismissError();
-      setSourceSelection({
-        streamId: selectedStreamId,
-        videoIndex: nextVideoSourceIndex,
-        audioIndex: nextAudioSourceIndex,
-      });
-      log.info("video CDN fallback started", {
-        videoId: playback.videoId,
-        streamId: selectedStreamId,
-        sourceIndex: nextVideoSourceIndex,
-      });
-      return;
-    }
-
-    const nextStreamIndex = playback.streams.findIndex(
-      (stream, index) => index > streamIndex && canPlayDashStream(stream)
-    );
-    if (!autoFallbackTriedRef.current && nextStreamIndex >= 0) {
-      autoFallbackTriedRef.current = true;
-      targetTimeRef.current = readPlayerTimeSeconds(videoStore);
-      setWasPlaying(!paused);
-      setIsSwitchingQuality(true);
-      videoStore.dismissError();
-      setSourceSelection({
-        streamId: playback.streams[nextStreamIndex].id,
-        videoIndex: 0,
-        audioIndex: 0,
-      });
-      onStreamIndexChange(nextStreamIndex);
-      return;
-    }
-
-    setIsSwitchingQuality(false);
-    reportPlaybackError(mediaError.message || "视频播放失败");
+    recoverFromMediaIssue("mediaError");
   }, [
-    activeSourceSelection.audioIndex,
-    activeSourceSelection.videoIndex,
-    audioCanPlay,
-    audioSourceUrls,
     currentSrc,
     currentVideoUrl,
     mediaError,
-    onStreamIndexChange,
-    paused,
-    playback.streams,
     playback.videoId,
+    recoverFromMediaIssue,
     selectedStream,
     selectedStreamId,
-    streamIndex,
-    videoSourceUrls,
-    videoStore,
-    reportPlaybackError,
   ]);
 
   const handleAudioPlaybackError = useCallback(
     (audioError: PlaybackMediaError) => {
+      const errorKey = `${selectedStreamId}:${currentAudioUrl}:${audioError.code}:${audioError.message}`;
+      if (handledAudioErrorKeyRef.current === errorKey) return;
+      handledAudioErrorKeyRef.current = errorKey;
+
       log.error("audio playback failed", {
         videoId: playback.videoId,
         streamId: selectedStreamId,
+        urlHost: mediaUrlHost(currentAudioUrl),
         code: audioError.code,
         message: audioError.message,
       });
 
-      if (isSwitchingQuality) return;
+      const restoreBeforeSourceChange = () => {
+        const setupPending = !initialSetupAppliedRef.current;
+        if (setupPending) {
+          initialSetupAppliedRef.current = true;
+          const duration = playback.durationMs / 1000;
+          targetTimeRef.current =
+            duration > 0
+              ? Math.min(initialTime, Math.max(0, duration - 1))
+              : initialTime;
+          setWasPlaying(false);
+        } else {
+          targetTimeRef.current = readPlayerTimeSeconds(videoStore);
+          setWasPlaying(!paused);
+        }
+        videoStore.pause();
+        audioStoreRef.current?.pause();
+        setReadyAudioUrl(null);
+        setSwitchingReason("source");
+        setIsSwitchingQuality(true);
+      };
+
+      const nextAudioSourceIndex = activeSourceSelection.audioIndex + 1;
+      if (selectedStreamKey && nextAudioSourceIndex < audioSourceUrls.length) {
+        restoreBeforeSourceChange();
+        setSourceSelection({
+          streamId: selectedStreamId,
+          streamKey: selectedStreamKey,
+          videoIndex: activeSourceSelection.videoIndex,
+          audioIndex: nextAudioSourceIndex,
+        });
+        log.info("audio CDN fallback started", {
+          videoId: playback.videoId,
+          streamId: selectedStreamId,
+          sourceIndex: nextAudioSourceIndex,
+        });
+        return;
+      }
+
+      const now = performance.now();
+      if (
+        now - lastAudioPlaybackRefreshAtRef.current >=
+        AUDIO_PLAYBACK_REFRESH_COOLDOWN_MS
+      ) {
+        lastAudioPlaybackRefreshAtRef.current = now;
+        restoreBeforeSourceChange();
+        log.info("audio playback refresh started", {
+          videoId: playback.videoId,
+          streamId: selectedStreamId,
+        });
+        void onRefreshPlayback()
+          .then(() => {
+            handledAudioErrorKeyRef.current = null;
+            setSourceSelection({
+              streamId: selectedStreamId,
+              streamKey: selectedStreamKey,
+              videoIndex: 0,
+              audioIndex: 0,
+            });
+            setAudioReloadKey((value) => value + 1);
+          })
+          .catch((err: unknown) => {
+            log.error("audio playback refresh failed", {
+              videoId: playback.videoId,
+              streamId: selectedStreamId,
+              err,
+            });
+            setIsSwitchingQuality(false);
+            reportPlaybackError("音频播放失败，请重试");
+          });
+        return;
+      }
+
       setIsSwitchingQuality(false);
-      reportPlaybackError(audioError.message || "音频播放失败");
+      reportPlaybackError("音频播放失败，请重试");
     },
     [
-      isSwitchingQuality,
+      activeSourceSelection.audioIndex,
+      activeSourceSelection.videoIndex,
+      audioSourceUrls.length,
+      currentAudioUrl,
+      initialTime,
+      onRefreshPlayback,
+      paused,
+      playback.durationMs,
       playback.videoId,
       reportPlaybackError,
       selectedStreamId,
+      selectedStreamKey,
+      videoStore,
     ]
   );
 
   useEffect(() => {
-    if (!isSwitchingQuality) return;
+    if (!audioCanPlay) return;
+    handledAudioErrorKeyRef.current = null;
+  }, [audioCanPlay, currentAudioUrl]);
+
+  useEffect(() => {
+    const mediaPending =
+      !mediaReady || isSwitchingQuality || (!paused && mediaWaiting);
+    if (!mediaPending || error || mediaError || mediaEnded || isSeeking) {
+      return;
+    }
     const timer = window.setTimeout(() => {
-      setIsSwitchingQuality(false);
-      reportPlaybackError("切换播放线路超时，请重试");
-    }, 20000);
+      recoverFromMediaIssue("stalled");
+    }, VIDEO_MEDIA_STALL_TIMEOUT_MS);
     return () => window.clearTimeout(timer);
   }, [
     currentAudioUrl,
     currentVideoUrl,
+    error,
+    isSeeking,
     isSwitchingQuality,
-    reportPlaybackError,
+    mediaEnded,
+    mediaError,
+    mediaReady,
+    mediaWaiting,
+    paused,
+    recoverFromMediaIssue,
+  ]);
+
+  useEffect(() => {
+    if (
+      paused ||
+      !mediaReady ||
+      mediaWaiting ||
+      isSeeking ||
+      isSwitchingQuality ||
+      mediaEnded ||
+      mediaError ||
+      error
+    ) {
+      return;
+    }
+
+    let lastTime = readPlayerTimeSeconds(videoStore);
+    let lastProgressAt = performance.now();
+    const timer = window.setInterval(() => {
+      const nextTime = readPlayerTimeSeconds(videoStore);
+      const now = performance.now();
+      if (nextTime > lastTime + 0.1) {
+        lastTime = nextTime;
+        lastProgressAt = now;
+        return;
+      }
+      if (now - lastProgressAt >= VIDEO_MEDIA_STALL_TIMEOUT_MS) {
+        recoverFromMediaIssue("progressStalled");
+      }
+    }, 1_000);
+    return () => window.clearInterval(timer);
+  }, [
+    currentSrc,
+    currentVideoUrl,
+    error,
+    isSeeking,
+    isSwitchingQuality,
+    mediaEnded,
+    mediaError,
+    mediaReady,
+    mediaWaiting,
+    paused,
+    recoverFromMediaIssue,
+    videoStore,
   ]);
 
   useEffect(() => {
@@ -1158,7 +1591,9 @@ function VideoStage({
     if (
       !isSwitchingQuality ||
       !selectedStream ||
+      !mediaAttemptReady ||
       !mediaUrlsMatch(currentSrc, currentVideoUrl) ||
+      !Number.isFinite(playerDuration) ||
       playerDuration <= 0 ||
       (needsAudio && !audioCanPlay)
     ) {
@@ -1217,6 +1652,7 @@ function VideoStage({
     currentVideoUrl,
     currentSrc,
     isSwitchingQuality,
+    mediaAttemptReady,
     needsAudio,
     playerDuration,
     playback.videoId,
@@ -1237,10 +1673,15 @@ function VideoStage({
     if (audioCanPlay) {
       audioStoreRef.current?.pause();
     }
+    setSwitchingReason("quality");
     setIsSwitchingQuality(true);
     setQualityMenuOpen(false);
+    handledMediaErrorKeyRef.current = null;
+    handledAudioErrorKeyRef.current = null;
+    setMediaAttempt((value) => value + 1);
     setSourceSelection({
       streamId: nextStream.id,
+      streamKey: streamSourceKey(nextStream),
       videoIndex: 0,
       audioIndex: 0,
     });
@@ -1340,7 +1781,6 @@ function VideoStage({
 
   const changePlaybackRate = (rate: PlaybackRate) => {
     setPlaybackRate(rate);
-    setSpeedMenuOpen(false);
     log.info("playback rate changed", { rate });
   };
 
@@ -1405,7 +1845,7 @@ function VideoStage({
   return (
     <>
       {needsAudio && selectedStream?.audioUrl ? (
-        <AudioPlayer>
+        <AudioPlayer key={`${currentAudioUrl}:${audioReloadKey}`}>
           <AudioTrack
             src={currentAudioUrl ?? selectedStream.audioUrl}
             onStore={handleAudioStore}
@@ -1426,12 +1866,15 @@ function VideoStage({
       >
         {selectedStream ? (
           <Video
+            key={`${currentVideoUrl}:${videoReloadKey}`}
             src={currentVideoUrl}
             preload="auto"
             playsInline
+            onLoadStart={() => setMediaWaiting(true)}
             onWaiting={() => setMediaWaiting(true)}
-            onPlaying={() => setMediaWaiting(false)}
-            onCanPlay={() => setMediaWaiting(false)}
+            onStalled={() => setMediaWaiting(true)}
+            onPlaying={markVideoAttemptReady}
+            onCanPlay={markVideoAttemptReady}
             className="absolute inset-0 h-full w-full object-contain"
           />
         ) : null}
@@ -1501,7 +1944,9 @@ function VideoStage({
             <div className="text-foreground flex flex-col items-center gap-2">
               <Pause className="size-8 fill-current" />
               <span className="text-sm font-medium">
-                {`正在切换至${qualityLabel || playback.currentQuality.label}清晰度`}
+                {switchingReason === "quality"
+                  ? `正在切换至${qualityLabel || playback.currentQuality.label}清晰度`
+                  : "正在切换播放线路"}
               </span>
             </div>
           </div>
@@ -1601,103 +2046,172 @@ function VideoStage({
                   </button>
 
                   <div className="ml-auto flex items-center gap-2 sm:gap-3">
-                    <div className="relative">
-                      <button
-                        type="button"
-                        className="text-foreground/90 hover:text-foreground focus-visible:ring-ring flex h-8 items-center gap-1 rounded-sm px-1 text-xs font-medium focus-visible:ring-2 focus-visible:outline-none"
-                        aria-label="清晰度"
-                        aria-haspopup="menu"
-                        aria-expanded={qualityMenuOpen}
-                        title="清晰度"
-                        onClick={() => setQualityMenuOpen((open) => !open)}
-                      >
-                        <Settings2 className="size-3.5" />
-                        {qualityLabel ? <span>{qualityLabel}</span> : null}
-                      </button>
-                      {qualityMenuOpen ? (
-                        <div
-                          role="menu"
+                    <HoverCard
+                      open={qualityMenuOpen}
+                      openDelay={PLAYER_HOVER_OPEN_DELAY_MS}
+                      closeDelay={PLAYER_HOVER_CLOSE_DELAY_MS}
+                      onOpenChange={setQualityMenuOpen}
+                    >
+                      <HoverCardTrigger asChild>
+                        <button
+                          type="button"
+                          className="text-foreground/90 hover:text-foreground focus-visible:ring-ring flex h-8 items-center gap-1 rounded-sm px-1 text-xs font-medium focus-visible:ring-2 focus-visible:outline-none"
                           aria-label="清晰度"
-                          className="border-border bg-popover/95 text-popover-foreground absolute right-0 bottom-full z-40 mb-2 w-32 rounded-md border p-1.5 shadow-2xl backdrop-blur-md"
+                          aria-expanded={qualityMenuOpen}
+                          aria-controls="player-quality-panel"
+                          title="清晰度"
+                          onClick={() => setQualityMenuOpen((open) => !open)}
                         >
-                          <div className="text-muted-foreground px-2 py-1 text-xs">
+                          <Settings2 className="size-3.5" />
+                          {qualityLabel ? <span>{qualityLabel}</span> : null}
+                        </button>
+                      </HoverCardTrigger>
+                      <HoverCardContent
+                        id="player-quality-panel"
+                        portalContainer={stageRef.current}
+                        side="top"
+                        align="end"
+                        sideOffset={8}
+                        collisionPadding={12}
+                        className={`${PLAYER_CONTROL_SURFACE_CLASS} w-28 border p-1 shadow-2xl`}
+                      >
+                        <div role="group" aria-label="清晰度">
+                          <div className="text-muted-foreground flex h-5 items-center px-2 text-[10px]">
                             清晰度
                           </div>
-                          <div className="grid gap-1">
-                            {availableStreams.map((stream) => (
-                              <button
-                                key={stream.id}
-                                type="button"
-                                role="menuitemradio"
-                                aria-checked={
-                                  playback.streams.indexOf(stream) ===
-                                  streamIndex
-                                }
-                                className="text-popover-foreground/85 hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring flex h-8 items-center justify-between rounded-md px-2 text-xs focus-visible:ring-2 focus-visible:outline-none"
-                                onClick={() =>
-                                  changeQuality(
-                                    playback.streams.indexOf(stream)
-                                  )
-                                }
-                              >
-                                <span>
-                                  {QUALITY_LABELS[stream.qualityId] ??
-                                    stream.qualityLabel}
-                                </span>
-                                {playback.streams.indexOf(stream) ===
-                                streamIndex ? (
-                                  <Check className="size-3.5 text-[var(--player-accent)]" />
-                                ) : null}
-                              </button>
-                            ))}
+                          <div className="grid gap-0.5">
+                            {availableStreams.map((stream) => {
+                              const streamAvailableIndex =
+                                playback.streams.indexOf(stream);
+                              const selected =
+                                streamAvailableIndex === streamIndex;
+                              return (
+                                <button
+                                  key={stream.id}
+                                  type="button"
+                                  aria-pressed={selected}
+                                  className="text-popover-foreground/85 hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring flex h-6 w-full items-center justify-between rounded-sm px-2 text-[11px] focus-visible:ring-2 focus-visible:outline-none"
+                                  onClick={() =>
+                                    changeQuality(streamAvailableIndex)
+                                  }
+                                >
+                                  <span>
+                                    {QUALITY_LABELS[stream.qualityId] ??
+                                      stream.qualityLabel}
+                                  </span>
+                                  {selected ? (
+                                    <Check className="size-3 text-[var(--player-accent)]" />
+                                  ) : null}
+                                </button>
+                              );
+                            })}
                           </div>
                         </div>
-                      ) : null}
-                    </div>
+                      </HoverCardContent>
+                    </HoverCard>
 
-                    <div className="relative">
-                      <button
-                        type="button"
-                        className="text-foreground/90 hover:text-foreground focus-visible:ring-ring h-8 rounded-sm px-0.5 text-xs font-medium tabular-nums focus-visible:ring-2 focus-visible:outline-none"
-                        aria-label={`播放速度 ${formatPlaybackRate(playbackRate)}`}
-                        aria-haspopup="menu"
-                        aria-expanded={speedMenuOpen}
-                        title="播放速度"
-                        onClick={() => setSpeedMenuOpen((open) => !open)}
-                      >
-                        {playbackRate === 1
-                          ? "倍速"
-                          : formatPlaybackRate(playbackRate)}
-                      </button>
-                      {speedMenuOpen ? (
-                        <div
-                          role="menu"
-                          aria-label="播放速度"
-                          className="border-border bg-popover/95 text-popover-foreground absolute right-0 bottom-full z-40 mb-2 w-40 rounded-md border p-1.5 shadow-2xl backdrop-blur-md"
+                    <HoverCard
+                      open={speedMenuOpen}
+                      openDelay={PLAYER_HOVER_OPEN_DELAY_MS}
+                      closeDelay={PLAYER_HOVER_CLOSE_DELAY_MS}
+                      onOpenChange={setSpeedMenuOpen}
+                    >
+                      <HoverCardTrigger asChild>
+                        <button
+                          type="button"
+                          className="text-foreground/90 hover:text-foreground focus-visible:ring-ring h-8 rounded-sm px-1 text-xs font-medium tabular-nums focus-visible:ring-2 focus-visible:outline-none"
+                          aria-label={`播放速度 ${formatPlaybackRate(playbackRate)}`}
+                          aria-expanded={speedMenuOpen}
+                          aria-controls="player-speed-pager"
+                          title="播放速度"
+                          onClick={() => setSpeedMenuOpen((open) => !open)}
                         >
-                          <div className="text-muted-foreground px-2 py-1 text-xs">
-                            播放速度
-                          </div>
-                          <div className="grid grid-cols-2 gap-1">
-                            {PLAYBACK_RATES.map((rate) => (
-                              <button
-                                key={rate}
-                                type="button"
-                                role="menuitemradio"
-                                aria-checked={rate === playbackRate}
-                                className="text-popover-foreground/85 hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring flex h-8 items-center justify-between rounded-md px-2 text-xs tabular-nums focus-visible:ring-2 focus-visible:outline-none"
-                                onClick={() => changePlaybackRate(rate)}
-                              >
-                                <span>{formatPlaybackRate(rate)}</span>
-                                {rate === playbackRate ? (
-                                  <Check className="size-3.5 text-[var(--player-accent)]" />
-                                ) : null}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
+                          {playbackRate === 1
+                            ? "倍速"
+                            : formatPlaybackRate(playbackRate)}
+                        </button>
+                      </HoverCardTrigger>
+                      <HoverCardContent
+                        id="player-speed-pager"
+                        role="group"
+                        aria-label="播放速度"
+                        portalContainer={stageRef.current}
+                        side="top"
+                        align="end"
+                        sideOffset={8}
+                        collisionPadding={12}
+                        className={`${PLAYER_CONTROL_SURFACE_CLASS} flex w-max items-center gap-0 border p-0.5 shadow-2xl`}
+                      >
+                        <button
+                          type="button"
+                          className={SPEED_PAGER_BUTTON_CLASS}
+                          aria-label="最低速度"
+                          title="最低速度"
+                          disabled={playbackRate === PLAYBACK_RATES[0]}
+                          onClick={() => changePlaybackRate(PLAYBACK_RATES[0])}
+                        >
+                          <ChevronFirst className="size-3" />
+                        </button>
+                        <button
+                          type="button"
+                          className={SPEED_PAGER_BUTTON_CLASS}
+                          aria-label="降低播放速度"
+                          title="降低播放速度"
+                          disabled={playbackRate === PLAYBACK_RATES[0]}
+                          onClick={() => {
+                            const index = PLAYBACK_RATES.indexOf(playbackRate);
+                            changePlaybackRate(
+                              PLAYBACK_RATES[Math.max(0, index - 1)]
+                            );
+                          }}
+                        >
+                          <ChevronLeft className="size-3" />
+                        </button>
+                        <output
+                          aria-live="polite"
+                          className="text-foreground min-w-10 px-0.5 text-center text-[11px] font-medium tabular-nums"
+                        >
+                          {formatPlaybackRate(playbackRate)}
+                        </output>
+                        <button
+                          type="button"
+                          className={SPEED_PAGER_BUTTON_CLASS}
+                          aria-label="提高播放速度"
+                          title="提高播放速度"
+                          disabled={
+                            playbackRate ===
+                            PLAYBACK_RATES[PLAYBACK_RATES.length - 1]
+                          }
+                          onClick={() => {
+                            const index = PLAYBACK_RATES.indexOf(playbackRate);
+                            changePlaybackRate(
+                              PLAYBACK_RATES[
+                                Math.min(PLAYBACK_RATES.length - 1, index + 1)
+                              ]
+                            );
+                          }}
+                        >
+                          <ChevronRight className="size-3" />
+                        </button>
+                        <button
+                          type="button"
+                          className={SPEED_PAGER_BUTTON_CLASS}
+                          aria-label="最高速度"
+                          title="最高速度"
+                          disabled={
+                            playbackRate ===
+                            PLAYBACK_RATES[PLAYBACK_RATES.length - 1]
+                          }
+                          onClick={() =>
+                            changePlaybackRate(
+                              PLAYBACK_RATES[PLAYBACK_RATES.length - 1]
+                            )
+                          }
+                        >
+                          <ChevronLast className="size-3" />
+                        </button>
+                      </HoverCardContent>
+                    </HoverCard>
 
                     <div
                       className="relative flex h-8 items-center"
@@ -1844,12 +2358,16 @@ export default function VideoView() {
   const [playback, setPlayback] = useState<PlaybackInfo | null>(null);
   const [streamIndex, setStreamIndex] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
+  const [initialPlaybackTime, setInitialPlaybackTime] = useState(0);
   const [favorite, setFavorite] = useState<FavoriteEntry | null>(null);
   const [favoriteBusy, setFavoriteBusy] = useState(false);
   const [favoriteLoading, setFavoriteLoading] = useState(true);
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [error, setError] = useState<CommandError | null>(null);
   const loadRequestIdRef = useRef(0);
+  const loadRef = useRef<((automaticRetry?: boolean) => Promise<void>) | null>(
+    null
+  );
   const accountRevisionRef = useRef(0);
   const favoriteRequestIdRef = useRef(0);
   const historySaveKeyRef = useRef<string | null>(null);
@@ -1868,75 +2386,135 @@ export default function VideoView() {
     setError({ code: "playbackError", message });
   }, []);
 
-  const load = useCallback(async () => {
-    const requestId = ++loadRequestIdRef.current;
-    const revision = accountRevision;
-    setError(null);
-    setDetail(null);
-    setPlayback(null);
-    try {
-      const videoDetail = await getVideoDetail(videoId);
-      if (
-        requestId !== loadRequestIdRef.current ||
-        revision !== accountRevisionRef.current
-      ) {
-        return;
-      }
-      log.info("detail loaded", {
-        videoId,
-        resolvedId: videoDetail.card.videoId,
-        title: videoDetail.card.title,
-        pageCount: videoDetail.pages.length,
-        firstCid: videoDetail.pages[0]?.cid,
-      });
-      setDetail(videoDetail);
-      const page =
-        videoDetail.pages.find((item) => item.cid === requestedPageCid) ??
-        videoDetail.pages[0];
-      if (!page) throw new Error("No playable page");
-      const info = await getVideoPlayback(videoId, page.cid);
-      if (
-        requestId !== loadRequestIdRef.current ||
-        revision !== accountRevisionRef.current
-      ) {
-        return;
-      }
-      const playableStreams = info.streams.filter(canPlayDashStream);
-      const selectedStream = playableStreams[0] ?? info.streams[0];
-      log.info("playback loaded", {
-        videoId,
-        cid: info.cid,
-        protocol: selectedStream?.protocol,
-        quality: selectedStream?.qualityLabel ?? info.currentQuality.label,
-        noticeKind: info.qualityNotice.kind,
-        urlHost: selectedStream ? new URL(selectedStream.url).host : null,
-      });
-      if (!selectedStream) throw new Error("No playable stream");
-      const resumeTime =
-        requestedPageCid !== null && info.cid === requestedPageCid
-          ? requestedResumeTime
-          : 0;
-      if (requestedResumeTime > 0 && resumeTime === 0) {
-        log.warn("requested history page unavailable", {
+  const load = useCallback(
+    async (automaticRetry = false) => {
+      const requestId = ++loadRequestIdRef.current;
+      const revision = accountRevision;
+      setError(null);
+      setDetail(null);
+      setPlayback(null);
+      setInitialPlaybackTime(0);
+      setCurrentTime(0);
+      try {
+        const historyRequest = listLocalHistory().catch(
+          (reason): HistoryEntry[] => {
+            log.warn("local history load failed", {
+              videoId,
+              code: asCommandError(reason).code,
+            });
+            return [];
+          }
+        );
+        const [videoDetail, historyEntries] = await Promise.all([
+          getVideoDetail(videoId),
+          historyRequest,
+        ]);
+        if (
+          requestId !== loadRequestIdRef.current ||
+          revision !== accountRevisionRef.current
+        ) {
+          return;
+        }
+        log.info("detail loaded", {
           videoId,
-          requestedPageCid,
-          playbackCid: info.cid,
+          resolvedId: videoDetail.card.videoId,
+          title: videoDetail.card.title,
+          pageCount: videoDetail.pages.length,
+          firstCid: videoDetail.pages[0]?.cid,
         });
+        setDetail(videoDetail);
+        const historyEntry =
+          historyEntries.find(
+            (entry) =>
+              entry.card.platform === videoDetail.card.platform &&
+              entry.card.videoId === videoDetail.card.videoId
+          ) ?? null;
+        const preferredPageCid =
+          requestedPageCid ?? historyEntry?.pageCid ?? null;
+        const page =
+          videoDetail.pages.find((item) => item.cid === preferredPageCid) ??
+          videoDetail.pages[0];
+        if (!page) throw new Error("No playable page");
+        const info = await getVideoPlayback(videoId, page.cid);
+        if (
+          requestId !== loadRequestIdRef.current ||
+          revision !== accountRevisionRef.current
+        ) {
+          return;
+        }
+        const playableStreams = info.streams.filter(canPlayDashStream);
+        const selectedStream = playableStreams[0] ?? info.streams[0];
+        log.info("playback loaded", {
+          videoId,
+          cid: info.cid,
+          protocol: selectedStream?.protocol,
+          quality: selectedStream?.qualityLabel ?? info.currentQuality.label,
+          noticeKind: info.qualityNotice.kind,
+          urlHost: selectedStream ? new URL(selectedStream.url).host : null,
+        });
+        if (!selectedStream) throw new Error("No playable stream");
+        const explicitResume =
+          requestedPageCid !== null && info.cid === requestedPageCid;
+        const historyResume =
+          historyEntry !== null && info.cid === historyEntry.pageCid;
+        const resumeTime = explicitResume
+          ? requestedResumeTime
+          : historyResume
+            ? historyResumeSeconds(historyEntry)
+            : 0;
+        if (requestedResumeTime > 0 && resumeTime === 0) {
+          log.warn("requested history page unavailable", {
+            videoId,
+            requestedPageCid,
+            playbackCid: info.cid,
+          });
+        }
+        if (!explicitResume && resumeTime > 0) {
+          log.info("local history resume resolved", {
+            videoId,
+            cid: info.cid,
+            resumeTime,
+          });
+        }
+        setInitialPlaybackTime(resumeTime);
+        setCurrentTime(resumeTime);
+        setStreamIndex(info.streams.indexOf(selectedStream));
+        setPlayback(info);
+      } catch (err) {
+        if (
+          requestId !== loadRequestIdRef.current ||
+          revision !== accountRevisionRef.current
+        ) {
+          return;
+        }
+        const commandError = asCommandError(err);
+        if (!automaticRetry && shouldRetryVideoLoad(commandError)) {
+          log.warn("video load failed, retrying automatically", {
+            videoId,
+            code: commandError.code,
+          });
+          await new Promise((resolve) =>
+            window.setTimeout(resolve, VIDEO_LOAD_AUTO_RETRY_DELAY_MS)
+          );
+          if (
+            requestId !== loadRequestIdRef.current ||
+            revision !== accountRevisionRef.current
+          ) {
+            return;
+          }
+          await loadRef.current?.(true);
+          return;
+        }
+        log.error("video load failed", { videoId, err: commandError });
+        setError(commandError);
       }
-      setCurrentTime(resumeTime);
-      setStreamIndex(info.streams.indexOf(selectedStream));
-      setPlayback(info);
-    } catch (err) {
-      if (
-        requestId !== loadRequestIdRef.current ||
-        revision !== accountRevisionRef.current
-      ) {
-        return;
-      }
-      log.error("video load failed", { videoId, err });
-      setError(asCommandError(err));
-    }
-  }, [accountRevision, requestedPageCid, requestedResumeTime, videoId]);
+    },
+    [accountRevision, requestedPageCid, requestedResumeTime, videoId]
+  );
+
+  useEffect(() => {
+    loadRef.current = load;
+  }, [load]);
 
   useEffect(() => {
     void load();
@@ -2042,13 +2620,24 @@ export default function VideoView() {
       lastHistorySaveAtRef.current = 0;
     }
 
+    const durationSeconds = Math.max(
+      0,
+      Math.round(playback.durationMs / 1000),
+      Math.floor(currentTime)
+    );
+    const completed = isHistoryProgressComplete(currentTime, durationSeconds);
     const now = Date.now();
-    if (now - lastHistorySaveAtRef.current < HISTORY_SAVE_THROTTLE_MS) {
+    if (
+      !completed &&
+      now - lastHistorySaveAtRef.current < HISTORY_SAVE_THROTTLE_MS
+    ) {
       return;
     }
     lastHistorySaveAtRef.current = now;
 
-    const progressSeconds = Math.floor(currentTime);
+    const progressSeconds = completed
+      ? durationSeconds
+      : Math.min(durationSeconds, Math.floor(currentTime));
     const pageTitle =
       detail.pages.find((page) => page.cid === playback.cid)?.title ??
       detail.card.title;
@@ -2057,7 +2646,7 @@ export default function VideoView() {
       playback.cid,
       pageTitle,
       progressSeconds,
-      Math.round(playback.durationMs / 1000)
+      durationSeconds
     )
       .then(() =>
         log.debug("history saved", {
@@ -2077,10 +2666,33 @@ export default function VideoView() {
     const playable = playback.streams.filter(canPlayDashStream);
     return playable.length > 0 ? playable : playback.streams;
   }, [playback]);
-  const initialPlaybackTime =
-    playback && requestedPageCid !== null && playback.cid === requestedPageCid
-      ? requestedResumeTime
-      : 0;
+
+  const refreshPlayback = useCallback(async () => {
+    if (!playback) throw new Error("Playback is not loaded");
+    const revision = accountRevision;
+    const selectedQuality = playback.streams[streamIndex]?.qualityId;
+    const refreshed = await getVideoPlayback(playback.videoId, playback.cid);
+    if (revision !== accountRevisionRef.current) return;
+    const playableStreams = refreshed.streams.filter(canPlayDashStream);
+    const selectedStream =
+      refreshed.streams.find(
+        (stream) =>
+          stream.qualityId === selectedQuality && canPlayDashStream(stream)
+      ) ??
+      playableStreams[0] ??
+      refreshed.streams[0];
+    if (!selectedStream) {
+      throw new Error("No playable stream after playback refresh");
+    }
+    setPlayback(refreshed);
+    setStreamIndex(refreshed.streams.indexOf(selectedStream));
+    log.info("playback refreshed", {
+      videoId: refreshed.videoId,
+      cid: refreshed.cid,
+      quality: selectedStream.qualityLabel,
+      urlHost: new URL(selectedStream.url).host,
+    });
+  }, [accountRevision, playback, streamIndex]);
 
   return (
     <div className="bg-background text-foreground relative h-[calc(100vh-2rem)] min-h-0 w-full overflow-hidden">
@@ -2100,6 +2712,7 @@ export default function VideoView() {
               commentsOpen={commentsOpen}
               onStreamIndexChange={setStreamIndex}
               onCurrentTimeChange={setCurrentTime}
+              onRefreshPlayback={refreshPlayback}
               onFavorite={() => void toggleFavorite()}
               onFavoriteHint={() =>
                 toastInfo("Video.actions.unfavoriteHint", {

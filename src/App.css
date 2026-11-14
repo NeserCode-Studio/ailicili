@@ -208,10 +208,10 @@
     @apply relative z-0 h-full w-full transition-colors duration-100 ease-in-out;
   }
   .view-home {
-    @apply flex h-full w-full flex-col;
+    @apply flex min-h-full w-full flex-col;
   }
   .video-grid {
-    @apply mx-auto grid w-full max-w-[1440px] grid-cols-1 gap-4 p-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4;
+    @apply mx-auto grid w-full max-w-[1440px] grid-cols-1 gap-4 p-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5;
   }
   .video-card {
     @apply border-border/60 bg-card hover:border-primary/40 hover:bg-accent/30 flex w-full flex-col overflow-hidden rounded-lg border text-left transition-colors;

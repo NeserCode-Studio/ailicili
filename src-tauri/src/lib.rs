@@ -590,6 +590,26 @@ async fn clear_local_history() -> Result<Vec<domain::HistoryEntry>, domain::Comm
 }
 
 #[tauri::command]
+async fn remove_local_history(
+    platform: String,
+    video_id: String,
+) -> Result<Vec<domain::HistoryEntry>, domain::CommandError> {
+    let platform = domain::PlatformId::new(platform)
+        .map_err(|_| domain::CommandError::new("invalidHistoryTarget", "播放记录标识无效。"))?;
+    let video_id = video_id.trim().to_string();
+    if video_id.is_empty() {
+        return Err(domain::CommandError::new(
+            "invalidHistoryTarget",
+            "播放记录标识无效。",
+        ));
+    }
+    tauri::async_runtime::spawn_blocking(move || storage::remove_history(platform, video_id))
+        .await
+        .map_err(|err| storage_error(err.to_string()))?
+        .map_err(storage_error)
+}
+
+#[tauri::command]
 async fn list_local_favorites() -> Result<Vec<domain::FavoriteEntry>, domain::CommandError> {
     tauri::async_runtime::spawn_blocking(storage::list_favorites)
         .await
@@ -868,6 +888,7 @@ pub fn run() {
             list_local_history,
             save_local_history,
             clear_local_history,
+            remove_local_history,
             list_local_favorites,
             add_local_favorite,
             remove_local_favorite,

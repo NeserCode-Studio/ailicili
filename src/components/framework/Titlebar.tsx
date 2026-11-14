@@ -8,15 +8,12 @@ import {
   MenubarTrigger,
 } from "@/components/ui/menubar";
 
-import AccountAvatar from "@/components/account/AccountAvatar";
 import TitlebarOperations, {
   ThemeIcon,
 } from "@/components/framework/TitlebarOperations";
 import { useContext } from "react";
-import { UserRound } from "lucide-react";
 import { ThemeContext } from "@/contexts/theme";
 import { NavigatorContext } from "@/contexts/navigator";
-import { useAccount } from "@/contexts/account-context";
 import TitlebarTitle from "./TitlebarTitle";
 import { useI18n } from "@/composables";
 import { useSettingsDialog } from "@/contexts/settings";
@@ -30,12 +27,6 @@ export default function Titlebar() {
   /* Navigator */
   const { navigator } = useContext(NavigatorContext);
   const { openSettings, openAbout } = useSettingsDialog();
-  const { snapshot, openAccountCenter } = useAccount();
-  const authenticatedAccounts =
-    snapshot?.platforms.filter((entry) => entry.status === "authenticated") ??
-    [];
-  const soleAccount =
-    authenticatedAccounts.length === 1 ? authenticatedAccounts[0] : null;
 
   function toggleTheme() {
     if (theme === "dark") {
@@ -170,37 +161,6 @@ export default function Titlebar() {
       </div>
 
       <div className="flex shrink-0 items-center gap-1 self-stretch">
-        <button
-          type="button"
-          className="row-icon focus-visible:ring-ring h-6 max-w-40 px-2 text-xs text-neutral-700 hover:bg-neutral-200 focus-visible:ring-2 focus-visible:outline-none dark:text-neutral-200 dark:hover:bg-neutral-600"
-          title={
-            soleAccount
-              ? t("Account.titlebar.authenticated")
-              : authenticatedAccounts.length > 1
-                ? t("Account.titlebar.multiple")
-                : t("Account.titlebar.login")
-          }
-          onClick={openAccountCenter}
-        >
-          {soleAccount ? (
-            <AccountAvatar
-              src={soleAccount.profile?.avatarUrl}
-              className="size-4"
-              fallback={<UserRound className="icon-sm" />}
-            />
-          ) : (
-            <UserRound className="icon-sm" />
-          )}
-          <span className="truncate">
-            {soleAccount
-              ? (soleAccount.profile?.name ??
-                t("Account.titlebar.authenticated"))
-              : authenticatedAccounts.length > 1
-                ? t("Account.titlebar.multiple")
-                : t("Account.titlebar.login")}
-          </span>
-        </button>
-
         <TitlebarOperations />
       </div>
     </div>

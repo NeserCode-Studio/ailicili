@@ -1,6 +1,7 @@
 import {
   Component,
   createContext,
+  memo,
   useCallback,
   useContext,
   useEffect,
@@ -858,10 +859,10 @@ function CommentsLoginHint({ onLogin }: { onLogin: () => void }) {
 
 const commentsSidebarSurfaceClass = (open: boolean) =>
   cn(
-    "border-border bg-background/80 text-foreground absolute inset-y-0 right-0 z-50 overflow-hidden shadow-2xl backdrop-blur-[40px] backdrop-saturate-150 transition-[width,background-color,border-color,color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none",
+    "border-border bg-background/80 text-foreground absolute inset-y-0 right-0 z-50 overflow-hidden shadow-2xl transition-[width,background-color,border-color,color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
     open
-      ? "w-full border-l sm:w-[360px] lg:w-[384px]"
-      : "pointer-events-none w-0 border-l-0"
+      ? "w-full border-l backdrop-blur-[40px] backdrop-saturate-150 will-change-[width] sm:w-[360px] lg:w-[384px]"
+      : "pointer-events-none w-0 border-l-0 [content-visibility:hidden]"
   );
 
 const commentsSidebarContentClass =
@@ -869,8 +870,8 @@ const commentsSidebarContentClass =
 
 const commentsSidebarBackdropClass = (open: boolean) =>
   cn(
-    "bg-background/20 absolute inset-0 z-40 backdrop-blur-[2px] transition-opacity duration-300 ease-out motion-reduce:transition-none",
-    open ? "opacity-100" : "pointer-events-none opacity-0"
+    "bg-background/20 absolute inset-0 z-40 transition-opacity duration-300 ease-out motion-reduce:transition-none",
+    open ? "opacity-100 backdrop-blur-[2px]" : "pointer-events-none opacity-0"
   );
 
 interface CommentsSidebarBoundaryProps extends CommentsSidebarProps {
@@ -918,14 +919,13 @@ class CommentsSidebarBoundary extends Component<
         <button
           type="button"
           aria-label={this.props.closeLabel}
-          aria-hidden={!open}
+          inert={!open}
           tabIndex={-1}
           className={commentsSidebarBackdropClass(open)}
           onClick={onClose}
         />
         <aside
           aria-label={title}
-          aria-hidden={!open}
           inert={!open}
           className={commentsSidebarSurfaceClass(open)}
         >
@@ -991,6 +991,8 @@ function CommentsSidebarContent({
   const loadedKeyRef = useRef<string | null>(null);
   const requestGenerationRef = useRef(0);
   const mountedRef = useRef(true);
+  const backdropRef = useRef<HTMLButtonElement>(null);
+  const surfaceRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -999,6 +1001,17 @@ function CommentsSidebarContent({
       requestGenerationRef.current += 1;
     };
   }, []);
+
+  useEffect(() => {
+    if (open) return;
+    const focused = document.activeElement;
+    if (
+      focused instanceof HTMLElement &&
+      (surfaceRef.current?.contains(focused) || backdropRef.current === focused)
+    ) {
+      focused.blur();
+    }
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -1087,16 +1100,17 @@ function CommentsSidebarContent({
   return (
     <>
       <button
+        ref={backdropRef}
         type="button"
         aria-label={t("Comments.close")}
-        aria-hidden={!open}
+        inert={!open}
         tabIndex={-1}
         className={commentsSidebarBackdropClass(open)}
         onClick={onClose}
       />
       <aside
+        ref={surfaceRef}
         aria-label={t("Comments.title")}
-        aria-hidden={!open}
         inert={!open}
         className={commentsSidebarSurfaceClass(open)}
       >
@@ -1273,7 +1287,9 @@ function CommentsSidebarContent({
   );
 }
 
-export function CommentsSidebar(props: CommentsSidebarProps) {
+export const CommentsSidebar = memo(function CommentsSidebar(
+  props: CommentsSidebarProps
+) {
   const { t } = useI18n();
   return (
     <CommentsSidebarBoundary
@@ -1286,4 +1302,4 @@ export function CommentsSidebar(props: CommentsSidebarProps) {
       <CommentsSidebarContent {...props} />
     </CommentsSidebarBoundary>
   );
-}
+});
