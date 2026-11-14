@@ -12,6 +12,11 @@ import {
 } from "@/lib/danmaku/live-client";
 import { LiveDanmakuClock } from "@/lib/danmaku/live-clock";
 import {
+  filterDanmakuItemsBySuppressedTexts,
+  LiveDanmakuShoutTracker,
+  type DanmakuShout,
+} from "@/lib/danmaku/shout";
+import {
   normalizeDanmakuEmote,
   type DanmakuEmote,
   type DanmakuRenderItem,
@@ -34,6 +39,8 @@ interface UseLiveDanmakuOptions {
 
 interface LiveDanmakuState {
   items: DanmakuRenderItem[];
+  shouts: DanmakuShout[];
+  suppressedTexts: string[];
   clockMs: number;
   status: LiveDanmakuStatus;
   errorCode: string | null;
@@ -43,6 +50,8 @@ interface LiveDanmakuState {
 function initialState(): LiveDanmakuState {
   return {
     items: [],
+    shouts: [],
+    suppressedTexts: [],
     clockMs: typeof performance === "undefined" ? 0 : performance.now(),
     status: "idle",
     errorCode: null,
@@ -81,6 +90,8 @@ export function useLiveDanmaku({
       setState((current) => ({
         ...current,
         items: [],
+        shouts: [],
+        suppressedTexts: [],
         status: "incompatible",
         renderFailed: true,
       }));
@@ -105,6 +116,7 @@ export function useLiveDanmaku({
 
     let cancelled = false;
     const clock = new LiveDanmakuClock();
+    const shoutTracker = new LiveDanmakuShoutTracker();
     clockRef.current = clock;
     receivedBatchesRef.current = 0;
     receivedItemsRef.current = 0;
@@ -180,10 +192,12 @@ export function useLiveDanmaku({
           return;
         }
         for (const item of items) {
-          pending.push({
+          const playbackItem = {
             ...item,
             timeMs: clock.toPlaybackTime(item.timeMs),
-          });
+          };
+          shoutTracker.observe(playbackItem);
+          pending.push(playbackItem);
         }
         const overflow = pending.length - PENDING_QUEUE_LIMIT;
         if (overflow > 0) pending.splice(0, overflow);
@@ -221,18 +235,32 @@ export function useLiveDanmaku({
     });
     clientRef.current = client;
 
+    let lastPresentationKey = "";
     const flush = () => {
-      if (cancelled || pending.length === 0) return;
+      if (cancelled) return;
       const now = clock.now();
+      const hadPending = pending.length > 0;
       const merged = [...activeRef.current, ...pending].filter(
         (item) => item.timeMs >= now - ACTIVE_RETENTION_MS
       );
       pending.splice(0);
-      const nextItems = merged.slice(-ACTIVE_ITEM_LIMIT);
+      const shoutSnapshot = shoutTracker.snapshot(now);
+      const nextItems = filterDanmakuItemsBySuppressedTexts(
+        merged,
+        shoutSnapshot.suppressedTexts
+      ).slice(-ACTIVE_ITEM_LIMIT);
       activeRef.current = nextItems;
+      const presentationKey = JSON.stringify([
+        shoutSnapshot.shouts,
+        shoutSnapshot.suppressedTexts,
+      ]);
+      if (!hadPending && presentationKey === lastPresentationKey) return;
+      lastPresentationKey = presentationKey;
       setState((current) => ({
         ...current,
         items: nextItems,
+        shouts: shoutSnapshot.shouts,
+        suppressedTexts: shoutSnapshot.suppressedTexts,
         clockMs: now,
       }));
     };
@@ -247,6 +275,7 @@ export function useLiveDanmaku({
       if (clockRef.current === clock) clockRef.current = null;
       pendingRef.current = [];
       activeRef.current = [];
+      shoutTracker.reset();
     };
   }, [accountRevision, emoticonCatalogEnabled, enabled, roomId]);
 
@@ -262,6 +291,8 @@ export function useLiveDanmaku({
 
   return {
     items: state.items,
+    shouts: state.shouts,
+    suppressedTexts: state.suppressedTexts,
     clockMs: state.clockMs,
     status: state.status,
     errorCode: state.errorCode,

@@ -2,6 +2,7 @@ import { useEffect, useRef, type RefObject } from "react";
 
 import { DanmakuCanvasEngine } from "@/lib/danmaku/engine";
 import type { DanmakuMediaClockSource } from "@/lib/danmaku/media-clock";
+import type { DanmakuShout } from "@/lib/danmaku/shout";
 import type {
   DanmakuRenderItem,
   DanmakuRenderStyle,
@@ -26,6 +27,7 @@ function publishDiagnostics(
   canvas.dataset.danmakuRenderCount = String(stats.renderCount);
   canvas.dataset.danmakuSpawnAttemptCount = String(stats.spawnAttemptCount);
   canvas.dataset.danmakuSpawnActiveCount = String(stats.spawnActiveCount);
+  canvas.dataset.danmakuShoutCount = String(stats.shoutCount);
   canvas.dataset.danmakuTextureGetCount = String(stats.textureGetCount);
   canvas.dataset.danmakuTextureCacheMissCount = String(
     stats.textureCacheMissCount
@@ -50,6 +52,8 @@ interface DanmakuSchedulerOptions {
   items: readonly DanmakuRenderItem[];
   mediaTimeMs: number;
   mediaClock?: DanmakuMediaClockSource;
+  shouts: readonly DanmakuShout[];
+  suppressedTexts: readonly string[];
   playing: boolean;
   playbackRate: number;
   seeking?: boolean;
@@ -147,6 +151,14 @@ export function useDanmakuScheduler(
   useEffect(() => {
     engineRef.current?.setItems(options.items);
   }, [options.items]);
+
+  useEffect(() => {
+    engineRef.current?.setShouts(options.shouts);
+  }, [options.shouts]);
+
+  useEffect(() => {
+    engineRef.current?.setSuppressedTexts(options.suppressedTexts);
+  }, [options.suppressedTexts]);
 
   useEffect(() => {
     engineRef.current?.setStyle(options.style);

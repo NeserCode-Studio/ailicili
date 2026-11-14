@@ -44,6 +44,14 @@ import {
   shouldPrefetchNextDanmakuSegment,
 } from "../src/lib/danmaku/segment-cache.ts";
 import {
+  buildVideoDanmakuShoutSnapshot,
+  DANMAKU_SHOUT_HOLD_MS,
+  filterDanmakuItemsBySuppressedTexts,
+  LiveDanmakuShoutTracker,
+  resolveDanmakuShoutCount,
+  VideoDanmakuShoutIndex,
+} from "../src/lib/danmaku/shout.ts";
+import {
   canPreserveActiveDanmakuItems,
   lowerBoundByTime,
   upperBoundByTime,
@@ -861,4 +869,147 @@ test("isolates supporting failures while current and render failures hide the la
   state = videoDanmakuReducer(state, { type: "reset", active: true });
   assert.equal(state.status, "loading");
   assert.equal(state.renderFailed, false);
+});
+
+test("promotes ten repeated live messages and extends the active shout", () => {
+  const tracker = new LiveDanmakuShoutTracker();
+
+  for (let index = 0; index < 9; index += 1) {
+    assert.equal(
+      tracker.observe({
+        id: `repeat-${index}`,
+        text: "xxx",
+        timeMs: index * 1_000,
+      }),
+      false
+    );
+  }
+
+  assert.equal(
+    tracker.observe({ id: "repeat-9", text: "xxx", timeMs: 9_000 }),
+    true
+  );
+  let snapshot = tracker.snapshot(9_500);
+  assert.deepEqual(snapshot.suppressedTexts, ["xxx"]);
+  assert.equal(snapshot.shouts.length, 1);
+  assert.equal(snapshot.shouts[0].count, 10);
+  assert.equal(snapshot.shouts[0].endMs, 9_000 + DANMAKU_SHOUT_HOLD_MS);
+
+  assert.equal(
+    tracker.observe({ id: "repeat-10", text: "xxx", timeMs: 10_000 }),
+    true
+  );
+  snapshot = tracker.snapshot(10_500);
+  assert.equal(snapshot.shouts[0].count, 11);
+  assert.equal(snapshot.shouts[0].endMs, 10_000 + DANMAKU_SHOUT_HOLD_MS);
+});
+
+test("only counts live repeats inside the twelve-second observation window", () => {
+  const tracker = new LiveDanmakuShoutTracker();
+
+  for (let index = 0; index < 9; index += 1) {
+    assert.equal(
+      tracker.observe({
+        text: "windowed",
+        timeMs: index * 1_000,
+      }),
+      false
+    );
+  }
+
+  assert.equal(tracker.observe({ text: "windowed", timeMs: 13_000 }), false);
+  const snapshot = tracker.snapshot(13_000);
+  assert.deepEqual(snapshot.shouts, []);
+  assert.deepEqual(snapshot.suppressedTexts, []);
+});
+
+test("advances video shout counts over time and suppresses matching items", () => {
+  const repeatedItems = Array.from({ length: 12 }, (_, index) =>
+    renderItem(`whole-video-${index}`, index * 30_000, {
+      text: "全片重复",
+    })
+  );
+  const otherItem = renderItem("other", 15_000, { text: "普通弹幕" });
+  const snapshot = buildVideoDanmakuShoutSnapshot([
+    ...repeatedItems,
+    otherItem,
+  ]);
+
+  assert.deepEqual(snapshot.suppressedTexts, ["全片重复"]);
+  assert.deepEqual(
+    snapshot.shouts.map((item) => [item.startMs, item.endMs, item.count]),
+    [
+      [270_000, 275_000, 10],
+      [300_000, 305_000, 11],
+      [330_000, 335_000, 12],
+    ]
+  );
+  assert.equal(
+    snapshot.shouts.some(
+      (item) => item.startMs <= 280_000 && item.endMs > 280_000
+    ),
+    false
+  );
+  assert.deepEqual(
+    filterDanmakuItemsBySuppressedTexts(
+      [...repeatedItems, otherItem],
+      snapshot.suppressedTexts
+    ).map((item) => item.id),
+    ["other"]
+  );
+});
+
+test("updates one video shout count while consecutive repeats refresh it", () => {
+  const items = Array.from({ length: 12 }, (_, index) =>
+    renderItem(`consecutive-${index}`, index * 1_000, {
+      text: "连续重复",
+    })
+  );
+  const snapshot = buildVideoDanmakuShoutSnapshot(items);
+
+  assert.equal(snapshot.shouts.length, 1);
+  assert.equal(snapshot.shouts[0].startMs, 9_000);
+  assert.equal(snapshot.shouts[0].endMs, 11_000 + DANMAKU_SHOUT_HOLD_MS);
+  assert.equal(resolveDanmakuShoutCount(snapshot.shouts[0], 9_000), 10);
+  assert.equal(resolveDanmakuShoutCount(snapshot.shouts[0], 9_999), 10);
+  assert.equal(resolveDanmakuShoutCount(snapshot.shouts[0], 10_000), 11);
+  assert.equal(resolveDanmakuShoutCount(snapshot.shouts[0], 11_000), 12);
+});
+
+test("keeps video repeats below the full-video threshold", () => {
+  const items = Array.from({ length: 9 }, (_, index) =>
+    renderItem(`below-threshold-${index}`, index * 60_000, {
+      text: "还没到十次",
+    })
+  );
+  const snapshot = buildVideoDanmakuShoutSnapshot(items);
+
+  assert.deepEqual(snapshot.shouts, []);
+  assert.deepEqual(snapshot.suppressedTexts, []);
+});
+
+test("builds the video shout index across segment boundaries", () => {
+  const index = new VideoDanmakuShoutIndex();
+
+  for (let segmentIndex = 1; segmentIndex <= 12; segmentIndex += 1) {
+    index.addSegment({
+      segmentIndex,
+      items: [
+        renderItem(`segment-repeat-${segmentIndex}`, segmentIndex * 360_000, {
+          text: "跨段重复",
+        }),
+      ],
+    });
+  }
+
+  const snapshot = index.snapshot();
+  assert.deepEqual(snapshot.suppressedTexts, ["跨段重复"]);
+  assert.deepEqual(
+    snapshot.shouts.map((item) => [item.startMs, item.endMs, item.count]),
+    [
+      [3_600_000, 3_600_000 + DANMAKU_SHOUT_HOLD_MS, 10],
+      [3_960_000, 3_960_000 + DANMAKU_SHOUT_HOLD_MS, 11],
+      [4_320_000, 4_320_000 + DANMAKU_SHOUT_HOLD_MS, 12],
+    ]
+  );
 });

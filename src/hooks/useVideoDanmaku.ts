@@ -1,15 +1,27 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 
 import { asCommandError } from "@/api/account";
 import { getVideoDanmakuSegment, type DanmakuSegment } from "@/api/danmaku";
 import {
   DANMAKU_SEGMENT_CACHE_LIMIT,
+  DANMAKU_SEGMENT_DURATION_MS,
   DanmakuSegmentLruCache,
   cachedDanmakuSegmentItems,
   danmakuSegmentIndex,
   shouldLoadPreviousDanmakuSegment,
   shouldPrefetchNextDanmakuSegment,
 } from "@/lib/danmaku/segment-cache";
+import {
+  filterDanmakuItemsBySuppressedTexts,
+  VideoDanmakuShoutIndex,
+} from "@/lib/danmaku/shout";
 import {
   createVideoDanmakuState,
   videoDanmakuReducer,
@@ -18,6 +30,7 @@ import { createLogger } from "@/lib/logger";
 
 const log = createLogger("Danmaku/Video");
 const DATA_RETRY_DELAY_MS = 5_000;
+const MAX_VIDEO_SHOUT_SCAN_SEGMENTS = 512;
 
 interface UseVideoDanmakuOptions {
   aid: number | null;
@@ -25,6 +38,7 @@ interface UseVideoDanmakuOptions {
   videoId: string;
   accountRevision: number;
   mediaTimeSeconds: number;
+  durationMs: number;
   enabled: boolean;
 }
 
@@ -34,6 +48,7 @@ export function useVideoDanmaku({
   videoId,
   accountRevision,
   mediaTimeSeconds,
+  durationMs,
   enabled,
 }: UseVideoDanmakuOptions) {
   const cacheRef = useRef(
@@ -41,10 +56,15 @@ export function useVideoDanmaku({
   );
   const inFlightRef = useRef(new Map<string, Promise<DanmakuSegment>>());
   const contextTokenRef = useRef(0);
+  const shoutIndexRef = useRef(new VideoDanmakuShoutIndex());
   const [state, dispatch] = useReducer(videoDanmakuReducer, undefined, () =>
     createVideoDanmakuState()
   );
   const [retryToken, setRetryToken] = useState(0);
+  const [shoutRevision, setShoutRevision] = useState(0);
+  const [scanReadyContextKey, setScanReadyContextKey] = useState<string | null>(
+    null
+  );
   const { items, loadedSegment, status, renderFailed } = state;
 
   const mediaTimeMs = Math.max(
@@ -74,36 +94,15 @@ export function useVideoDanmaku({
     [cid, segmentIndex, videoId]
   );
 
-  useEffect(() => {
-    contextTokenRef.current += 1;
-    cacheRef.current.clear();
-    inFlightRef.current.clear();
-    dispatch({
-      type: "reset",
-      active: aid !== null && cid > 0,
-    });
+  const loadSegment = useCallback(
+    (requestedIndex: number) => {
+      if (aid === null) {
+        return Promise.reject(new Error("Video aid unavailable"));
+      }
 
-    return () => {
-      contextTokenRef.current += 1;
-    };
-  }, [accountRevision, aid, cid, contextKey]);
-
-  useEffect(() => {
-    if (!active || aid === null) {
-      dispatch({ type: "inactive" });
-      return;
-    }
-
-    const contextToken = contextTokenRef.current;
-    const cache = cacheRef.current;
-    const inFlight = inFlightRef.current;
-    let cancelled = false;
-    let retryTimer: number | null = null;
-
-    const isCurrent = () =>
-      !cancelled && contextTokenRef.current === contextToken;
-
-    const loadSegment = (requestedIndex: number) => {
+      const contextToken = contextTokenRef.current;
+      const cache = cacheRef.current;
+      const inFlight = inFlightRef.current;
       const cached = cache.get(cid, requestedIndex);
       if (cached) return Promise.resolve(cached);
 
@@ -127,7 +126,40 @@ export function useVideoDanmaku({
 
       inFlight.set(key, request);
       return request;
+    },
+    [aid, cid]
+  );
+
+  useEffect(() => {
+    contextTokenRef.current += 1;
+    cacheRef.current.clear();
+    inFlightRef.current.clear();
+    shoutIndexRef.current.clear();
+    setShoutRevision((revision) => revision + 1);
+    setScanReadyContextKey(null);
+    dispatch({
+      type: "reset",
+      active: aid !== null && cid > 0,
+    });
+
+    return () => {
+      contextTokenRef.current += 1;
     };
+  }, [accountRevision, aid, cid, videoId]);
+
+  useEffect(() => {
+    if (!active || aid === null) {
+      dispatch({ type: "inactive" });
+      return;
+    }
+
+    const contextToken = contextTokenRef.current;
+    const cache = cacheRef.current;
+    let cancelled = false;
+    let retryTimer: number | null = null;
+
+    const isCurrent = () =>
+      !cancelled && contextTokenRef.current === contextToken;
 
     const refreshItems = () => {
       if (!isCurrent()) return;
@@ -149,6 +181,7 @@ export function useVideoDanmaku({
           items: cachedDanmakuSegmentItems(cache, cid, segmentIndex),
           segmentIndex,
         });
+        setScanReadyContextKey(contextKey);
 
         const supportingRequests: Promise<unknown>[] = [];
         if (loadPrevious && segmentIndex > 1) {
@@ -212,6 +245,8 @@ export function useVideoDanmaku({
     active,
     aid,
     cid,
+    contextKey,
+    loadSegment,
     loadPrevious,
     prefetchNext,
     retry,
@@ -220,8 +255,78 @@ export function useVideoDanmaku({
     videoId,
   ]);
 
+  useEffect(() => {
+    if (!active || aid === null || scanReadyContextKey !== contextKey) {
+      return;
+    }
+
+    let cancelled = false;
+    const expectedSegments =
+      Number.isFinite(durationMs) && durationMs > 0
+        ? Math.max(1, Math.ceil(durationMs / DANMAKU_SEGMENT_DURATION_MS))
+        : MAX_VIDEO_SHOUT_SCAN_SEGMENTS;
+    const segmentLimit = Math.min(
+      MAX_VIDEO_SHOUT_SCAN_SEGMENTS,
+      expectedSegments
+    );
+
+    const scan = async () => {
+      let consecutiveFailures = 0;
+      for (let index = 1; index <= segmentLimit; index += 1) {
+        if (cancelled) return;
+        if (shoutIndexRef.current.hasSegment(index)) continue;
+        try {
+          const segment = await loadSegment(index);
+          if (cancelled) return;
+          if (shoutIndexRef.current.addSegment(segment)) {
+            setShoutRevision((revision) => revision + 1);
+          }
+          consecutiveFailures = 0;
+          if (segment.ended) return;
+        } catch (error) {
+          if (cancelled) return;
+          consecutiveFailures += 1;
+          log.warn("video shout scan segment failed", {
+            videoId,
+            cid,
+            segmentIndex: index,
+            code: asCommandError(error).code,
+          });
+          if (consecutiveFailures >= 3) return;
+        }
+      }
+    };
+
+    void scan();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    active,
+    aid,
+    cid,
+    contextKey,
+    durationMs,
+    loadSegment,
+    scanReadyContextKey,
+    videoId,
+  ]);
+
+  const shoutSnapshot = useMemo(() => {
+    void shoutRevision;
+    return shoutIndexRef.current.snapshot();
+  }, [shoutRevision]);
+
+  const visibleItems = useMemo(
+    () =>
+      filterDanmakuItemsBySuppressedTexts(items, shoutSnapshot.suppressedTexts),
+    [items, shoutSnapshot.suppressedTexts]
+  );
+
   return {
-    items,
+    items: visibleItems,
+    shouts: shoutSnapshot.shouts,
+    suppressedTexts: shoutSnapshot.suppressedTexts,
     status,
     segmentIndex,
     visible:

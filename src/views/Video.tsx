@@ -1886,6 +1886,10 @@ function VideoStage({
             cid={playback.cid}
             videoId={playback.videoId}
             accountRevision={accountRevision}
+            durationMs={Math.max(
+              Math.round(playback.durationMs),
+              durationSeconds * 1_000
+            )}
             enabled={
               danmakuPreferences.enabled &&
               Boolean(detail.aid) &&

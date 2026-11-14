@@ -2,6 +2,7 @@ import { memo, useMemo, useRef } from "react";
 
 import { useDanmakuScheduler } from "@/hooks/useDanmakuScheduler";
 import type { DanmakuMediaClockSource } from "@/lib/danmaku/media-clock";
+import type { DanmakuShout } from "@/lib/danmaku/shout";
 import {
   resolveDanmakuStyle,
   type DanmakuRenderItem,
@@ -13,6 +14,8 @@ export interface DanmakuCanvasProps {
   items: readonly DanmakuRenderItem[];
   mediaTimeMs?: number;
   mediaClock?: DanmakuMediaClockSource;
+  shouts?: readonly DanmakuShout[];
+  suppressedTexts?: readonly string[];
   playing: boolean;
   playbackRate?: number;
   seeking?: boolean;
@@ -26,6 +29,8 @@ export const DanmakuCanvas = memo(function DanmakuCanvas({
   items,
   mediaTimeMs = 0,
   mediaClock,
+  shouts = [],
+  suppressedTexts = [],
   playing,
   playbackRate = 1,
   seeking = false,
@@ -41,6 +46,8 @@ export const DanmakuCanvas = memo(function DanmakuCanvas({
     items,
     mediaTimeMs,
     mediaClock,
+    shouts,
+    suppressedTexts,
     playing,
     playbackRate,
     seeking,

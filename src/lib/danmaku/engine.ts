@@ -26,6 +26,13 @@ import {
   resolveDanmakuStyleChange,
 } from "@/lib/danmaku/style-change";
 import {
+  danmakuShoutText,
+  normalizeDanmakuShouts,
+  normalizeSuppressedDanmakuTexts,
+  resolveDanmakuShoutCount,
+  type DanmakuShout,
+} from "@/lib/danmaku/shout";
+import {
   canPreserveActiveDanmakuItems,
   lowerBoundByTime,
   upperBoundByTime,
@@ -40,6 +47,7 @@ import {
 
 const MAX_FRAME_DELTA_MS = 1_000;
 const MAX_SPAWNS_PER_FRAME = 12;
+const MAX_VISIBLE_SHOUTS = 4;
 
 interface ActiveDanmaku extends DanmakuMotionItem {
   item: DanmakuRenderItem;
@@ -58,6 +66,7 @@ export interface DanmakuEngineStats {
   renderCount: number;
   spawnAttemptCount: number;
   spawnActiveCount: number;
+  shoutCount: number;
   textureGetCount: number;
   textureCacheMissCount: number;
   textureCreateTotalMs: number;
@@ -80,6 +89,8 @@ export class DanmakuCanvasEngine {
   private items: readonly DanmakuRenderItem[] = [];
   private normalizedItems: DanmakuRenderItem[] = [];
   private active: ActiveDanmaku[] = [];
+  private shouts: DanmakuShout[] = [];
+  private suppressedTexts = new Set<string>();
   private width = 0;
   private height = 0;
   private dpr = 1;
@@ -106,6 +117,9 @@ export class DanmakuCanvasEngine {
   private clockResyncCount = 0;
   private clockSyncCount = 0;
   private clockSeekCount = 0;
+  private readonly reducedMotion =
+    typeof window !== "undefined" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   constructor(canvas: HTMLCanvasElement, style?: Partial<DanmakuRenderStyle>) {
     const context = canvas.getContext("2d", { alpha: true });
@@ -127,7 +141,9 @@ export class DanmakuCanvasEngine {
     if (items === this.items) return;
     const previousIds = new Set(this.normalizedItems.map((item) => item.id));
     this.items = items;
-    this.normalizedItems = normalizeDanmakuItems(items);
+    this.normalizedItems = normalizeDanmakuItems(items).filter(
+      (item) => !this.isSuppressedItem(item)
+    );
     removeExpiredDanmaku(this.active, this.clockMs);
     if (
       this.initialized &&
@@ -155,6 +171,33 @@ export class DanmakuCanvasEngine {
       return;
     }
     this.rebuildAt(this.clockMs);
+  }
+
+  setShouts(shouts: readonly DanmakuShout[]) {
+    this.shouts = normalizeDanmakuShouts(shouts).sort(
+      (left, right) =>
+        right.startMs - left.startMs || left.id.localeCompare(right.id)
+    );
+    this.dirty = true;
+  }
+
+  setSuppressedTexts(texts: readonly string[]) {
+    const normalized = normalizeSuppressedDanmakuTexts(texts);
+    const previous = Array.from(this.suppressedTexts).sort();
+    if (
+      normalized.length === previous.length &&
+      normalized.every((text, index) => text === previous[index])
+    ) {
+      return;
+    }
+
+    this.suppressedTexts = new Set(normalized);
+    const activeCount = this.active.length;
+    this.active = this.active.filter(
+      (item) => !this.isSuppressedItem(item.item)
+    );
+    if (this.active.length !== activeCount) this.updateLaneMetrics();
+    this.dirty = true;
   }
 
   setStyle(style: Partial<DanmakuRenderStyle>) {
@@ -373,6 +416,7 @@ export class DanmakuCanvasEngine {
       context.drawImage(item.texture.canvas, x, y, item.width, item.height);
     }
 
+    this.renderShouts(context);
     context.restore();
     this.dirty = false;
   }
@@ -389,6 +433,7 @@ export class DanmakuCanvasEngine {
       renderCount: this.renderCount,
       spawnAttemptCount: this.spawnAttemptCount,
       spawnActiveCount: this.spawnActiveCount,
+      shoutCount: this.visibleShouts().length,
       textureGetCount: textureStats.getCount,
       textureCacheMissCount: textureStats.cacheMissCount,
       textureCreateTotalMs: textureStats.createTotalMs,
@@ -406,6 +451,8 @@ export class DanmakuCanvasEngine {
   dispose() {
     this.unsubscribeEmoteImages();
     this.active = [];
+    this.shouts = [];
+    this.suppressedTexts.clear();
     this.textureFactory.invalidate();
     this.clear();
   }
@@ -481,6 +528,7 @@ export class DanmakuCanvasEngine {
   private spawnItem(item: DanmakuRenderItem, spawnTimeMs: number) {
     this.spawnAttemptCount += 1;
     if (!isDanmakuItemVisible(item, this.style)) return;
+    if (this.isSuppressedItem(item)) return;
     const activeCount = this.active.length;
     removeExpiredDanmaku(this.active, spawnTimeMs);
     if (this.active.length !== activeCount) this.updateLaneMetrics();
@@ -679,4 +727,124 @@ export class DanmakuCanvasEngine {
       1_000
     );
   }
+
+  private isSuppressedItem(item: DanmakuRenderItem) {
+    if (this.suppressedTexts.size === 0) return false;
+    const text = danmakuShoutText(item);
+    return text !== null && this.suppressedTexts.has(text);
+  }
+
+  private visibleShouts() {
+    const visible: DanmakuShout[] = [];
+    for (const shout of this.shouts) {
+      if (shout.startMs > this.clockMs || shout.endMs <= this.clockMs) continue;
+      visible.push(shout);
+      if (visible.length >= MAX_VISIBLE_SHOUTS) break;
+    }
+    return visible;
+  }
+
+  private renderShouts(context: CanvasRenderingContext2D) {
+    if (
+      !this.style.showFixed ||
+      !this.style.showColor ||
+      this.width <= 0 ||
+      this.height <= 0
+    ) {
+      return;
+    }
+
+    const shouts = this.visibleShouts();
+    if (shouts.length === 0) return;
+
+    const style = this.effectiveStyle();
+    const fontSize = Math.max(12, style.baseFontSize * style.scale);
+    const countFontSize = Math.max(9, fontSize * 0.56);
+    const mainFont = `${style.fontStyle} ${style.fontWeight} ${fontSize}px ${style.fontFamily}`;
+    const countFont = `${style.fontStyle} ${style.fontWeight} ${countFontSize}px ${style.fontFamily}`;
+    const maxWidth = Math.max(
+      40,
+      this.width * Math.min(style.maxTextWidthRatio, 0.9)
+    );
+    const displayHeight = resolveDanmakuDisplayHeight(this.height, style);
+    const lineHeight = Math.ceil(fontSize * 1.5);
+
+    context.save();
+    context.textAlign = "left";
+    context.textBaseline = "alphabetic";
+    context.lineJoin = "round";
+    context.miterLimit = 2;
+    context.shadowColor = style.shadowColor;
+    context.shadowBlur = Math.max(3, style.shadowBlur);
+    context.shadowOffsetX = style.shadowOffsetX;
+    context.shadowOffsetY = style.shadowOffsetY;
+
+    shouts.forEach((shout, index) => {
+      const countText = `\u00d7${resolveDanmakuShoutCount(
+        shout,
+        this.clockMs
+      )}`;
+      context.font = countFont;
+      const countWidth = context.measureText(countText).width;
+      const countGap = Math.max(2, fontSize * 0.12);
+      const textMaxWidth = Math.max(1, maxWidth - countWidth - countGap);
+      context.font = mainFont;
+      const text = fitShoutText(context, shout.text, textMaxWidth);
+      if (!text) return;
+
+      const textWidth = context.measureText(text).width;
+      const totalWidth = textWidth + countGap + countWidth;
+      const x = (this.width - totalWidth) / 2;
+      const y = style.edgePadding + fontSize + index * lineHeight;
+      if (y + countFontSize > displayHeight) return;
+
+      const phase = this.reducedMotion ? 0 : this.clockMs / 25;
+      const gradient = context.createLinearGradient(
+        x,
+        y - fontSize,
+        x + totalWidth,
+        y
+      );
+      gradient.addColorStop(0, `hsl(${(phase + 8) % 360} 96% 68%)`);
+      gradient.addColorStop(0.34, `hsl(${(phase + 86) % 360} 94% 64%)`);
+      gradient.addColorStop(0.68, `hsl(${(phase + 178) % 360} 92% 67%)`);
+      gradient.addColorStop(1, `hsl(${(phase + 282) % 360} 96% 66%)`);
+
+      context.font = mainFont;
+      context.fillStyle = gradient;
+      context.strokeStyle = "rgba(0, 0, 0, 0.9)";
+      context.lineWidth = Math.max(2.5, style.strokeWidth + 1.5);
+      context.strokeText(text, x, y);
+      context.fillText(text, x, y);
+
+      context.font = countFont;
+      const countX = x + textWidth + countGap;
+      context.strokeText(countText, countX, y);
+      context.fillText(countText, countX, y);
+    });
+
+    context.restore();
+  }
+}
+
+function fitShoutText(
+  context: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number
+) {
+  if (context.measureText(text).width <= maxWidth) return text;
+
+  const characters = Array.from(text);
+  const suffix = "...";
+  if (context.measureText(suffix).width > maxWidth) return "";
+
+  let low = 0;
+  let high = characters.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    const candidate = `${characters.slice(0, middle).join("")}${suffix}`;
+    if (context.measureText(candidate).width <= maxWidth) low = middle;
+    else high = middle - 1;
+  }
+  return `${characters.slice(0, low).join("")}${suffix}`;
 }

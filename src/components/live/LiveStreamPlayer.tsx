@@ -1372,6 +1372,8 @@ export default function LiveStreamPlayer({
       <DanmakuCanvas
         key={roomId}
         items={liveDanmaku.items}
+        shouts={liveDanmaku.shouts}
+        suppressedTexts={liveDanmaku.suppressedTexts}
         mediaTimeMs={liveDanmaku.clockMs}
         playing={danmakuPlaying}
         playbackRate={1}

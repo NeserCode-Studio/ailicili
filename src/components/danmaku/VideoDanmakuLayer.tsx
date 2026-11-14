@@ -12,6 +12,7 @@ interface VideoDanmakuLayerProps {
   cid: number;
   videoId: string;
   accountRevision: number;
+  durationMs: number;
   enabled: boolean;
   playing: boolean;
   playbackRate: number;
@@ -25,6 +26,7 @@ export function VideoDanmakuLayer({
   cid,
   videoId,
   accountRevision,
+  durationMs,
   enabled,
   playing,
   playbackRate,
@@ -54,12 +56,15 @@ export function VideoDanmakuLayer({
     videoId,
     accountRevision,
     mediaTimeSeconds,
+    durationMs,
     enabled,
   });
 
   return (
     <DanmakuCanvas
       items={danmaku.items}
+      shouts={danmaku.shouts}
+      suppressedTexts={danmaku.suppressedTexts}
       mediaClock={mediaClock}
       playing={playing}
       playbackRate={playbackRate}
