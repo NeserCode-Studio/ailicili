@@ -140,6 +140,24 @@ enum LoginFlow {
     SmsCode(SmsCodeFlow),
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum QrPollState {
+    Pending,
+    Scanned,
+    Expired,
+    Succeeded { fallback_url: Option<String> },
+    Failed,
+}
+
+#[derive(Debug)]
+struct ParsedSmsChallenge {
+    provider: CaptchaProvider,
+    token: String,
+    gt: Option<String>,
+    challenge: Option<String>,
+    tencent_app_id: Option<String>,
+}
+
 #[derive(Default)]
 struct LoginRuntime {
     generation: u64,
@@ -248,42 +266,13 @@ impl BilibiliAccountAdapter {
         let data = root
             .get("data")
             .ok_or_else(|| BiliError::Invalid("missing captcha data".to_string()))?;
-        let challenge_type = data.get("type").and_then(Value::as_str).unwrap_or_default();
-        let token = data
-            .get("token")
-            .and_then(Value::as_str)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| BiliError::Invalid("missing captcha token".to_string()))?;
-        let (provider, gt, challenge, tencent_app_id) = match challenge_type {
-            "geetest" => (
-                CaptchaProvider::Geetest,
-                data.pointer("/geetest/gt")
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned),
-                data.pointer("/geetest/challenge")
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned),
-                None,
-            ),
-            "tencent" => (
-                CaptchaProvider::Tencent,
-                None,
-                None,
-                data.pointer("/tencent/appid")
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned),
-            ),
-            _ => {
-                return Err(PlatformError::from(BiliError::Invalid(
-                    "unsupported captcha provider".to_string(),
-                )))
-            }
-        };
-        if provider == CaptchaProvider::Geetest && (gt.is_none() || challenge.is_none()) {
-            return Err(PlatformError::from(BiliError::Invalid(
-                "incomplete Geetest challenge".to_string(),
-            )));
-        }
+        let ParsedSmsChallenge {
+            provider,
+            token,
+            gt,
+            challenge,
+            tencent_app_id,
+        } = parse_sms_challenge_data(data)?;
 
         let flow_id = Uuid::new_v4().simple().to_string();
         let mut runtime = self.runtime_lock()?;
@@ -295,7 +284,7 @@ impl BilibiliAccountAdapter {
         runtime.flows.insert(
             flow_id.clone(),
             LoginFlow::SmsChallenge(SmsChallengeFlow {
-                token: token.to_string(),
+                token,
                 expires_at: Instant::now() + SMS_CHALLENGE_TTL,
             }),
         );
@@ -382,12 +371,7 @@ impl BilibiliAccountAdapter {
                 &seccode,
             )
             .await?;
-        let captcha_key = root
-            .pointer("/data/captcha_key")
-            .and_then(Value::as_str)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| BiliError::Invalid("missing captcha key".to_string()))?
-            .to_string();
+        let captcha_key = parse_sms_captcha_key(&root)?.to_string();
 
         let mut runtime = self.runtime_lock()?;
         runtime.last_sms_sent = Some(Instant::now());
@@ -513,11 +497,14 @@ impl PlatformAccountAdapter for BilibiliAccountAdapter {
             let data = root
                 .get("data")
                 .ok_or_else(|| BiliError::Invalid("missing QR poll data".to_string()))?;
-            let code = data.get("code").and_then(Value::as_i64).unwrap_or(-1);
-            match code {
-                86101 => Ok(login_event(flow_id, AccountLoginOutcome::Pending, None)),
-                86090 => Ok(login_event(flow_id, AccountLoginOutcome::Scanned, None)),
-                86038 => {
+            match parse_qr_poll_state(data)? {
+                QrPollState::Pending => {
+                    Ok(login_event(flow_id, AccountLoginOutcome::Pending, None))
+                }
+                QrPollState::Scanned => {
+                    Ok(login_event(flow_id, AccountLoginOutcome::Scanned, None))
+                }
+                QrPollState::Expired => {
                     self.remove_flow(flow_id)?;
                     Ok(login_event(
                         flow_id,
@@ -525,9 +512,8 @@ impl PlatformAccountAdapter for BilibiliAccountAdapter {
                         Some("qr_expired"),
                     ))
                 }
-                0 => {
-                    let fallback_url = data.get("url").and_then(Value::as_str);
-                    let session = SessionCookies::from_response(&headers, fallback_url);
+                QrPollState::Succeeded { fallback_url } => {
+                    let session = SessionCookies::from_response(&headers, fallback_url.as_deref());
                     if !session.is_authenticated() {
                         self.remove_flow(flow_id)?;
                         return Ok(login_event(
@@ -545,7 +531,7 @@ impl PlatformAccountAdapter for BilibiliAccountAdapter {
                         None,
                     ))
                 }
-                _ => {
+                QrPollState::Failed => {
                     self.remove_flow(flow_id)?;
                     Ok(login_event(
                         flow_id,
@@ -641,6 +627,77 @@ impl BilibiliAccountAdapter {
     }
 }
 
+fn parse_qr_poll_state(data: &Value) -> Result<QrPollState, BiliError> {
+    Ok(
+        match data.get("code").and_then(Value::as_i64).unwrap_or(-1) {
+            86101 => QrPollState::Pending,
+            86090 => QrPollState::Scanned,
+            86038 => QrPollState::Expired,
+            0 => QrPollState::Succeeded {
+                fallback_url: data
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned),
+            },
+            _ => QrPollState::Failed,
+        },
+    )
+}
+
+fn parse_sms_challenge_data(data: &Value) -> Result<ParsedSmsChallenge, BiliError> {
+    let challenge_type = data.get("type").and_then(Value::as_str).unwrap_or_default();
+    let token = data
+        .get("token")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| BiliError::Invalid("missing captcha token".to_string()))?;
+    let parsed = match challenge_type {
+        "geetest" => ParsedSmsChallenge {
+            provider: CaptchaProvider::Geetest,
+            token: token.to_string(),
+            gt: data
+                .pointer("/geetest/gt")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned),
+            challenge: data
+                .pointer("/geetest/challenge")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned),
+            tencent_app_id: None,
+        },
+        "tencent" => ParsedSmsChallenge {
+            provider: CaptchaProvider::Tencent,
+            token: token.to_string(),
+            gt: None,
+            challenge: None,
+            tencent_app_id: data
+                .pointer("/tencent/appid")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned),
+        },
+        _ => {
+            return Err(BiliError::Invalid(
+                "unsupported captcha provider".to_string(),
+            ))
+        }
+    };
+    if parsed.provider == CaptchaProvider::Geetest
+        && (parsed.gt.is_none() || parsed.challenge.is_none())
+    {
+        return Err(BiliError::Invalid(
+            "incomplete Geetest challenge".to_string(),
+        ));
+    }
+    Ok(parsed)
+}
+
+fn parse_sms_captcha_key(root: &Value) -> Result<&str, BiliError> {
+    root.pointer("/data/captcha_key")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| BiliError::Invalid("missing captcha key".to_string()))
+}
+
 fn cancel_flows(flows: &mut HashMap<String, LoginFlow>) {
     for flow in flows.values() {
         if let LoginFlow::Qr(flow) = flow {
@@ -712,6 +769,119 @@ fn normalize_sms_code(value: &str) -> Result<String, PlatformError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fixture(name: &str) -> Value {
+        let raw = match name {
+            "qr-status" => {
+                include_str!("../../../tests/fixtures/bilibili/account/qr-status.json")
+            }
+            "captcha" => {
+                include_str!("../../../tests/fixtures/bilibili/account/captcha.json")
+            }
+            "sms" => include_str!("../../../tests/fixtures/bilibili/account/sms.json"),
+            _ => panic!("unknown fixture"),
+        };
+        serde_json::from_str(raw).expect("valid fixture")
+    }
+
+    #[test]
+    fn qr_fixture_covers_all_business_states() {
+        let root = fixture("qr-status");
+
+        assert_eq!(
+            parse_qr_poll_state(&root["pending"]["data"]).unwrap(),
+            QrPollState::Pending
+        );
+        assert_eq!(
+            parse_qr_poll_state(&root["scanned"]["data"]).unwrap(),
+            QrPollState::Scanned
+        );
+        assert_eq!(
+            parse_qr_poll_state(&root["expired"]["data"]).unwrap(),
+            QrPollState::Expired
+        );
+        assert!(matches!(
+            parse_qr_poll_state(&root["succeeded"]["data"]).unwrap(),
+            QrPollState::Succeeded {
+                fallback_url: Some(_)
+            }
+        ));
+        assert_eq!(
+            parse_qr_poll_state(&root["failed"]["data"]).unwrap(),
+            QrPollState::Failed
+        );
+    }
+
+    #[test]
+    fn qr_success_fixture_builds_only_the_cookie_whitelist() {
+        let root = fixture("qr-status");
+        let fallback_url = root.pointer("/succeeded/data/url").and_then(Value::as_str);
+        let session = SessionCookies::from_response(&HeaderMap::new(), fallback_url);
+
+        assert_eq!(session.sessdata.as_deref(), Some("fixture-session"));
+        assert_eq!(session.bili_jct.as_deref(), Some("fixture-csrf"));
+        assert_eq!(session.dede_user_id.as_deref(), Some("fixture-user"));
+        assert!(session.is_authenticated());
+    }
+
+    #[test]
+    fn captcha_fixture_supports_both_providers_and_rejects_incomplete_data() {
+        let root = fixture("captcha");
+
+        let geetest = parse_sms_challenge_data(&root["geetest"]["data"]).unwrap();
+        assert_eq!(geetest.provider, CaptchaProvider::Geetest);
+        assert_eq!(geetest.gt.as_deref(), Some("fixture-gt"));
+        assert_eq!(geetest.challenge.as_deref(), Some("fixture-challenge"));
+
+        let tencent = parse_sms_challenge_data(&root["tencent"]["data"]).unwrap();
+        assert_eq!(tencent.provider, CaptchaProvider::Tencent);
+        assert_eq!(
+            tencent.tencent_app_id.as_deref(),
+            Some("fixture-tencent-appid")
+        );
+
+        assert!(matches!(
+            parse_sms_challenge_data(&root["missing_geetest_challenge"]["data"]),
+            Err(BiliError::Invalid(_))
+        ));
+        assert!(matches!(
+            parse_sms_challenge_data(&root["unsupported"]["data"]),
+            Err(BiliError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn sms_fixture_extracts_the_backend_only_captcha_key() {
+        let root = fixture("sms");
+
+        assert_eq!(
+            parse_sms_captcha_key(&root["send_response"]).unwrap(),
+            "fixture-captcha-key"
+        );
+        assert!(matches!(
+            parse_sms_captcha_key(&root["missing_captcha_key"]),
+            Err(BiliError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn sms_fixture_builds_an_authenticated_session_from_whitelisted_cookies() {
+        let root = fixture("sms");
+        let mut headers = HeaderMap::new();
+        for value in root["set_cookie"].as_array().expect("cookie list") {
+            headers.append(
+                "set-cookie",
+                value.as_str().expect("cookie string").parse().unwrap(),
+            );
+        }
+
+        let session = SessionCookies::from_response(&headers, None);
+
+        assert!(session.is_authenticated());
+        assert_eq!(session.authenticated_uid(), None);
+        assert_eq!(session.cookie_header().matches("fixture-").count(), 5);
+        assert!(!session.cookie_header().contains("fixture_unknown"));
+    }
 
     #[test]
     fn reads_only_whitelisted_cookies() {

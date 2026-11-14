@@ -1,0 +1,52 @@
+{
+  "pending": {
+    "code": 0,
+    "message": "fixture",
+    "data": {
+      "url": "https://example.invalid/passport/qr/pending",
+      "qrcode_key": "fixture-qrcode-key-pending",
+      "code": 86101,
+      "message": "fixture pending"
+    }
+  },
+  "scanned": {
+    "code": 0,
+    "message": "fixture",
+    "data": {
+      "url": "https://example.invalid/passport/qr/scanned",
+      "qrcode_key": "fixture-qrcode-key-scanned",
+      "code": 86090,
+      "message": "fixture scanned"
+    }
+  },
+  "expired": {
+    "code": 0,
+    "message": "fixture",
+    "data": {
+      "url": "https://example.invalid/passport/qr/expired",
+      "qrcode_key": "fixture-qrcode-key-expired",
+      "code": 86038,
+      "message": "fixture expired"
+    }
+  },
+  "succeeded": {
+    "code": 0,
+    "message": "fixture",
+    "data": {
+      "url": "https://example.invalid/passport/login?SESSDATA=fixture-session&bili_jct=fixture-csrf&DedeUserID=fixture-user",
+      "qrcode_key": "fixture-qrcode-key-succeeded",
+      "code": 0,
+      "message": "fixture success"
+    }
+  },
+  "failed": {
+    "code": 0,
+    "message": "fixture",
+    "data": {
+      "url": "https://example.invalid/passport/qr/failed",
+      "qrcode_key": "fixture-qrcode-key-failed",
+      "code": 86000,
+      "message": "fixture failed"
+    }
+  }
+}

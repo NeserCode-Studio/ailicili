@@ -559,34 +559,7 @@ impl BilibiliClient {
         if code != 0 {
             return Err(api_error(&root));
         }
-        let data = root
-            .get("data")
-            .ok_or_else(|| BiliError::Invalid("missing nav data".to_string()))?;
-        let mid = data
-            .get("mid")
-            .and_then(Value::as_i64)
-            .ok_or_else(|| BiliError::Invalid("missing account mid".to_string()))?;
-        let name = data
-            .get("uname")
-            .and_then(Value::as_str)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| BiliError::Invalid("missing account name".to_string()))?;
-        Ok(crate::domain::AccountProfile {
-            mid,
-            name: name.to_string(),
-            avatar_url: data
-                .get("face")
-                .and_then(Value::as_str)
-                .filter(|value| !value.is_empty())
-                .map(normalize_url),
-            level: data
-                .pointer("/level_info/current_level")
-                .and_then(Value::as_i64),
-            vip: data
-                .pointer("/vipStatus")
-                .and_then(Value::as_i64)
-                .is_some_and(|status| status > 0),
-        })
+        parse_account_profile(&root)
     }
 
     async fn passport_get_json(
@@ -1310,45 +1283,7 @@ impl BilibiliClient {
         if streams.is_empty() {
             if let Some(durl) = data.get("durl").and_then(Value::as_array) {
                 durl_count = durl.len();
-                for (index, item) in durl.iter().enumerate() {
-                    let mut urls = Vec::new();
-                    if let Some(url) = item.get("url").and_then(Value::as_str) {
-                        urls.push(url);
-                    }
-                    if let Some(backups) = item.get("backup_url").and_then(Value::as_array) {
-                        urls.extend(backups.iter().filter_map(Value::as_str));
-                    }
-
-                    for (variant, url) in urls
-                        .into_iter()
-                        .map(normalize_url)
-                        .filter(|url| !url.is_empty())
-                        .enumerate()
-                    {
-                        if streams
-                            .iter()
-                            .any(|stream: &StreamSource| stream.url == url)
-                        {
-                            continue;
-                        }
-                        streams.push(StreamSource {
-                            id: if variant == 0 {
-                                format!("mp4-{index}")
-                            } else {
-                                format!("mp4-{index}-fallback-{variant}")
-                            },
-                            protocol: StreamProtocol::Mp4,
-                            url,
-                            backup_urls: Vec::new(),
-                            quality_id,
-                            quality_label: quality_label(quality_id),
-                            audio_url: None,
-                            audio_backup_urls: Vec::new(),
-                            codec: Some("mp4".to_string()),
-                            audio_codec: None,
-                        });
-                    }
-                }
+                streams = parse_durl_streams(data, quality_id);
             }
         }
 
@@ -1370,22 +1305,8 @@ impl BilibiliClient {
             .map(|stream| stream.quality_id)
             .max()
             .unwrap_or(quality_id);
-        let quality_notice = if !logged_in {
-            QualityNotice {
-                kind: QualityNoticeKind::LoginRequired,
-                message_code: "loginForHigherQuality".to_string(),
-            }
-        } else if highest_available < highest_advertised {
-            QualityNotice {
-                kind: QualityNoticeKind::QualityUnavailable,
-                message_code: "higherQualityUnavailable".to_string(),
-            }
-        } else {
-            QualityNotice {
-                kind: QualityNoticeKind::None,
-                message_code: "none".to_string(),
-            }
-        };
+        let quality_notice =
+            resolve_quality_notice(logged_in, highest_advertised, highest_available);
         info!(
             target: "Bilibili",
             "playback loaded video={video_id} cid={cid} qn={quality} quality={quality_id} dash_video={dash_video_count} dash_audio={dash_audio_count} durl={durl_count} sources={} logged_in={logged_in}",
@@ -1793,6 +1714,37 @@ fn api_error(root: &Value) -> BiliError {
     }
 }
 
+fn parse_account_profile(root: &Value) -> Result<crate::domain::AccountProfile, BiliError> {
+    let data = root
+        .get("data")
+        .ok_or_else(|| BiliError::Invalid("missing nav data".to_string()))?;
+    let mid = data
+        .get("mid")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| BiliError::Invalid("missing account mid".to_string()))?;
+    let name = data
+        .get("uname")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| BiliError::Invalid("missing account name".to_string()))?;
+    Ok(crate::domain::AccountProfile {
+        mid,
+        name: name.to_string(),
+        avatar_url: data
+            .get("face")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(normalize_url),
+        level: data
+            .pointer("/level_info/current_level")
+            .and_then(Value::as_i64),
+        vip: data
+            .pointer("/vipStatus")
+            .and_then(Value::as_i64)
+            .is_some_and(|status| status > 0),
+    })
+}
+
 fn error_code(error: &BiliError) -> String {
     match error {
         BiliError::Api { code, .. } => format!("api:{code}"),
@@ -1880,6 +1832,55 @@ fn dash_audio_items(dash: &Value) -> Vec<&Value> {
         }
     }
     items
+}
+
+fn parse_durl_streams(data: &Value, quality_id: i64) -> Vec<StreamSource> {
+    let mut streams = Vec::new();
+    let Some(durl) = data.get("durl").and_then(Value::as_array) else {
+        return streams;
+    };
+
+    for (index, item) in durl.iter().enumerate() {
+        let mut urls = Vec::new();
+        if let Some(url) = item.get("url").and_then(Value::as_str) {
+            urls.push(url);
+        }
+        if let Some(backups) = item.get("backup_url").and_then(Value::as_array) {
+            urls.extend(backups.iter().filter_map(Value::as_str));
+        }
+
+        for (variant, url) in urls
+            .into_iter()
+            .map(normalize_url)
+            .filter(|url| !url.is_empty())
+            .enumerate()
+        {
+            if streams
+                .iter()
+                .any(|stream: &StreamSource| stream.url == url)
+            {
+                continue;
+            }
+            streams.push(StreamSource {
+                id: if variant == 0 {
+                    format!("mp4-{index}")
+                } else {
+                    format!("mp4-{index}-fallback-{variant}")
+                },
+                protocol: StreamProtocol::Mp4,
+                url,
+                backup_urls: Vec::new(),
+                quality_id,
+                quality_label: quality_label(quality_id),
+                audio_url: None,
+                audio_backup_urls: Vec::new(),
+                codec: Some("mp4".to_string()),
+                audio_codec: None,
+            });
+        }
+    }
+
+    streams
 }
 
 fn parse_dash_streams(dash: &Value) -> Vec<StreamSource> {
@@ -2078,6 +2079,29 @@ fn parse_advertised_qualities(data: &Value) -> Vec<QualityOption> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn resolve_quality_notice(
+    logged_in: bool,
+    highest_advertised: i64,
+    highest_available: i64,
+) -> QualityNotice {
+    if !logged_in {
+        QualityNotice {
+            kind: QualityNoticeKind::LoginRequired,
+            message_code: "loginForHigherQuality".to_string(),
+        }
+    } else if highest_available < highest_advertised {
+        QualityNotice {
+            kind: QualityNoticeKind::QualityUnavailable,
+            message_code: "higherQualityUnavailable".to_string(),
+        }
+    } else {
+        QualityNotice {
+            kind: QualityNoticeKind::None,
+            message_code: "none".to_string(),
+        }
+    }
 }
 
 fn quality_label(id: i64) -> String {
@@ -2681,6 +2705,17 @@ mod tests {
     use crate::domain::{CommandError, DanmakuMode, PlatformId};
     use serde_json::json;
 
+    fn fixture(name: &str) -> Value {
+        let raw = match name {
+            "errors" => include_str!("../tests/fixtures/bilibili/account/errors.json"),
+            "nav" => include_str!("../tests/fixtures/bilibili/account/nav.json"),
+            "playurl" => include_str!("../tests/fixtures/bilibili/account/playurl.json"),
+            "sms" => include_str!("../tests/fixtures/bilibili/account/sms.json"),
+            _ => panic!("unknown fixture"),
+        };
+        serde_json::from_str(raw).expect("valid fixture")
+    }
+
     #[test]
     fn danmaku_request_rejects_invalid_ids_and_segment_indexes() {
         for (aid, cid, segment_index) in [
@@ -3241,6 +3276,102 @@ mod tests {
         assert!(shape.contains("token:string(len=18)"));
         assert!(!shape.contains("secret-token-value"));
         assert!(!shape.contains("private error detail"));
+    }
+
+    #[test]
+    fn nav_fixture_maps_the_sanitized_account_profile() {
+        let root = fixture("nav");
+        let profile = parse_account_profile(&root["authenticated"]).unwrap();
+
+        assert_eq!(profile.mid, 900001);
+        assert_eq!(profile.name, "fixture-user");
+        assert_eq!(
+            profile.avatar_url.as_deref(),
+            Some("https://example.invalid/avatar/fixture.png")
+        );
+        assert_eq!(profile.level, Some(6));
+        assert!(profile.vip);
+        assert_eq!(root["expired"]["code"], -101);
+    }
+
+    #[test]
+    fn passport_error_fixture_maps_the_complete_p1_matrix() {
+        let errors = fixture("errors");
+        let expected = [
+            ("smsRequestInvalid", "editPhone"),
+            ("smsCodeInvalid", "editCode"),
+            ("smsCodeExpired", "refresh"),
+            ("loginExpired", "login"),
+            ("riskControl", "retryLater"),
+            ("rateLimited", "retryLater"),
+        ];
+
+        for (entry, (code, action)) in errors.as_array().unwrap().iter().zip(expected) {
+            let error = ensure_api_success(entry).unwrap_err();
+            let mapped = CommandError::from(error);
+            assert_eq!(mapped.code, code);
+            assert_eq!(mapped.action.as_deref(), Some(action));
+        }
+    }
+
+    #[test]
+    fn sms_fixture_locks_the_current_passport_form_contract() {
+        let root = fixture("sms");
+        let fixture_fields = |name: &str| {
+            root[name]
+                .as_array()
+                .expect("field list")
+                .iter()
+                .map(|field| field.as_str().expect("field name"))
+                .collect::<Vec<_>>()
+        };
+
+        let send = sms_send_form(
+            "86",
+            "fixture-phone",
+            "fixture-token",
+            "fixture-challenge",
+            "fixture-validate",
+            "fixture-seccode",
+        );
+        let send_fields = send.iter().map(|(field, _)| *field).collect::<Vec<_>>();
+        assert_eq!(send_fields, fixture_fields("send_form"));
+        assert_eq!(send[2].1, "main_web");
+        assert_eq!(send[7].1, BILIBILI_WEB_URL);
+
+        let login = sms_login_form("86", "fixture-phone", "fixture-code", "fixture-captcha-key");
+        let login_fields = login.iter().map(|(field, _)| *field).collect::<Vec<_>>();
+        assert_eq!(login_fields, fixture_fields("login_form"));
+        assert!(!login_fields.contains(&"keep"));
+    }
+
+    #[test]
+    fn playurl_fixture_uses_actual_durl_quality_and_reports_missing_streams() {
+        let root = fixture("playurl");
+        let success = &root["durl_success"]["data"];
+        let streams = parse_durl_streams(success, 32);
+        let advertised = parse_advertised_qualities(success);
+        let highest_advertised = advertised.iter().map(|quality| quality.id).max().unwrap();
+        let highest_available = streams
+            .iter()
+            .map(|stream| stream.quality_id)
+            .max()
+            .unwrap();
+
+        assert_eq!(streams.len(), 2);
+        assert_eq!(streams[0].quality_id, 32);
+        assert_eq!(
+            streams[0].url,
+            "https://example.invalid/media/fixture-32.mp4"
+        );
+        assert_eq!(highest_advertised, 64);
+        assert_eq!(highest_available, 32);
+        let notice = resolve_quality_notice(true, highest_advertised, highest_available);
+        assert_eq!(notice.kind, QualityNoticeKind::QualityUnavailable);
+        assert_eq!(notice.message_code, "higherQualityUnavailable");
+
+        let missing = &root["durl_missing"]["data"];
+        assert!(parse_durl_streams(missing, 32).is_empty());
     }
 
     #[test]

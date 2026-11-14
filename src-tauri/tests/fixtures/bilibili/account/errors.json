@@ -1,0 +1,26 @@
+[
+  {
+    "code": -400,
+    "message": "fixture invalid request"
+  },
+  {
+    "code": 1006,
+    "message": "fixture invalid code"
+  },
+  {
+    "code": 1007,
+    "message": "fixture expired code"
+  },
+  {
+    "code": -101,
+    "message": "fixture login expired"
+  },
+  {
+    "code": -352,
+    "message": "fixture WBI rejected"
+  },
+  {
+    "code": -412,
+    "message": "fixture rate limited"
+  }
+]

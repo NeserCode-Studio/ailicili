@@ -1,0 +1,23 @@
+{
+  "authenticated": {
+    "code": 0,
+    "message": "fixture",
+    "data": {
+      "isLogin": true,
+      "mid": 900001,
+      "uname": "fixture-user",
+      "face": "https://example.invalid/avatar/fixture.png",
+      "level_info": {
+        "current_level": 6
+      },
+      "vipStatus": 1
+    }
+  },
+  "expired": {
+    "code": -101,
+    "message": "fixture login expired",
+    "data": {
+      "isLogin": false
+    }
+  }
+}

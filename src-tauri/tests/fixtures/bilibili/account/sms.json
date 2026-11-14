@@ -1,0 +1,47 @@
+{
+  "send_form": [
+    "cid",
+    "tel",
+    "source",
+    "token",
+    "challenge",
+    "validate",
+    "seccode",
+    "go_url"
+  ],
+  "login_form": [
+    "cid",
+    "tel",
+    "code",
+    "source",
+    "captcha_key",
+    "go_url"
+  ],
+  "send_response": {
+    "code": 0,
+    "message": "fixture",
+    "data": {
+      "captcha_key": "fixture-captcha-key"
+    }
+  },
+  "missing_captcha_key": {
+    "code": 0,
+    "message": "fixture",
+    "data": {}
+  },
+  "login_response": {
+    "code": 0,
+    "message": "fixture",
+    "data": {
+      "url": "https://example.invalid/passport/login?SESSDATA=fixture-session&bili_jct=fixture-csrf&DedeUserID=fixture-user"
+    }
+  },
+  "set_cookie": [
+    "SESSDATA=fixture-session; Path=/; HttpOnly",
+    "bili_jct=fixture-csrf; Path=/",
+    "DedeUserID=fixture-user; Path=/",
+    "DedeUserID__ckMd5=fixture-user-check; Path=/",
+    "sid=fixture-sid; Path=/",
+    "fixture_unknown=fixture-value; Path=/"
+  ]
+}

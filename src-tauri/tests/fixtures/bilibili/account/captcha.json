@@ -1,0 +1,44 @@
+{
+  "geetest": {
+    "code": 0,
+    "message": "fixture",
+    "data": {
+      "type": "geetest",
+      "token": "fixture-captcha-token",
+      "geetest": {
+        "gt": "fixture-gt",
+        "challenge": "fixture-challenge"
+      }
+    }
+  },
+  "tencent": {
+    "code": 0,
+    "message": "fixture",
+    "data": {
+      "type": "tencent",
+      "token": "fixture-captcha-token",
+      "tencent": {
+        "appid": "fixture-tencent-appid"
+      }
+    }
+  },
+  "missing_geetest_challenge": {
+    "code": 0,
+    "message": "fixture",
+    "data": {
+      "type": "geetest",
+      "token": "fixture-captcha-token",
+      "geetest": {
+        "gt": "fixture-gt"
+      }
+    }
+  },
+  "unsupported": {
+    "code": 0,
+    "message": "fixture",
+    "data": {
+      "type": "fixture-provider",
+      "token": "fixture-captcha-token"
+    }
+  }
+}

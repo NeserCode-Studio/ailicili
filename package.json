@@ -7,9 +7,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "check:logs": "node scripts/check-log-secrets.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "test:danmaku": "node --test tests/danmaku.test.mjs tests/live-danmaku.test.mjs",
+    "test:logs": "node --test tests/log-secrets.test.mjs",
     "lint": "eslint .",
     "format": "prettier --write ."
   },

@@ -1,0 +1,40 @@
+{
+  "durl_success": {
+    "code": 0,
+    "message": "fixture",
+    "data": {
+      "quality": 32,
+      "timelength": 120000,
+      "accept_quality": [64, 32],
+      "accept_description": ["fixture-high", "fixture-standard"],
+      "support_formats": [
+        {
+          "quality": 64,
+          "new_description": "fixture-high"
+        },
+        {
+          "quality": 32,
+          "new_description": "fixture-standard"
+        }
+      ],
+      "durl": [
+        {
+          "url": "https://example.invalid/media/fixture-32.mp4",
+          "backup_url": [
+            "https://example.invalid/media/fixture-32-backup.mp4"
+          ]
+        }
+      ]
+    }
+  },
+  "durl_missing": {
+    "code": 0,
+    "message": "fixture",
+    "data": {
+      "quality": 32,
+      "timelength": 120000,
+      "accept_quality": [32],
+      "durl": []
+    }
+  }
+}
